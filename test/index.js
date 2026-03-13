@@ -10,27 +10,23 @@ test('basic replication', async (t) => {
   const store1 = new Corestore(await t.tmp())
   const store2 = new Corestore(await t.tmp())
 
-  const rep1 = new Replicator({ bootstrap })
-  const rep2 = new Replicator({ bootstrap })
+  const rep1 = new Replicator(store1, { bootstrap })
+  const rep2 = new Replicator(store2, { bootstrap })
+
+  await rep1.ready()
+  await rep2.ready()
 
   const core1 = store1.get({ name: 'test' })
   await core1.ready()
 
   await core1.append([b4a.from('hello'), b4a.from('world')])
 
+  // wait for rep1 to announce
+  await new Promise((res) => setTimeout(res, 1000))
+
   const core2 = store2.get({ key: core1.key })
   await core2.ready()
 
-  await rep1.replicate(core1)
-
-  // @todo wait to be fully announced
-  await new Promise((res) => setTimeout(res, 1000))
-
-  await rep2.replicate(core2)
-
-  await new Promise((res) => setTimeout(res, 3000))
-
-  console.log(core1, core2)
   await core2.update({ wait: true })
 
   t.is(core2.length, 2)

@@ -41,6 +41,7 @@
   "homepage": "https://github.com/holepunchto/bundlebee",
   "dependencies": {
     "b4a": "^1.7.4",
+    "hypercore": "^11.27.14",
     "ready-resource": "^1.2.0",
     "safety-catch": "^1.0.2"
   }

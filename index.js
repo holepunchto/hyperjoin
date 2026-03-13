@@ -1,16 +1,18 @@
 const ReadyResource = require('ready-resource')
 const DHT = require('hyperdht')
 const safetyCatch = require('safety-catch')
+const Hypercore = require('hypercore')
 const b4a = require('b4a')
 
-const GC_INTERVAL = 10_000
 const IDLE_TIMEOUT = 30_000
 
 module.exports = class Replicator extends ReadyResource {
-  constructor(opts = {}) {
+  constructor(store, opts = {}) {
     super()
+
     const { seed, keyPair = DHT.keyPair(seed) } = opts
 
+    this.store = store
     this.keyPair = keyPair
     this.dht =
       opts.dht ||
@@ -22,12 +24,11 @@ module.exports = class Replicator extends ReadyResource {
 
     this.server = this.dht.createServer((conn) => this._onincoming(conn))
 
-    this.gcInterval = opts.gcInterval || GC_INTERVAL
-    this.idleTimeout = opts.idleTimeout || IDLE_TIMEOUT
     this.sessions = new Map() // hex(peerId) -> Session
     this.topics = new Map() // hex(discoveryKey) -> Topic
 
-    this._gcTimer = null
+    this._connecting = new Set() // hex(peerId) — dedup in-flight dials
+    this._unwatcher = null
 
     this.ready().catch(safetyCatch)
   }
@@ -35,11 +36,13 @@ module.exports = class Replicator extends ReadyResource {
   async _open() {
     await this.dht.ready()
     await this.server.listen(this.keyPair)
-    this._gcTimer = setInterval(() => this._gc(), this.gcInterval)
+
+    // watch the corestore for new cores, replicate them automatically
+    this._unwatcher = this.store.watch((core) => this._oncore(core))
   }
 
   async _close() {
-    clearInterval(this._gcTimer)
+    if (this._unwatcher) this._unwatcher()
 
     for (const topic of this.topics.values()) topic.destroy()
     for (const session of this.sessions.values()) session.destroy()
@@ -51,41 +54,40 @@ module.exports = class Replicator extends ReadyResource {
     if (!this.dht.destroyed) await this.dht.destroy()
   }
 
-  // public api: start replicating a core
-  async replicate(core) {
-    if (!this.opened) await this.ready()
+  // called by the store watcher when a core is opened
+  _oncore(core) {
     const hex = b4a.toString(core.discoveryKey, 'hex')
+    if (this.topics.has(hex)) return
 
-    if (this.topics.has(hex)) return this.topics.get(hex)
+    // weak ref — closes when the real core is gc'd or closed by user
+    const weak = new Hypercore({ core, weak: true })
 
-    const topic = new Topic(this, core)
+    const topic = new Topic(this, weak)
     this.topics.set(hex, topic)
 
-    return topic.findPeers().catch(safetyCatch)
-  }
+    weak.on('close', () => {
+      this.topics.delete(hex)
+      topic.destroy()
 
-  // stop replicating a core
-  unreplicate(core) {
-    const hex = b4a.toString(core.discoveryKey, 'hex')
-    const topic = this.topics.get(hex)
+      for (const session of this.sessions.values()) {
+        session.removeRef(weak.discoveryKey)
+      }
+    })
 
-    if (!topic) return
+    topic.findPeers().catch(safetyCatch)
 
-    this.topics.delete(hex)
-    topic.destroy()
-
+    // replicate over any existing sessions
     for (const session of this.sessions.values()) {
-      session.removeRef(core.discoveryKey)
+      session.addRef(topic.discoveryKey)
+      topic.replicate(session)
     }
   }
 
-  // incoming connection from a remote peer (we are the server side)
+  // incoming connection from a remote peer
   _onincoming(conn) {
-    console.log('incoming!') // todo seeing this 9 times
     const peerId = conn.remotePublicKey
     const session = this._getOrCreateSession(peerId, conn)
 
-    // replicate all our topics over this connection
     for (const topic of this.topics.values()) {
       session.addRef(topic.discoveryKey)
       topic.replicate(session)
@@ -98,7 +100,7 @@ module.exports = class Replicator extends ReadyResource {
     let session = this.sessions.get(hex)
     if (session) return session
 
-    session = new Session(connection, peerId, { idleTimeout: this.idleTimeout })
+    session = new Session(connection, peerId)
     this.sessions.set(hex, session)
 
     connection.on('close', () => {
@@ -108,15 +110,6 @@ module.exports = class Replicator extends ReadyResource {
     connection.on('error', safetyCatch)
 
     return session
-  }
-
-  _gc() {
-    for (const [id, session] of this.sessions) {
-      if (!session.alive) {
-        session.destroy()
-        this.sessions.delete(id)
-      }
-    }
   }
 }
 
@@ -134,14 +127,11 @@ class Topic {
   async findPeers() {
     if (this.destroyed) return
 
-    // announce so other peers can find us, and get back peers that already announced
     const query = (this._activeQuery = this.replicator.dht.announce(
       this.discoveryKey,
       this.replicator.keyPair,
       this.replicator.server.relayAddresses
     ))
-
-    console.log('looking for peers', this.discoveryKey.toString('hex'))
 
     try {
       for await (const data of query) {
@@ -156,8 +146,6 @@ class Topic {
     } finally {
       if (this._activeQuery === query) this._activeQuery = null
     }
-
-    return this
   }
 
   _onpeer(peer) {
@@ -166,7 +154,7 @@ class Topic {
     // skip self
     if (b4a.equals(peer.publicKey, this.replicator.server.publicKey)) return
 
-    // already connected to this peer — just add the ref
+    // already connected
     if (this.replicator.sessions.has(hex)) {
       const session = this.replicator.sessions.get(hex)
       session.addRef(this.discoveryKey)
@@ -174,9 +162,15 @@ class Topic {
       return
     }
 
+    // already dialing
+    if (this.replicator._connecting.has(hex)) return
+    this.replicator._connecting.add(hex)
+
     const conn = this.replicator.dht.connect(peer.publicKey)
 
     conn.on('open', () => {
+      this.replicator._connecting.delete(hex)
+
       if (this.destroyed) {
         conn.destroy()
         return
@@ -187,10 +181,15 @@ class Topic {
       this.replicate(session)
     })
 
-    conn.on('error', safetyCatch)
+    conn.on('error', () => {
+      this.replicator._connecting.delete(hex)
+    })
+
+    conn.on('close', () => {
+      this.replicator._connecting.delete(hex)
+    })
   }
 
-  // core replication + liveness tracking to a session
   replicate(session) {
     const hex = b4a.toString(this.discoveryKey, 'hex')
     if (session.sent.has(hex)) return
@@ -225,13 +224,12 @@ class Topic {
 }
 
 class Session {
-  constructor(connection, peerId, opts = {}) {
+  constructor(connection, peerId) {
     this.connection = connection
     this.peerId = peerId
-    this.refs = new Map() // hex(discoveryKey) -> { discoveryKey, lastActive, idle }
-    this.sent = new Set() // hex(discoveryKey) — tracks which cores are already replicated
+    this.refs = new Map()
+    this.sent = new Set()
     this.lastActive = Date.now()
-    this.idleTimeout = opts.idleTimeout
   }
 
   addRef(discoveryKey) {
@@ -264,16 +262,15 @@ class Session {
     if (ref) ref.idle = true
   }
 
-  get alive() {
-    console.log(this.refs)
-    if (this.refs.size === 0) return false
+  get idle() {
+    if (this.refs.size === 0) return true
 
     const now = Date.now()
     for (const ref of this.refs.values()) {
-      if (!ref.idle && now - ref.lastActive < this.idleTimeout) return true
+      if (!ref.idle && now - ref.lastActive < IDLE_TIMEOUT) return false
     }
 
-    return false
+    return true
   }
 
   destroy() {
