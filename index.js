@@ -5,6 +5,7 @@ const Hypercore = require('hypercore')
 const b4a = require('b4a')
 
 const IDLE_TIMEOUT = 30_000
+const MIN_REANNOUNCE = 10_000
 
 module.exports = class Replicator extends ReadyResource {
   constructor(store, opts = {}) {
@@ -86,7 +87,7 @@ module.exports = class Replicator extends ReadyResource {
   // incoming connection from a remote peer
   _onincoming(conn) {
     const peerId = conn.remotePublicKey
-    const session = this._getOrCreateSession(peerId, conn)
+    const session = this._getOrCreateSession(peerId, conn, false)
 
     for (const topic of this.topics.values()) {
       session.addRef(topic.discoveryKey)
@@ -94,13 +95,13 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
-  _getOrCreateSession(peerId, connection) {
+  _getOrCreateSession(peerId, connection, initiator) {
     const hex = b4a.toString(peerId, 'hex')
 
     let session = this.sessions.get(hex)
     if (session) return session
 
-    session = new Session(connection, peerId)
+    session = new Session(connection, peerId, initiator)
     this.sessions.set(hex, session)
 
     connection.on('close', () => {
@@ -110,6 +111,24 @@ module.exports = class Replicator extends ReadyResource {
     connection.on('error', safetyCatch)
 
     return session
+  }
+
+  get connections() {
+    return this.sessions.size
+  }
+
+  async _gc(now = Date.now) {
+    for (const [key, session] of this.sessions) {
+      if (!session.isIdle(now)) continue
+
+      session.destroy()
+      this.sessions.delete(key)
+    }
+
+    for (const [dk, topic] of this.topics) {
+      if (now() - topic._lastQuery < MIN_REANNOUNCE) continue
+      topic._reannounce().catch(safetyCatch)
+    }
   }
 }
 
@@ -122,22 +141,49 @@ class Topic {
     this.destroyed = false
 
     this._activeQuery = null
+    this._cachedBump = 0
+    this._lastQuery = null
+
+    this._oncoreappend = this._oncoreappend.bind(this)
+    core.on('append', this._oncoreappend)
   }
 
   async findPeers() {
+    return this._reannounce(true)
+  }
+
+  async _reannounce(forceConnect = false) {
     if (this.destroyed) return
+
+    this._lastQuery = Date.now()
+    const bump = this.core.length
 
     const query = (this._activeQuery = this.replicator.dht.announce(
       this.discoveryKey,
       this.replicator.keyPair,
-      this.replicator.server.relayAddresses
+      this.replicator.server.relayAddresses,
+      { bump }
     ))
 
     try {
+      const peers = []
+      let connect = forceConnect
       for await (const data of query) {
         if (this.destroyed) return
 
-        for (const peer of data.peers) {
+        for (const p of data.peers) peers.push(p)
+
+        // update detected from dht
+        if (this._cachedBump < data.bump) {
+          this._cachedBump = data.bump
+          connect = true
+          // console.log('reactivating topic', this.discoveryKey.toString('hex'), data.bump)
+          // TODO: session.touch(this.discoveryKey) ?
+        }
+      }
+
+      if (connect) {
+        for (const peer of peers) {
           this._onpeer(peer)
         }
       }
@@ -146,6 +192,16 @@ class Topic {
     } finally {
       if (this._activeQuery === query) this._activeQuery = null
     }
+  }
+
+  _oncoreappend() {
+    // TODO: use a debounce timer instead
+
+    const len = this.core.length // TODO: corestore|view.length ?
+    // console.log('_reannounceBump()', len)
+
+    if (this._cachedBump === len) return
+    this._reannounce().catch(safetyCatch)
   }
 
   _onpeer(peer) {
@@ -176,7 +232,7 @@ class Topic {
         return
       }
 
-      const session = this.replicator._getOrCreateSession(peer.publicKey, conn)
+      const session = this.replicator._getOrCreateSession(peer.publicKey, conn, true)
       session.addRef(this.discoveryKey)
       this.replicate(session)
     })
@@ -200,14 +256,14 @@ class Topic {
 
     core.replicate(session.connection)
 
-    const ondownload = () => session.touch(dk)
+    const onappend = () => session.touch(dk)
     const onsync = () => session.markIdle(dk)
 
-    core.on('download', ondownload)
-    core.on('sync', onsync)
+    core.on('append', onappend)
+    core.on('sync', onsync) // TODO: event 'sync' does not (yet?) exist
 
     session.connection.on('close', () => {
-      core.removeListener('download', ondownload)
+      core.removeListener('append', onappend)
       core.removeListener('sync', onsync)
     })
   }
@@ -220,11 +276,13 @@ class Topic {
       this._activeQuery.destroy()
       this._activeQuery = null
     }
+    this.core.removeListener('append', this._oncoreappend)
   }
 }
 
 class Session {
-  constructor(connection, peerId) {
+  constructor(connection, peerId, initiator) {
+    this.initiator = initiator
     this.connection = connection
     this.peerId = peerId
     this.refs = new Map()
@@ -258,16 +316,17 @@ class Session {
   }
 
   markIdle(discoveryKey) {
+    // never invoked
     const ref = this.refs.get(b4a.toString(discoveryKey, 'hex'))
     if (ref) ref.idle = true
   }
 
-  get idle() {
+  isIdle(now = Date.now) {
     if (this.refs.size === 0) return true
 
-    const now = Date.now()
+    const ts = now()
     for (const ref of this.refs.values()) {
-      if (!ref.idle && now - ref.lastActive < IDLE_TIMEOUT) return false
+      if (!ref.idle && ts - ref.lastActive < IDLE_TIMEOUT) return false
     }
 
     return true
