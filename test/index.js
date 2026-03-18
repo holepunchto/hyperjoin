@@ -40,4 +40,3 @@ test('basic replication', async (t) => {
   await store2.close()
   await testnet.destroy()
 })
-
