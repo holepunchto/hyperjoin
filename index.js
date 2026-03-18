@@ -3,9 +3,9 @@ const DHT = require('hyperdht')
 const safetyCatch = require('safety-catch')
 const Hypercore = require('hypercore')
 const b4a = require('b4a')
+const debounce = require('debounceify')
 
 const IDLE_TIMEOUT = 30_000
-const MIN_REANNOUNCE = 10_000
 
 module.exports = class Replicator extends ReadyResource {
   constructor(store, opts = {}) {
@@ -75,7 +75,7 @@ module.exports = class Replicator extends ReadyResource {
       }
     })
 
-    topic.findPeers().catch(safetyCatch)
+    topic.reannounce()
 
     // replicate over any existing sessions
     for (const session of this.sessions.values()) {
@@ -125,9 +125,8 @@ module.exports = class Replicator extends ReadyResource {
       this.sessions.delete(key)
     }
 
-    for (const [dk, topic] of this.topics) {
-      if (now() - topic._lastQuery < MIN_REANNOUNCE) continue
-      topic._reannounce().catch(safetyCatch)
+    for (const [_, topic] of this.topics) {
+      topic.reannounce()
     }
   }
 }
@@ -140,47 +139,75 @@ class Topic {
     this.discoveryKey = core.discoveryKey
     this.destroyed = false
 
-    this._activeQuery = null
     this._cachedBump = 0
-    this._lastQuery = null
+    this._activeQuery = null
+    this._queue = Promise.resolve()
+    this._pendingForce = false
+    this._lastQuery = 0
+    this._debouncedReannounce = debounce(this._debouncedReannounce.bind(this))
 
-    this._oncoreappend = this._oncoreappend.bind(this)
-    core.on('append', this._oncoreappend)
+    this._onlocalappend = this._onlocalappend.bind(this)
+    core.on('append', this._onlocalappend)
   }
 
-  async findPeers() {
-    return this._reannounce(true)
+  _onlocalappend() {
+    const len = this.core.length
+    if (this._cachedBump >= len) return
+
+    this.reannounce(true)
   }
 
-  async _reannounce(forceConnect = false) {
+  reannounce(forceConnect = false) {
     if (this.destroyed) return
+    this._pendingForce ||= forceConnect
+    this._debouncedReannounce()
+  }
+
+  _debouncedReannounce() {
+    this._reannounce().catch(safetyCatch)
+  }
+
+  async _reannounce() {
+    if (this.destroyed) return
+
+    let release
+    const lock = this._queue
+    this._queue = lock.then(
+      () =>
+        new Promise((resolve) => {
+          release = resolve
+        })
+    )
+    await lock
 
     this._lastQuery = Date.now()
     const bump = this.core.length
 
-    const query = (this._activeQuery = this.replicator.dht.announce(
+    const query = this.replicator.dht.announce(
       this.discoveryKey,
       this.replicator.keyPair,
       this.replicator.server.relayAddresses,
-      { bump }
-    ))
+      { bump, clear: true }
+    )
+    this._activeQuery = query
 
     try {
       const peers = []
-      let connect = forceConnect
+      let connect = this._pendingForce
+
       for await (const data of query) {
         if (this.destroyed) return
-
         for (const p of data.peers) peers.push(p)
 
         // update detected from dht
         if (this._cachedBump < data.bump) {
           this._cachedBump = data.bump
           connect = true
-          // console.log('reactivating topic', this.discoveryKey.toString('hex'), data.bump)
           // TODO: session.touch(this.discoveryKey) ?
         }
       }
+
+      await query.finished()
 
       if (connect) {
         for (const peer of peers) {
@@ -190,18 +217,10 @@ class Topic {
     } catch (err) {
       if (!this.destroyed) safetyCatch(err)
     } finally {
-      if (this._activeQuery === query) this._activeQuery = null
+      this._pendingForce = false
+      this._activeQuery = null
+      release()
     }
-  }
-
-  _oncoreappend() {
-    // TODO: use a debounce timer instead
-
-    const len = this.core.length // TODO: corestore|view.length ?
-    // console.log('_reannounceBump()', len)
-
-    if (this._cachedBump === len) return
-    this._reannounce().catch(safetyCatch)
   }
 
   _onpeer(peer) {
@@ -222,7 +241,7 @@ class Topic {
     if (this.replicator._connecting.has(hex)) return
     this.replicator._connecting.add(hex)
 
-    const conn = this.replicator.dht.connect(peer.publicKey)
+    const conn = this.replicator.dht.connect(peer.publicKey, { keyPair: this.replicator.keyPair })
 
     conn.on('open', () => {
       this.replicator._connecting.delete(hex)
@@ -256,15 +275,16 @@ class Topic {
 
     core.replicate(session.connection)
 
-    const onappend = () => session.touch(dk)
-    const onsync = () => session.markIdle(dk)
+    const touch = () => session.touch(dk)
 
-    core.on('append', onappend)
-    core.on('sync', onsync) // TODO: event 'sync' does not (yet?) exist
+    core.on('append', touch)
+    core.on('download', touch)
+    core.on('upload', touch)
 
     session.connection.on('close', () => {
-      core.removeListener('append', onappend)
-      core.removeListener('sync', onsync)
+      core.removeListener('append', touch)
+      core.removeListener('download', touch)
+      core.removeListener('upload', touch)
     })
   }
 
@@ -276,7 +296,7 @@ class Topic {
       this._activeQuery.destroy()
       this._activeQuery = null
     }
-    this.core.removeListener('append', this._oncoreappend)
+    this.core.removeListener('append', this._onlocalappend)
   }
 }
 
@@ -316,7 +336,7 @@ class Session {
   }
 
   markIdle(discoveryKey) {
-    // never invoked
+    // not used
     const ref = this.refs.get(b4a.toString(discoveryKey, 'hex'))
     if (ref) ref.idle = true
   }
