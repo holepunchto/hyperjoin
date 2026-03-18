@@ -17,11 +17,11 @@
     "schema"
   ],
   "devDependencies": {
-    "brittle": "^3.19.0",
-    "corestore": "^7.8.0",
-    "hyperdht": "^6.29.0",
-    "lunte": "^1.2.0",
-    "prettier": "^3.6.2",
+    "brittle": "^3.19.1",
+    "corestore": "^7.9.1",
+    "hyperdht": "^6.29.3",
+    "lunte": "^1.6.0",
+    "prettier": "^3.8.1",
     "prettier-config-holepunch": "^2.0.0"
   },
   "scripts": {
@@ -40,9 +40,11 @@
   },
   "homepage": "https://github.com/holepunchto/bundlebee",
   "dependencies": {
-    "b4a": "^1.7.4",
+    "b4a": "^1.8.0",
+    "bare-walk-handles": "^2.0.10",
     "hypercore": "^11.27.14",
     "ready-resource": "^1.2.0",
-    "safety-catch": "^1.0.2"
+    "safety-catch": "^1.0.3",
+    "wtfnode": "^0.10.1"
   }
 }

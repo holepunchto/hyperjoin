@@ -5,11 +5,11 @@ const createTestnet = require('hyperdht/testnet')
 const Replicator = require('..')
 
 test('basic replication', async (t) => {
-  const { bootstrap } = await createTestnet()
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
 
   const store1 = new Corestore(await t.tmp())
   const store2 = new Corestore(await t.tmp())
-
   const rep1 = new Replicator(store1, { bootstrap })
   const rep2 = new Replicator(store2, { bootstrap })
 
@@ -25,9 +25,10 @@ test('basic replication', async (t) => {
   await new Promise((res) => setTimeout(res, 1000))
 
   const core2 = store2.get({ key: core1.key })
+  core2.on('append', () => t.comment('blocks replicated', core2.length))
   await core2.ready()
 
-  await core2.update({ wait: true })
+  await core2.get(1)
 
   t.is(core2.length, 2)
   t.alike(await core2.get(0), b4a.from('hello'))
@@ -35,4 +36,8 @@ test('basic replication', async (t) => {
 
   await rep1.close()
   await rep2.close()
+  await store1.close()
+  await store2.close()
+  await testnet.destroy()
 })
+
