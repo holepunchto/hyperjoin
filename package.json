@@ -31,20 +31,19 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/holepunchto/bundlebee.git"
+    "url": "git+https://github.com/holepunchto/replicator.git"
   },
   "author": "Holepunch Inc",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/holepunchto/bundlebee/issues"
+    "url": "https://github.com/holepunchto/replicator/issues"
   },
-  "homepage": "https://github.com/holepunchto/bundlebee",
+  "homepage": "https://github.com/holepunchto/replicator",
   "dependencies": {
     "b4a": "^1.8.0",
-    "bare-walk-handles": "^2.0.10",
     "hypercore": "^11.27.14",
     "ready-resource": "^1.2.0",
     "safety-catch": "^1.0.3",
-    "wtfnode": "^0.10.1"
+    "scope-lock": "^1.2.4"
   }
 }
