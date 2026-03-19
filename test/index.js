@@ -107,3 +107,15 @@ test('sessions are garbage collected & reactivated', async (t) => {
   await store2.close()
   await testnet.destroy()
 })
+
+test('default keypair from corestore', async (t) => {
+  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
+  const rep = new Replicator(store)
+  await rep.ready()
+  t.is(
+    rep.keyPair.publicKey.toString('hex'),
+    '7dda4c84e7061170c5100be5d4c5cce9bb05ff2e1bd20d80d83408a10a6e73cc'
+  )
+  await store.close()
+  await rep.close()
+})

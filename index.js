@@ -11,10 +11,12 @@ module.exports = class Replicator extends ReadyResource {
   constructor(store, opts = {}) {
     super()
 
-    const { seed, keyPair = DHT.keyPair(seed) } = opts
+    const { seed, keyPair } = opts
+    if (seed) this.keyPair = DHT.keyPair(seed)
+    if (keyPair) this.keyPair = keyPair
 
     this.store = store
-    this.keyPair = keyPair
+
     this.dht =
       opts.dht ||
       new DHT({
@@ -35,6 +37,8 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _open() {
+    this.keyPair ||= await this.store.createKeyPair('replicator')
+
     await this.dht.ready()
     await this.server.listen(this.keyPair)
 
