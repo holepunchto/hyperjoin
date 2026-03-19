@@ -160,7 +160,7 @@ class Topic {
     this.reannounce(true).catch(safetyCatch)
   }
 
-  async reannounce(forceConnect = false) {
+  async reannounce(/* forceConnect = false V2 */) {
     if (this.destroyed) return
     // this._pendingForce ||= forceConnect // V2
 
