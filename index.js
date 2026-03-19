@@ -164,7 +164,8 @@ class Topic {
     if (this.destroyed) return
     // this._pendingForce ||= forceConnect // V2
 
-    await this._lock.lock()
+    const proceed = await this._lock.lock()
+    if (!proceed) return
 
     const query = this.replicator.dht.announce(
       this.discoveryKey,
