@@ -146,8 +146,7 @@ class Topic {
     this._cachedBump = 0
     this._activeQuery = null
     this._queue = Promise.resolve()
-    this._pendingForce = false
-    this._lastQuery = 0
+    // this._pendingForce = false // V2
     this._lock = new ScopeLock({ debounce: true })
 
     this._onlocalappend = this._onlocalappend.bind(this)
@@ -163,22 +162,26 @@ class Topic {
 
   async reannounce(forceConnect = false) {
     if (this.destroyed) return
-    this._pendingForce ||= forceConnect
+    // this._pendingForce ||= forceConnect // V2
 
     await this._lock.lock()
-
-    this._lastQuery = Date.now()
-    const bump = this.core.length
 
     const query = this.replicator.dht.announce(
       this.discoveryKey,
       this.replicator.keyPair,
       this.replicator.server.relayAddresses,
-      { bump, clear: true }
+      // { bump: this.core.length, clear: true } // V2
     )
     this._activeQuery = query
 
     try {
+      // V1
+      for await (const data of query) {
+        if (this.destroyed) return
+        for (const peer of data.peers) this._onpeer(peer)
+      }
+
+      /* V2
       const peers = []
       let connect = this._pendingForce
 
@@ -194,17 +197,18 @@ class Topic {
         }
       }
 
-      await query.finished()
-
       if (connect) {
         for (const peer of peers) {
           this._onpeer(peer)
         }
       }
+      */
+
+      await query.finished()
     } catch (err) {
       if (!this.destroyed) safetyCatch(err)
     } finally {
-      this._pendingForce = false
+      // this._pendingForce = false
       this._activeQuery = null
       this._lock.unlock()
     }
