@@ -169,7 +169,7 @@ class Topic {
     const query = this.replicator.dht.announce(
       this.discoveryKey,
       this.replicator.keyPair,
-      this.replicator.server.relayAddresses,
+      this.replicator.server.relayAddresses
       // { bump: this.core.length, clear: true } // V2
     )
     this._activeQuery = query
