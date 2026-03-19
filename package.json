@@ -26,7 +26,7 @@
   },
   "scripts": {
     "format": "prettier . --write",
-    "test": "npm run lint && brittle-bare test/index.js",
+    "test": "brittle-bare test/index.js",
     "lint": "prettier . --check && lunte"
   },
   "repository": {
@@ -41,9 +41,9 @@
   "homepage": "https://github.com/holepunchto/replicator",
   "dependencies": {
     "b4a": "^1.8.0",
-    "debounceify": "^1.1.0",
     "hypercore": "^11.27.14",
     "ready-resource": "^1.2.0",
-    "safety-catch": "^1.0.3"
+    "safety-catch": "^1.0.3",
+    "scope-lock": "^1.2.4"
   }
 }

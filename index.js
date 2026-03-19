@@ -3,7 +3,7 @@ const DHT = require('hyperdht')
 const safetyCatch = require('safety-catch')
 const Hypercore = require('hypercore')
 const b4a = require('b4a')
-const debounce = require('debounceify')
+const ScopeLock = require('scope-lock')
 
 const IDLE_TIMEOUT = 30_000
 
@@ -79,7 +79,7 @@ module.exports = class Replicator extends ReadyResource {
       }
     })
 
-    topic.reannounce()
+    topic.reannounce().catch(safetyCatch)
 
     // replicate over any existing sessions
     for (const session of this.sessions.values()) {
@@ -130,7 +130,7 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     for (const [_, topic] of this.topics) {
-      topic.reannounce()
+      topic.reannounce().catch(safetyCatch)
     }
   }
 }
@@ -148,7 +148,7 @@ class Topic {
     this._queue = Promise.resolve()
     this._pendingForce = false
     this._lastQuery = 0
-    this._debouncedReannounce = debounce(this._debouncedReannounce.bind(this))
+    this._lock = new ScopeLock({ debounce: true })
 
     this._onlocalappend = this._onlocalappend.bind(this)
     core.on('append', this._onlocalappend)
@@ -158,31 +158,14 @@ class Topic {
     const len = this.core.length
     if (this._cachedBump >= len) return
 
-    this.reannounce(true)
+    this.reannounce(true).catch(safetyCatch)
   }
 
-  reannounce(forceConnect = false) {
+  async reannounce(forceConnect = false) {
     if (this.destroyed) return
     this._pendingForce ||= forceConnect
-    this._debouncedReannounce()
-  }
 
-  _debouncedReannounce() {
-    this._reannounce().catch(safetyCatch)
-  }
-
-  async _reannounce() {
-    if (this.destroyed) return
-
-    let release
-    const lock = this._queue
-    this._queue = lock.then(
-      () =>
-        new Promise((resolve) => {
-          release = resolve
-        })
-    )
-    await lock
+    await this._lock.lock()
 
     this._lastQuery = Date.now()
     const bump = this.core.length
@@ -223,7 +206,7 @@ class Topic {
     } finally {
       this._pendingForce = false
       this._activeQuery = null
-      release()
+      this._lock.unlock()
     }
   }
 
