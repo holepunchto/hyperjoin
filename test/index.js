@@ -6,62 +6,123 @@ const Replicator = require('..')
 
 const seedA = Buffer.alloc(32, 0xa)
 const seedB = Buffer.alloc(32, 0xb)
+const seedC = Buffer.alloc(32, 0xc)
 
-test('basic replication', async (t) => {
+test('Default keypair from corestore', async (t) => {
+  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
+  const rep = new Replicator(store)
+  await rep.ready()
+  t.is(
+    rep.keyPair.publicKey.toString('hex'),
+    '7dda4c84e7061170c5100be5d4c5cce9bb05ff2e1bd20d80d83408a10a6e73cc'
+  )
+  await store.close()
+  await rep.close()
+})
+
+test('Basic replication', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const store1 = new Corestore(await t.tmp())
-  const store2 = new Corestore(await t.tmp())
-  const rep1 = new Replicator(store1, { bootstrap, seed: seedA })
-  const rep2 = new Replicator(store2, { bootstrap, seed: seedB })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
-  await rep1.ready()
-  await rep2.ready()
+  const remote = p1.cores.map((core) => p2.session.get(core.key))
+  await Promise.all(remote.map((core) => core.ready()))
 
-  const core1 = store1.get({ name: 'test' })
-  await core1.ready()
+  const rstore = p2.store.session()
+  const discoveryKey = p1.cores[0].discoveryKey
+  p2.replicator.join(rstore, discoveryKey)
 
-  await core1.append([b4a.from('hello'), b4a.from('world')])
+  const val = await remote[0].get(0)
+  t.is(val.toString(), 'cells')
 
-  // wait for rep1 to announce
-  await new Promise((res) => setTimeout(res, 1000))
+  t.is(remote[0].length, 2)
+  t.is(remote[1].length, 2)
 
-  const core2 = store2.get({ key: core1.key })
-  core2.on('append', () => t.comment('blocks replicated', core2.length))
-  await core2.ready()
+  t.is(p1.replicator.connections.size, 1)
+  t.is(p2.replicator.connections.size, 1)
 
-  await core2.get(1)
+  t.alike(Array.from(p2.replicator.connections.keys()), [p1.peerId], 'p2 sees p1')
+  t.alike(Array.from(p1.replicator.connections.keys()), [p2.peerId], 'p1 sees p2')
 
-  t.is(core2.length, 2)
-  t.alike(await core2.get(0), b4a.from('hello'))
-  t.alike(await core2.get(1), b4a.from('world'))
-
-  t.is(rep1.connections, 1)
-  t.is(rep2.connections, 1)
-
-  t.alike(
-    // rep1.keyPair.publicKey
-    ['43a72e714401762df66b68c26dfbdf2682aaec9f2474eca4613e424a0fbafd3c'],
-    Array.from(rep2.sessions.keys()),
-    'Rep1 sees public key of Rep2'
-  )
-  t.alike(
-    // rep2.keyPair.publicKey
-    ['66be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a'],
-    Array.from(rep1.sessions.keys()),
-    'Rep2 sees public key of Rep1'
-  )
-
-  await rep1.close()
-  await rep2.close()
-  await store1.close()
-  await store2.close()
+  await p1.destroy()
+  await p2.destroy()
   await testnet.destroy()
 })
 
+test('GC connections with no active mux sessions', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxConnections: 1 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
+
+  const remote = p1.cores.map((core) => p2.session.get(core.key))
+  await Promise.all(remote.map((core) => core.ready()))
+
+  const discoveryKey = p1.cores[0].discoveryKey
+  p2.replicator.join(p2.store.session(), discoveryKey)
+
+  await remote[1].get(1)
+
+  const p2Key = b4a.toString(p2.replicator.keyPair.publicKey, 'hex')
+  const p3Key = b4a.toString(p3.replicator.keyPair.publicKey, 'hex')
+
+  const p3Connected = serverConnection(p1.replicator.server, p3.replicator.keyPair.publicKey)
+  p3.replicator.join(p3.store.session(), discoveryKey)
+  await p3Connected
+
+  t.is(p1.replicator.connections.size, 2, 'p1 connected to both peers')
+  t.ok(
+    p1.replicator.connections.get(p2Key)._protomuxSessions() > 0,
+    'p2 has open core session to p1'
+  )
+  t.is(p1.replicator.connections.has(p3Key), true, 'p3 should connect to p1')
+
+  t.is(
+    p1.replicator.connections.get(p3Key)._protomuxSessions(),
+    0,
+    'p3 connection has no protomux sessions'
+  )
+
+  await p1.replicator._gc(() => Date.now())
+
+  t.is(
+    p1.replicator.connections.size,
+    1,
+    'gc should evict the connection without active protmux sessions'
+  )
+  t.alike(
+    Array.from(p1.replicator.connections.keys()),
+    [p2Key],
+    'gc keeps the connection carrying opened local cores'
+  )
+
+  await p1.cores[0].append(b4a.from('gc-kept'))
+  t.alike(await remote[0].get(2), b4a.from('gc-kept'), 'replication survives gc on the kept peer')
+
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await testnet.destroy()
+
+  function serverConnection(server, publicKey) {
+    return new Promise((resolve) => {
+      const onconnection = (socket) => {
+        if (!b4a.equals(socket.remotePublicKey, publicKey)) return
+        server.removeListener('connection', onconnection)
+        resolve()
+      }
+
+      server.on('connection', onconnection)
+    })
+  }
+})
+
 // V1
-test('sessions are garbage collected', async (t) => {
+test.skip('Sessions are garbage collected', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -147,14 +208,33 @@ test.skip('sessions are garbage collected & reactivated', async (t) => {
   await testnet.destroy()
 })
 
-test('default keypair from corestore', async (t) => {
-  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
-  const rep = new Replicator(store)
-  await rep.ready()
-  t.is(
-    rep.keyPair.publicKey.toString('hex'),
-    '7dda4c84e7061170c5100be5d4c5cce9bb05ff2e1bd20d80d83408a10a6e73cc'
-  )
-  await store.close()
-  await rep.close()
-})
+async function spawnPeer(t, { seed, bootstrap, maxConnections } = {}) {
+  let storeOpts = {}
+  if (seed) storeOpts = { primaryKey: seed, unsafe: true }
+
+  const store = new Corestore(await t.tmp(), storeOpts)
+
+  const replicator = new Replicator(store, { bootstrap, maxConnections }) // server.on('connection', socket => store.replicate(socket))
+  await replicator.ready()
+
+  const session = store.session()
+
+  const one = session.get({ name: 'one' })
+  await one.ready()
+  one.append([b4a.from('cells'), b4a.from('interlinked')])
+
+  replicator.join(session, one.discoveryKey) // watch() for refcount
+
+  const two = session.get({ name: 'two' })
+  await two.ready()
+  two.append([b4a.from('within'), b4a.from('Cells')])
+
+  const destroy = async () => {
+    await replicator.close()
+    await store.close()
+  }
+
+  const peerId = b4a.toString(replicator.keyPair.publicKey, 'hex')
+
+  return { store, replicator, session, peerId, destroy, cores: [one, two] }
+}

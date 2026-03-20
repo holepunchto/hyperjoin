@@ -8,14 +8,15 @@ const ScopeLock = require('scope-lock')
 const IDLE_TIMEOUT = 30_000
 
 module.exports = class Replicator extends ReadyResource {
-  constructor(store, opts = {}) {
+  constructor(rootStore, opts = {}) {
     super()
 
     const { seed, keyPair } = opts
     if (seed) this.keyPair = DHT.keyPair(seed)
     if (keyPair) this.keyPair = keyPair
 
-    this.store = store
+    this.root = rootStore
+    this.maxConnections = opts.maxConnections ?? Infinity
 
     this.dht =
       opts.dht ||
@@ -25,144 +26,124 @@ module.exports = class Replicator extends ReadyResource {
         port: opts.port
       })
 
-    this.server = this.dht.createServer((conn) => this._onincoming(conn))
-
-    this.sessions = new Map() // hex(peerId) -> Session
-    this.topics = new Map() // hex(discoveryKey) -> Topic
-
+    this.connections = new Map() // hex(peerId) -> Connection
+    this.sessions = new Map() // hex(discoveryKey) -> Session
     this._connecting = new Set() // hex(peerId) — dedup in-flight dials
-    this._unwatcher = null
 
     this.ready().catch(safetyCatch)
   }
 
+  get topics() {
+    return Array.from(this.sessions.values()).map((sess) => sess.topic)
+  }
+
   async _open() {
-    this.keyPair ||= await this.store.createKeyPair('replicator')
+    this.keyPair ||= await this.root.createKeyPair('replicator')
 
     await this.dht.ready()
-    await this.server.listen(this.keyPair)
 
-    // watch the corestore for new cores, replicate them automatically
-    this._unwatcher = this.store.watch((core) => this._oncore(core))
+    this.server = this.dht.createServer(this._onincoming.bind(this))
+    await this.server.listen(this.keyPair)
   }
 
   async _close() {
-    if (this._unwatcher) this._unwatcher()
-
-    for (const topic of this.topics.values()) topic.destroy()
     for (const session of this.sessions.values()) session.destroy()
-
-    this.topics.clear()
     this.sessions.clear()
+
+    for (const connection of this.connections.values()) connection.destroy()
+    this.connections.clear()
+
+    this._connecting.clear()
 
     await this.server.close()
     if (!this.dht.destroyed) await this.dht.destroy()
   }
 
-  // called by the store watcher when a core is opened
-  _oncore(core) {
-    const hex = b4a.toString(core.discoveryKey, 'hex')
-    if (this.topics.has(hex)) return
-
-    // weak ref — closes when the real core is gc'd or closed by user
-    const weak = new Hypercore({ core, weak: true })
-
-    const topic = new Topic(this, weak)
-    this.topics.set(hex, topic)
-
-    weak.on('close', () => {
-      this.topics.delete(hex)
-      topic.destroy()
-
-      for (const session of this.sessions.values()) {
-        session.removeRef(weak.discoveryKey)
-      }
-    })
-
-    topic.reannounce().catch(safetyCatch)
-
-    // replicate over any existing sessions
-    for (const session of this.sessions.values()) {
-      session.addRef(topic.discoveryKey)
-      topic.replicate(session)
-    }
-  }
-
-  // incoming connection from a remote peer
-  _onincoming(conn) {
-    const peerId = conn.remotePublicKey
-    const session = this._getOrCreateSession(peerId, conn, false)
-
-    for (const topic of this.topics.values()) {
-      session.addRef(topic.discoveryKey)
-      topic.replicate(session)
-    }
-  }
-
-  _getOrCreateSession(peerId, connection, initiator) {
-    const hex = b4a.toString(peerId, 'hex')
-
-    let session = this.sessions.get(hex)
+  join(store, discoveryKey) {
+    let session = this.sessions.get(toHex(discoveryKey))
     if (session) return session
 
-    session = new Session(connection, peerId, initiator)
-    this.sessions.set(hex, session)
-
-    connection.on('close', () => {
-      this.sessions.delete(hex)
-    })
-
-    connection.on('error', safetyCatch)
+    session = new Session(this, store, discoveryKey)
+    this.sessions.set(toHex(discoveryKey), session)
 
     return session
   }
 
-  get connections() {
-    return this.sessions.size
+  _onincoming(conn) {
+    const peerId = conn.remotePublicKey
+    const connection = this._getOrCreateConnection(peerId, conn, false)
+
+    // discoveryKey unknown, adding to all sessions
+    for (const session of this.sessions.values()) {
+      for (const core of session.cores.values()) {
+        connection.addRef(core.discoveryKey)
+      }
+    }
+  }
+
+  _getOrCreateConnection(peerId, stream, initiator) {
+    const hex = toHex(peerId)
+
+    let connection = this.connections.get(hex)
+    if (connection) return connection
+
+    connection = new Connection(this, stream, peerId, initiator)
+    this.connections.set(hex, connection)
+
+    this.root.replicate(stream)
+
+    stream.on('close', () => {
+      this.connections.delete(hex)
+    })
+
+    stream.on('error', safetyCatch)
+
+    return connection
+  }
+
+  _destroyConnection(connection) {
+    this.connections.delete(toHex(connection.peerId))
+    connection.destroy()
   }
 
   async _gc(now = Date.now) {
-    for (const [key, session] of this.sessions) {
-      if (!session.isIdle(now)) continue
-
-      session.destroy()
-      this.sessions.delete(key)
+    while (this.connections.size > this.maxConnections) {
+      // find Connection without cores
+      for (const connection of this.connections.values()) {
+        if (connection._protomuxSessions() !== 0) continue
+        this._destroyConnection(connection)
+      }
     }
 
-    for (const [_, topic] of this.topics) {
+    for (const connection of this.connections.values()) {
+      if (!connection.isIdle(now)) continue
+
+      this._destroyConnection(connection)
+    }
+
+    /* V2
+    for (const topic of this.topics) {
       topic.reannounce().catch(safetyCatch)
     }
+    */
   }
 }
 
 // a topic is a single discovery key announced + looked up on the dht
 class Topic {
-  constructor(replicator, core) {
-    this.replicator = replicator
-    this.core = core
-    this.discoveryKey = core.discoveryKey
+  constructor(session, discoveryKey) {
+    this.session = session
+    this.replicator = session.replicator
+    this.discoveryKey = discoveryKey
     this.destroyed = false
 
-    this._cachedBump = 0
     this._activeQuery = null
     this._queue = Promise.resolve()
-    // this._pendingForce = false // V2
     this._lock = new ScopeLock({ debounce: true })
-
-    this._onlocalappend = this._onlocalappend.bind(this)
-    core.on('append', this._onlocalappend)
   }
 
-  _onlocalappend() {
-    const len = this.core.length
-    if (this._cachedBump >= len) return
-
-    this.reannounce(true).catch(safetyCatch)
-  }
-
-  async reannounce(/* forceConnect = false V2 */) {
+  async reannounce() {
     if (this.destroyed) return
-    // this._pendingForce ||= forceConnect // V2
 
     const proceed = await this._lock.lock()
     if (!proceed) return
@@ -171,112 +152,56 @@ class Topic {
       this.discoveryKey,
       this.replicator.keyPair,
       this.replicator.server.relayAddresses
-      // { bump: this.core.length, clear: true } // V2
     )
     this._activeQuery = query
 
     try {
-      // V1
       for await (const data of query) {
         if (this.destroyed) return
-        for (const peer of data.peers) this._onpeer(peer)
+        for (const peer of data.peers) this._connectPeer(peer)
       }
-
-      /* V2
-      const peers = []
-      let connect = this._pendingForce
-
-      for await (const data of query) {
-        if (this.destroyed) return
-        for (const p of data.peers) peers.push(p)
-
-        // update detected from dht
-        if (this._cachedBump < data.bump) {
-          this._cachedBump = data.bump
-          connect = true
-          // TODO: session.touch(this.discoveryKey) ?
-        }
-      }
-
-      if (connect) {
-        for (const peer of peers) {
-          this._onpeer(peer)
-        }
-      }
-      */
 
       await query.finished()
     } catch (err) {
       if (!this.destroyed) safetyCatch(err)
     } finally {
-      // this._pendingForce = false
       this._activeQuery = null
       this._lock.unlock()
     }
   }
 
-  _onpeer(peer) {
-    const hex = b4a.toString(peer.publicKey, 'hex')
+  _connectPeer(peer) {
+    const peerId = toHex(peer.publicKey)
 
     // skip self
     if (b4a.equals(peer.publicKey, this.replicator.server.publicKey)) return
 
     // already connected
-    if (this.replicator.sessions.has(hex)) {
-      const session = this.replicator.sessions.get(hex)
-      session.addRef(this.discoveryKey)
-      this.replicate(session)
-      return
-    }
+    if (this.replicator.connections.has(peerId)) return
 
     // already dialing
-    if (this.replicator._connecting.has(hex)) return
-    this.replicator._connecting.add(hex)
+    if (this.replicator._connecting.has(peerId)) return
+    this.replicator._connecting.add(peerId)
 
-    const conn = this.replicator.dht.connect(peer.publicKey, { keyPair: this.replicator.keyPair })
+    const stream = this.replicator.dht.connect(peer.publicKey, { keyPair: this.replicator.keyPair })
 
-    conn.on('open', () => {
-      this.replicator._connecting.delete(hex)
+    stream.on('open', () => {
+      this.replicator._connecting.delete(peerId)
 
       if (this.destroyed) {
-        conn.destroy()
+        stream.destroy()
         return
       }
 
-      const session = this.replicator._getOrCreateSession(peer.publicKey, conn, true)
-      session.addRef(this.discoveryKey)
-      this.replicate(session)
+      this.replicator._getOrCreateConnection(peer.publicKey, stream, true, this.discoveryKey)
     })
 
-    conn.on('error', () => {
-      this.replicator._connecting.delete(hex)
+    stream.on('error', () => {
+      this.replicator._connecting.delete(peerId)
     })
 
-    conn.on('close', () => {
-      this.replicator._connecting.delete(hex)
-    })
-  }
-
-  replicate(session) {
-    const hex = b4a.toString(this.discoveryKey, 'hex')
-    if (session.sent.has(hex)) return
-    session.sent.add(hex)
-
-    const dk = this.discoveryKey
-    const core = this.core
-
-    core.replicate(session.connection)
-
-    const touch = () => session.touch(dk)
-
-    core.on('append', touch)
-    core.on('download', touch)
-    core.on('upload', touch)
-
-    session.connection.on('close', () => {
-      core.removeListener('append', touch)
-      core.removeListener('download', touch)
-      core.removeListener('upload', touch)
+    stream.on('close', () => {
+      this.replicator._connecting.delete(peerId)
     })
   }
 
@@ -288,49 +213,50 @@ class Topic {
       this._activeQuery.destroy()
       this._activeQuery = null
     }
-    this.core.removeListener('append', this._onlocalappend)
   }
 }
 
-class Session {
-  constructor(connection, peerId, initiator) {
+class Connection {
+  constructor(replicator, stream, peerId, initiator) {
+    this.replicator = replicator
     this.initiator = initiator
-    this.connection = connection
+    this.stream = stream
     this.peerId = peerId
     this.refs = new Map()
-    this.sent = new Set()
     this.lastActive = Date.now()
   }
 
+  get protomux() {
+    return this.stream.noiseStream.userData
+  }
+
   addRef(discoveryKey) {
-    const hex = b4a.toString(discoveryKey, 'hex')
+    const hex = toHex(discoveryKey)
     if (this.refs.has(hex)) return
 
     this.refs.set(hex, {
       discoveryKey,
-      lastActive: Date.now(),
-      idle: false
+      lastActive: Date.now()
     })
   }
 
+  hasRef(discoveryKey) {
+    const hex = toHex(discoveryKey)
+    return this.refs.has(hex)
+  }
+
   removeRef(discoveryKey) {
-    this.refs.delete(b4a.toString(discoveryKey, 'hex'))
+    this.refs.delete(toHex(discoveryKey))
   }
 
   touch(discoveryKey) {
-    const ref = this.refs.get(b4a.toString(discoveryKey, 'hex'))
+    // TODO: reintroduce
+    const ref = this.refs.get(toHex(discoveryKey))
     if (!ref) return
 
     const now = Date.now()
     ref.lastActive = now
-    ref.idle = false
     this.lastActive = now
-  }
-
-  markIdle(discoveryKey) {
-    // not used
-    const ref = this.refs.get(b4a.toString(discoveryKey, 'hex'))
-    if (ref) ref.idle = true
   }
 
   isIdle(now = Date.now) {
@@ -338,18 +264,92 @@ class Session {
 
     const ts = now()
     for (const ref of this.refs.values()) {
-      if (!ref.idle && ts - ref.lastActive < IDLE_TIMEOUT) return false
+      if (ts - ref.lastActive < IDLE_TIMEOUT) return false
     }
 
     return true
   }
 
+  _protomuxSessions() {
+    const mux = this.protomux
+
+    let opened = 0
+    const cores = this.replicator.root.cores.map.values() // 9999+ cores?
+
+    for (const core of cores) {
+      if (core.closing) continue
+      if (!mux.opened({ protocol: 'hypercore/alpha', id: core.discoveryKey })) continue
+      opened++
+    }
+
+    return opened
+  }
+
   destroy() {
     this.refs.clear()
-    this.sent.clear()
-    this.connection.destroy()
+    this.stream.destroy()
   }
 }
 
+class Session {
+  constructor(replicator, store, discoveryKey) {
+    this.replicator = replicator
+    this.store = store // instance from Replicator.root.session()
+    this.discoveryKey = discoveryKey
+    this.cores = new Map() // discoveryKey => Core
+
+    this._oncore = this._oncore.bind(this)
+    this.store.watch(this._oncore)
+    this._backfillOpen().catch(safetyCatch)
+
+    this.topic = new Topic(this, discoveryKey)
+    this.topic.reannounce().catch(safetyCatch)
+  }
+
+  // store watch() not triggered for already open cores
+  async _backfillOpen() {
+    // not sure about this
+    for await (const dk of this.store.list()) {
+      const core = this.replicator.root.cores.get(dk)
+      if (!core) continue
+      this._oncore(core)
+    }
+  }
+
+  _oncore(core) {
+    const dk = toHex(core.discoveryKey)
+    if (this.cores.has(dk)) return
+
+    const weak = new Hypercore({ core, weak: true })
+    this.cores.set(dk, weak)
+
+    weak.on('close', () => {
+      this.cores.delete(dk)
+
+      weak.removeListener('append', weak.__onlocalappend)
+
+      for (const connection of this.replicator.connections.values()) {
+        connection.removeRef(weak.discoveryKey)
+      }
+    })
+
+    // add ref to existing connections
+    for (const connection of this.replicator.connections.values()) {
+      connection.addRef(weak.discoveryKey)
+    }
+  }
+
+  destroy() {
+    this.store.unwatch(this._oncore)
+    this.cores.clear()
+    this.topic.destroy()
+  }
+}
+
+function toHex(buffer) {
+  return b4a.toString(buffer, 'hex')
+}
+
 module.exports.Topic = Topic
+module.exports.Connection = Connection
 module.exports.Session = Session
