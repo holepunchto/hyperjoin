@@ -131,7 +131,6 @@ module.exports = class Replicator extends ReadyResource {
   }
 }
 
-// a topic is a single discovery key announced + looked up on the dht
 class Topic {
   constructor(session, discoveryKey) {
     this.session = session
@@ -281,8 +280,9 @@ class Connection {
     if (mux.isIdle()) return 0
 
     let opened = 0
-    for (const { discoveryKey } of this.replicator.cores()) {
-      if (!mux.opened({ protocol: 'hypercore/alpha', id: discoveryKey })) continue
+    for (const { core } of this.replicator.cores()) {
+      if (core.closing) continue
+      if (!mux.opened({ protocol: 'hypercore/alpha', id: core.discoveryKey })) continue
       opened++
     }
 
