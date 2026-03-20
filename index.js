@@ -228,7 +228,7 @@ class Connection {
   }
 
   get protomux() {
-    return this.stream.noiseStream.userData
+    return Hypercore.getProtocolMuxer(this.stream)
   }
 
   addRef(discoveryKey) {
