@@ -37,6 +37,14 @@ module.exports = class Replicator extends ReadyResource {
     return Array.from(this.sessions.values()).map((sess) => sess.topic)
   }
 
+  * cores () {
+    for (const session of this.sessions.values()) {
+      for (const [discoveryKey, core] of session.cores) {
+        yield { discoveryKey, core, session }
+      }
+    }
+  }
+
   async _open() {
     this.keyPair ||= await this.root.createKeyPair('replicator')
 
@@ -101,24 +109,18 @@ module.exports = class Replicator extends ReadyResource {
     return connection
   }
 
-  _destroyConnection(connection) {
+  _evictConnection(connection) {
     this.connections.delete(toHex(connection.peerId))
     connection.destroy()
   }
 
   async _gc(now = Date.now) {
     while (this.connections.size > this.maxConnections) {
-      // find Connection without cores
       for (const connection of this.connections.values()) {
-        if (connection._protomuxSessions() !== 0) continue
-        this._destroyConnection(connection)
+        if (!connection.isIdle(now)) continue
+
+        this._evictConnection(connection)
       }
-    }
-
-    for (const connection of this.connections.values()) {
-      if (!connection.isIdle(now)) continue
-
-      this._destroyConnection(connection)
     }
 
     /* V2
@@ -262,6 +264,9 @@ class Connection {
   isIdle(now = Date.now) {
     if (this.refs.size === 0) return true
 
+    // find Connection without protomux sesions of local cores
+    if (this._protomuxSessions() === 0) return true
+
     const ts = now()
     for (const ref of this.refs.values()) {
       if (ts - ref.lastActive < IDLE_TIMEOUT) return false
@@ -273,12 +278,11 @@ class Connection {
   _protomuxSessions() {
     const mux = this.protomux
 
-    let opened = 0
-    const cores = this.replicator.root.cores.map.values() // 9999+ cores?
+    if (mux.isIdle()) return 0
 
-    for (const core of cores) {
-      if (core.closing) continue
-      if (!mux.opened({ protocol: 'hypercore/alpha', id: core.discoveryKey })) continue
+    let opened = 0
+    for (const { discoveryKey } of this.replicator.cores()) {
+      if (!mux.opened({ protocol: 'hypercore/alpha', id: discoveryKey })) continue
       opened++
     }
 
@@ -300,20 +304,9 @@ class Session {
 
     this._oncore = this._oncore.bind(this)
     this.store.watch(this._oncore)
-    this._backfillOpen().catch(safetyCatch)
 
     this.topic = new Topic(this, discoveryKey)
     this.topic.reannounce().catch(safetyCatch)
-  }
-
-  // store watch() not triggered for already open cores
-  async _backfillOpen() {
-    // not sure about this
-    for await (const dk of this.store.list()) {
-      const core = this.replicator.root.cores.get(dk)
-      if (!core) continue
-      this._oncore(core)
-    }
   }
 
   _oncore(core) {
@@ -326,8 +319,6 @@ class Session {
     weak.on('close', () => {
       this.cores.delete(dk)
 
-      weak.removeListener('append', weak.__onlocalappend)
-
       for (const connection of this.replicator.connections.values()) {
         connection.removeRef(weak.discoveryKey)
       }
@@ -337,6 +328,11 @@ class Session {
     for (const connection of this.replicator.connections.values()) {
       connection.addRef(weak.discoveryKey)
     }
+  }
+
+  // Manual weak-ref, core must belong to store
+  addLocal(core) {
+    this._oncore(core.core)
   }
 
   destroy() {

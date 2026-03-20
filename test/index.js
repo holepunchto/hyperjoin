@@ -214,7 +214,7 @@ async function spawnPeer(t, { seed, bootstrap, maxConnections } = {}) {
 
   const store = new Corestore(await t.tmp(), storeOpts)
 
-  const replicator = new Replicator(store, { bootstrap, maxConnections }) // server.on('connection', socket => store.replicate(socket))
+  const replicator = new Replicator(store, { bootstrap, maxConnections })
   await replicator.ready()
 
   const session = store.session()
@@ -223,7 +223,7 @@ async function spawnPeer(t, { seed, bootstrap, maxConnections } = {}) {
   await one.ready()
   one.append([b4a.from('cells'), b4a.from('interlinked')])
 
-  replicator.join(session, one.discoveryKey) // watch() for refcount
+  replicator.join(session, one.discoveryKey).addLocal(one)
 
   const two = session.get({ name: 'two' })
   await two.ready()
