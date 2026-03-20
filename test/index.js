@@ -55,7 +55,7 @@ test('GC connections with no active mux sessions', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxConnections: 1 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, lowWatermark: 1, highWatermark: 1 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
   const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
 
@@ -208,13 +208,13 @@ test.skip('sessions are garbage collected & reactivated', async (t) => {
   await testnet.destroy()
 })
 
-async function spawnPeer(t, { seed, bootstrap, maxConnections } = {}) {
+async function spawnPeer(t, { seed, bootstrap, lowWatermark, highWatermark } = {}) {
   let storeOpts = {}
   if (seed) storeOpts = { primaryKey: seed, unsafe: true }
 
   const store = new Corestore(await t.tmp(), storeOpts)
 
-  const replicator = new Replicator(store, { bootstrap, maxConnections })
+  const replicator = new Replicator(store, { bootstrap, lowWatermark, highWatermark, manual: true })
   await replicator.ready()
 
   const session = store.session()

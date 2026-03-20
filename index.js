@@ -6,6 +6,9 @@ const b4a = require('b4a')
 const ScopeLock = require('scope-lock')
 
 const IDLE_TIMEOUT = 30_000
+const GC_INTERVAL = 5_000
+const WATERMARK_LOW = 20
+const WATERMARK_HIGH = 40
 
 module.exports = class Replicator extends ReadyResource {
   constructor(rootStore, opts = {}) {
@@ -16,7 +19,6 @@ module.exports = class Replicator extends ReadyResource {
     if (keyPair) this.keyPair = keyPair
 
     this.root = rootStore
-    this.maxConnections = opts.maxConnections ?? Infinity
 
     this.dht =
       opts.dht ||
@@ -29,6 +31,13 @@ module.exports = class Replicator extends ReadyResource {
     this.connections = new Map() // hex(peerId) -> Connection
     this.sessions = new Map() // hex(discoveryKey) -> Session
     this._connecting = new Set() // hex(peerId) — dedup in-flight dials
+
+    this._lowWatermark = opts.lowWatermark ?? WATERMARK_LOW
+    this._highWatermark = opts.highWatermark ?? WATERMARK_HIGH
+
+    if (!opts.manual) {
+      this._gcInterval = setInterval(this._gc.bind(this), GC_INTERVAL)
+    }
 
     this.ready().catch(safetyCatch)
   }
@@ -55,6 +64,8 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _close() {
+    clearInterval(this._gcInterval)
+
     for (const session of this.sessions.values()) session.destroy()
     this.sessions.clear()
 
@@ -115,19 +126,23 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _gc(now = Date.now) {
-    while (this.connections.size > this.maxConnections) {
-      for (const connection of this.connections.values()) {
-        if (!connection.isIdle(now)) continue
-
-        this._evictConnection(connection)
-      }
-    }
-
     /* V2
     for (const topic of this.topics) {
       topic.reannounce().catch(safetyCatch)
     }
     */
+
+    if (this.connections.size > this._highWatermark) {
+      for (const connection of this.connections.values()) {
+        if (!connection.isIdle(now)) continue
+
+        this._evictConnection(connection)
+
+        if (this.connections.size <= this._lowWatermark) {
+          break // target reached
+        }
+      }
+    }
   }
 }
 
