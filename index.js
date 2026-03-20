@@ -37,7 +37,7 @@ module.exports = class Replicator extends ReadyResource {
     return Array.from(this.sessions.values()).map((sess) => sess.topic)
   }
 
-  * cores () {
+  *cores() {
     for (const session of this.sessions.values()) {
       for (const [discoveryKey, core] of session.cores) {
         yield { discoveryKey, core, session }
