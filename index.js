@@ -30,6 +30,7 @@ module.exports = class Replicator extends ReadyResource {
     this.listening = null
 
     this.destroyed = false
+    this.suspended = false
 
     this.connections = new Map() // hex(peerId) -> Connection
     this.sessions = new Map() // hex(discoveryKey) -> Session
@@ -37,10 +38,10 @@ module.exports = class Replicator extends ReadyResource {
 
     this._lowWatermark = opts.lowWatermark ?? WATERMARK_LOW
     this._highWatermark = opts.highWatermark ?? WATERMARK_HIGH
+    this._manual = opts.manual === true
 
-    if (!opts.manual) {
-      this._gcInterval = setInterval(this._gc.bind(this), GC_INTERVAL)
-    }
+    this._gcInterval = null
+    if (!this._manual) this._startGC()
   }
 
   get discoverySessions() {
@@ -71,10 +72,58 @@ module.exports = class Replicator extends ReadyResource {
     return this.listening
   }
 
+  async suspend({ log = noop } = {}) {
+    if (this.suspended) return
+
+    const pending = []
+    const suspending = [this.server.suspend({ log })]
+
+    for (const peerDiscovery of this.discoverySessions) {
+      suspending.push(peerDiscovery.suspend({ log }))
+    }
+
+    for (const session of this.sessions.values()) {
+      suspending.push(session.suspend())
+    }
+
+    for (const connection of this.connections.values()) {
+      pending.push(new Promise((resolve) => connection.stream.on('close', resolve)))
+      connection.destroy()
+    }
+
+    this.suspended = true
+    this._connecting.clear()
+    clearInterval(this._gcInterval)
+    this._gcInterval = null
+
+    await Promise.allSettled(suspending)
+    await this.dht.suspend({ log })
+    await Promise.all(pending)
+  }
+
+  async resume({ log = noop } = {}) {
+    if (!this.suspended) return
+
+    await this.dht.resume({ log })
+    await this.server.resume({ log })
+
+    for (const session of this.sessions.values()) {
+      session.resume()
+    }
+
+    for (const peerDiscovery of this.discoverySessions) {
+      peerDiscovery.resume()
+    }
+
+    this.suspended = false
+    if (!this._manual) this._startGC()
+  }
+
   async _close() {
     this.destroyed = true
 
     clearInterval(this._gcInterval)
+    this._gcInterval = null
 
     for (const session of this.sessions.values()) session.destroy()
     this.sessions.clear()
@@ -99,6 +148,11 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   _onincoming(conn) {
+    if (this.suspended) {
+      conn.destroy()
+      return
+    }
+
     const peerId = conn.remotePublicKey
     const connection = this._getOrCreateConnection(peerId, conn, false)
   }
@@ -146,6 +200,11 @@ module.exports = class Replicator extends ReadyResource {
       }
     }
   }
+
+  _startGC() {
+    if (this._gcInterval) return
+    this._gcInterval = setInterval(this._gc.bind(this), GC_INTERVAL)
+  }
 }
 
 class Session {
@@ -181,6 +240,7 @@ class Session {
   _connectPeer(peer, data) {
     const peerId = toHex(peer.publicKey)
 
+    if (this.replicator.suspended) return
     if (b4a.equals(peer.publicKey, this.replicator.keyPair.publicKey)) return
     if (this.replicator.connections.has(peerId)) return
     if (this.replicator._connecting.has(peerId)) return
@@ -194,7 +254,7 @@ class Session {
     stream.on('open', () => {
       this.replicator._connecting.delete(peerId)
 
-      if (this.peerDiscovery.destroyed) {
+      if (this.peerDiscovery.destroyed || this.replicator.suspended) {
         stream.destroy()
         return
       }
@@ -210,6 +270,9 @@ class Session {
       this.replicator._connecting.delete(peerId)
     })
   }
+
+  async suspend() { /* stub */ }
+  async resume() { /* stub */ }
 
   destroy() {
     this.store.unwatch(this._oncore)
@@ -259,6 +322,8 @@ class Connection {
 function toHex(buffer) {
   return b4a.toString(buffer, 'hex')
 }
+
+function noop() {}
 
 module.exports.PeerDiscovery = PeerDiscovery
 module.exports.Connection = Connection
