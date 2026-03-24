@@ -3,9 +3,8 @@ const DHT = require('hyperdht')
 const safetyCatch = require('safety-catch')
 const Hypercore = require('hypercore')
 const b4a = require('b4a')
-const ScopeLock = require('scope-lock')
+const PeerDiscovery = require('./lib/peer-discovery')
 
-const IDLE_TIMEOUT = 30_000
 const GC_INTERVAL = 5_000
 const WATERMARK_LOW = 20
 const WATERMARK_HIGH = 40
@@ -28,7 +27,7 @@ module.exports = class Replicator extends ReadyResource {
         port: opts.port
       })
     this.server = this.dht.createServer(this._onincoming.bind(this))
-    this._listening = null
+    this.listening = null
 
     this.destroyed = false
 
@@ -44,8 +43,8 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
-  get topics() {
-    return Array.from(this.sessions.values()).map((sess) => sess.topic)
+  get discoverySessions() {
+    return Array.from(this.sessions.values()).map((sess) => sess.peerDiscovery)
   }
 
   *cores() {
@@ -62,14 +61,14 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async listen() {
-    if (!this._listening) {
+    if (!this.listening) {
       if (this.destroyed) throw new Error('Replicator destroyed')
 
       await this.ready()
-      this._listening = this.server.listen(this.keyPair)
+      this.listening = this.server.listen(this.keyPair)
     }
 
-    return this._listening
+    return this.listening
   }
 
   async _close() {
@@ -157,10 +156,11 @@ class Session {
     this.cores = new Map() // discoveryKey => Core
 
     this._oncore = this._oncore.bind(this)
+    this._connectPeer = this._connectPeer.bind(this)
     this.store.watch(this._oncore)
 
-    this.topic = new Topic(this, discoveryKey)
-    this.topic.reannounce().catch(safetyCatch)
+    this.peerDiscovery = new PeerDiscovery(replicator, discoveryKey, { onpeer: this._connectPeer })
+    this._discoverySession = this.peerDiscovery.session({ server: true, client: true })
   }
 
   _oncore(core) {
@@ -178,78 +178,28 @@ class Session {
     this._oncore(core.core)
   }
 
-  destroy() {
-    this.store.unwatch(this._oncore)
-    this.cores.clear()
-    this.topic.destroy()
-  }
-}
-
-
-class Topic {
-  constructor(session, discoveryKey) {
-    this.session = session
-    this.replicator = session.replicator
-    this.discoveryKey = discoveryKey
-    this.destroyed = false
-    this._activeQuery = null
-    this._lock = new ScopeLock({ debounce: true })
-  }
-
-  async reannounce() {
-    if (this.destroyed) return
-
-    await this.replicator.listen()
-
-    const proceed = await this._lock.lock()
-    if (!proceed) return
-
-    const query = this.replicator.dht.announce(
-      this.discoveryKey,
-      this.replicator.keyPair,
-      this.replicator.server.relayAddresses
-    )
-    this._activeQuery = query
-
-    try {
-      for await (const data of query) {
-        if (this.destroyed) return
-        for (const peer of data.peers) this._connectPeer(peer)
-      }
-
-      await query.finished()
-    } catch (err) {
-      if (!this.destroyed) safetyCatch(err)
-    } finally {
-      this._activeQuery = null
-      this._lock.unlock()
-    }
-  }
-
-  _connectPeer(peer) {
+  _connectPeer(peer, data) {
     const peerId = toHex(peer.publicKey)
 
-    // skip self
-    if (b4a.equals(peer.publicKey, this.replicator.server.publicKey)) return
-
-    // already connected
+    if (b4a.equals(peer.publicKey, this.replicator.keyPair.publicKey)) return
     if (this.replicator.connections.has(peerId)) return
-
-    // already dialing
     if (this.replicator._connecting.has(peerId)) return
+
     this.replicator._connecting.add(peerId)
 
-    const stream = this.replicator.dht.connect(peer.publicKey, { keyPair: this.replicator.keyPair })
+    const stream = this.replicator.dht.connect(peer.publicKey, {
+      keyPair: this.replicator.keyPair
+    })
 
     stream.on('open', () => {
       this.replicator._connecting.delete(peerId)
 
-      if (this.destroyed) {
+      if (this.peerDiscovery.destroyed) {
         stream.destroy()
         return
       }
 
-      this.replicator._getOrCreateConnection(peer.publicKey, stream, true, this.discoveryKey)
+      this.replicator._getOrCreateConnection(peer.publicKey, stream, true)
     })
 
     stream.on('error', () => {
@@ -262,13 +212,9 @@ class Topic {
   }
 
   destroy() {
-    if (this.destroyed) return
-    this.destroyed = true
-
-    if (this._activeQuery) {
-      this._activeQuery.destroy()
-      this._activeQuery = null
-    }
+    this.store.unwatch(this._oncore)
+    this.cores.clear()
+    this.peerDiscovery.destroy()
   }
 }
 
@@ -314,6 +260,6 @@ function toHex(buffer) {
   return b4a.toString(buffer, 'hex')
 }
 
-module.exports.Topic = Topic
+module.exports.PeerDiscovery = PeerDiscovery
 module.exports.Connection = Connection
 module.exports.Session = Session
