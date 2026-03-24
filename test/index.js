@@ -121,6 +121,14 @@ test('GC connections with no active mux sessions', async (t) => {
   }
 })
 
+//test('duplicate connections')
+//test('attempt connect through relayAddress')
+//test('max concurrent connections')
+//test('dht-cache')
+//test('botnet replicates 2k cores')
+//test('unnanounce on destroy() & suspend()')
+//test('suspend() & resume()')
+
 // V1
 test.skip('Sessions are garbage collected', async (t) => {
   const testnet = await createTestnet()

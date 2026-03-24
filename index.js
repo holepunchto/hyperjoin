@@ -27,6 +27,10 @@ module.exports = class Replicator extends ReadyResource {
         nodes: opts.nodes,
         port: opts.port
       })
+    this.server = this.dht.createServer(this._onincoming.bind(this))
+    this._listening = null
+
+    this.destroyed = false
 
     this.connections = new Map() // hex(peerId) -> Connection
     this.sessions = new Map() // hex(discoveryKey) -> Session
@@ -38,8 +42,6 @@ module.exports = class Replicator extends ReadyResource {
     if (!opts.manual) {
       this._gcInterval = setInterval(this._gc.bind(this), GC_INTERVAL)
     }
-
-    this.ready().catch(safetyCatch)
   }
 
   get topics() {
@@ -56,14 +58,23 @@ module.exports = class Replicator extends ReadyResource {
 
   async _open() {
     this.keyPair ||= await this.root.createKeyPair('replicator')
-
     await this.dht.ready()
+  }
 
-    this.server = this.dht.createServer(this._onincoming.bind(this))
-    await this.server.listen(this.keyPair)
+  async listen() {
+    if (!this._listening) {
+      if (this.destroyed) throw new Error('Replicator destroyed')
+
+      await this.ready()
+      this._listening = this.server.listen(this.keyPair)
+    }
+
+    return this._listening
   }
 
   async _close() {
+    this.destroyed = true
+
     clearInterval(this._gcInterval)
 
     for (const session of this.sessions.values()) session.destroy()
@@ -91,17 +102,15 @@ module.exports = class Replicator extends ReadyResource {
   _onincoming(conn) {
     const peerId = conn.remotePublicKey
     const connection = this._getOrCreateConnection(peerId, conn, false)
-
-    // discoveryKey unknown, adding to all sessions
-    for (const session of this.sessions.values()) {
-      for (const core of session.cores.values()) {
-        connection.addRef(core.discoveryKey)
-      }
-    }
   }
 
   _getOrCreateConnection(peerId, stream, initiator) {
     const hex = toHex(peerId)
+
+    if (this._connecting.has(hex)) {
+      console.error('outgoing inbound connection')
+      return null
+    }
 
     let connection = this.connections.get(hex)
     if (connection) return connection
@@ -126,12 +135,6 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _gc(now = Date.now) {
-    /* V2
-    for (const topic of this.topics) {
-      topic.reannounce().catch(safetyCatch)
-    }
-    */
-
     if (this.connections.size > this._highWatermark) {
       for (const connection of this.connections.values()) {
         if (!connection.isIdle(now)) continue
@@ -146,20 +149,57 @@ module.exports = class Replicator extends ReadyResource {
   }
 }
 
+class Session {
+  constructor(replicator, store, discoveryKey) {
+    this.replicator = replicator
+    this.store = store // instance from Replicator.root.session()
+    this.discoveryKey = discoveryKey
+    this.cores = new Map() // discoveryKey => Core
+
+    this._oncore = this._oncore.bind(this)
+    this.store.watch(this._oncore)
+
+    this.topic = new Topic(this, discoveryKey)
+    this.topic.reannounce().catch(safetyCatch)
+  }
+
+  _oncore(core) {
+    const dk = toHex(core.discoveryKey)
+    if (this.cores.has(dk)) return
+
+    const weak = new Hypercore({ core, weak: true })
+    this.cores.set(dk, weak)
+
+    weak.on('close', () => { this.cores.delete(dk) })
+  }
+
+  // Manual weak-ref, core must belong to store
+  addLocal(core) {
+    this._oncore(core.core)
+  }
+
+  destroy() {
+    this.store.unwatch(this._oncore)
+    this.cores.clear()
+    this.topic.destroy()
+  }
+}
+
+
 class Topic {
   constructor(session, discoveryKey) {
     this.session = session
     this.replicator = session.replicator
     this.discoveryKey = discoveryKey
     this.destroyed = false
-
     this._activeQuery = null
-    this._queue = Promise.resolve()
     this._lock = new ScopeLock({ debounce: true })
   }
 
   async reannounce() {
     if (this.destroyed) return
+
+    await this.replicator.listen()
 
     const proceed = await this._lock.lock()
     if (!proceed) return
@@ -238,55 +278,16 @@ class Connection {
     this.initiator = initiator
     this.stream = stream
     this.peerId = peerId
-    this.refs = new Map()
-    this.lastActive = Date.now()
   }
 
   get protomux() {
     return Hypercore.getProtocolMuxer(this.stream)
   }
 
-  addRef(discoveryKey) {
-    const hex = toHex(discoveryKey)
-    if (this.refs.has(hex)) return
-
-    this.refs.set(hex, {
-      discoveryKey,
-      lastActive: Date.now()
-    })
-  }
-
-  hasRef(discoveryKey) {
-    const hex = toHex(discoveryKey)
-    return this.refs.has(hex)
-  }
-
-  removeRef(discoveryKey) {
-    this.refs.delete(toHex(discoveryKey))
-  }
-
-  touch(discoveryKey) {
-    // TODO: reintroduce
-    const ref = this.refs.get(toHex(discoveryKey))
-    if (!ref) return
-
-    const now = Date.now()
-    ref.lastActive = now
-    this.lastActive = now
-  }
-
   isIdle(now = Date.now) {
-    if (this.refs.size === 0) return true
-
-    // find Connection without protomux sesions of local cores
     if (this._protomuxSessions() === 0) return true
 
-    const ts = now()
-    for (const ref of this.refs.values()) {
-      if (ts - ref.lastActive < IDLE_TIMEOUT) return false
-    }
-
-    return true
+    return false
   }
 
   _protomuxSessions() {
@@ -305,55 +306,7 @@ class Connection {
   }
 
   destroy() {
-    this.refs.clear()
     this.stream.destroy()
-  }
-}
-
-class Session {
-  constructor(replicator, store, discoveryKey) {
-    this.replicator = replicator
-    this.store = store // instance from Replicator.root.session()
-    this.discoveryKey = discoveryKey
-    this.cores = new Map() // discoveryKey => Core
-
-    this._oncore = this._oncore.bind(this)
-    this.store.watch(this._oncore)
-
-    this.topic = new Topic(this, discoveryKey)
-    this.topic.reannounce().catch(safetyCatch)
-  }
-
-  _oncore(core) {
-    const dk = toHex(core.discoveryKey)
-    if (this.cores.has(dk)) return
-
-    const weak = new Hypercore({ core, weak: true })
-    this.cores.set(dk, weak)
-
-    weak.on('close', () => {
-      this.cores.delete(dk)
-
-      for (const connection of this.replicator.connections.values()) {
-        connection.removeRef(weak.discoveryKey)
-      }
-    })
-
-    // add ref to existing connections
-    for (const connection of this.replicator.connections.values()) {
-      connection.addRef(weak.discoveryKey)
-    }
-  }
-
-  // Manual weak-ref, core must belong to store
-  addLocal(core) {
-    this._oncore(core.core)
-  }
-
-  destroy() {
-    this.store.unwatch(this._oncore)
-    this.cores.clear()
-    this.topic.destroy()
   }
 }
 
