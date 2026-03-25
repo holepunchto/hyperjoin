@@ -34,7 +34,7 @@ module.exports = class Replicator extends ReadyResource {
 
     this.connections = new Map() // hex(peerId) -> Connection
     this.sessions = new Map() // hex(discoveryKey) -> Session
-    this._connecting = new Set() // hex(peerId) — dedup in-flight dials
+    this._connecting = new Set() // hex(peerId) -> dedup in-flight dials
 
     this._lowWatermark = opts.lowWatermark ?? WATERMARK_LOW
     this._highWatermark = opts.highWatermark ?? WATERMARK_HIGH
@@ -188,6 +188,8 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _gc(now = Date.now) {
+    // TODO: dedupe
+
     if (this.connections.size > this._highWatermark) {
       for (const connection of this.connections.values()) {
         if (!connection.isIdle(now)) continue
