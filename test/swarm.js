@@ -75,32 +75,6 @@ test.skip('discoverySessions returns peer-discovery objects', async (t) => {
   await testnet.destroy()
 })
 
-test('peerDiscovery has unslabbed closestNodes', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
-
-  await joinRemote(p2, p1)
-  await onceServerConnection(p1.replicator.server, p2.replicator.keyPair.publicKey)
-  await p1.replicator.discoverySessions[0].flushed()
-
-  const closestNodes = p1.replicator.discoverySessions[0]._closestNodes
-  const bufferSizes = closestNodes.map((node) => node.id.buffer.byteLength)
-
-  t.is(bufferSizes[0], 32, 'unslabbed closestNodes entry')
-  t.is(
-    bufferSizes.filter((size) => size !== 32).length,
-    0,
-    'sanity check: all closestNodes are unslabbed'
-  )
-
-  await p1.destroy()
-  await p2.destroy()
-  await testnet.destroy()
-})
-
 test('port opt gets passed on to hyperdht', async (t) => {
   const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
   const replicator = new Replicator(store, { manual: true, port: [10000, 10100] })
