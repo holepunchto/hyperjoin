@@ -3,7 +3,7 @@ const DHT = require('hyperdht')
 const safetyCatch = require('safety-catch')
 const Hypercore = require('hypercore')
 const b4a = require('b4a')
-const PeerDiscovery = require('./lib/peer-discovery')
+const Discovery = require('@holepunchto/replicator-discovery')
 
 const GC_INTERVAL = 5_000
 const WATERMARK_LOW = 20
@@ -44,8 +44,9 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._manual) this._startGC()
   }
 
-  get discoverySessions() {
-    return Array.from(this.sessions.values()).map((sess) => sess.peerDiscovery)
+  async _open() {
+    this.keyPair ||= await this.root.createKeyPair('replicator')
+    await this.dht.ready()
   }
 
   *cores() {
@@ -56,17 +57,12 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
-  async _open() {
-    this.keyPair ||= await this.root.createKeyPair('replicator')
-    await this.dht.ready()
-  }
-
-  async listen() {
+  listen() {
     if (!this.listening) {
       if (this.destroyed) throw new Error('Replicator destroyed')
 
-      await this.ready()
-      this.listening = this.server.listen(this.keyPair)
+      this.listening = this.ready()
+        .then(() => this.server.listen(this.keyPair))
     }
 
     return this.listening
@@ -78,12 +74,8 @@ module.exports = class Replicator extends ReadyResource {
     const pending = []
     const suspending = [this.server.suspend({ log })]
 
-    for (const peerDiscovery of this.discoverySessions) {
-      suspending.push(peerDiscovery.suspend({ log }))
-    }
-
     for (const session of this.sessions.values()) {
-      suspending.push(session.suspend())
+      suspending.push(session.suspend({ log }))
     }
 
     for (const connection of this.connections.values()) {
@@ -97,7 +89,9 @@ module.exports = class Replicator extends ReadyResource {
     this._gcInterval = null
 
     await Promise.allSettled(suspending)
+
     await this.dht.suspend({ log })
+
     await Promise.all(pending)
   }
 
@@ -107,15 +101,18 @@ module.exports = class Replicator extends ReadyResource {
     await this.dht.resume({ log })
     await this.server.resume({ log })
 
-    for (const session of this.sessions.values()) {
-      session.resume()
-    }
-
-    for (const peerDiscovery of this.discoverySessions) {
-      peerDiscovery.resume()
-    }
-
     this.suspended = false
+
+    const pending = []
+
+    if (this.sessions.size > 0) pending.push(this.listen()) // TODO: Does nothing
+
+    for (const session of this.sessions.values()) {
+      pending.push(session.resume({ log }))
+    }
+
+    await Promise.all(pending)
+
     if (!this._manual) this._startGC()
   }
 
@@ -141,7 +138,10 @@ module.exports = class Replicator extends ReadyResource {
     let session = this.sessions.get(toHex(discoveryKey))
     if (session) return session
 
+    if (!this.suspended) this.listen().catch(safetyCatch)
+
     session = new Session(this, store, discoveryKey)
+    session.ready().catch(safetyCatch)
     this.sessions.set(toHex(discoveryKey), session)
 
     return session
@@ -209,8 +209,10 @@ module.exports = class Replicator extends ReadyResource {
   }
 }
 
-class Session {
+class Session extends ReadyResource {
+  /** @param {Replicator} replicator */
   constructor(replicator, store, discoveryKey) {
+    super()
     this.replicator = replicator
     this.store = store // instance from Replicator.root.session()
     this.discoveryKey = discoveryKey
@@ -220,8 +222,24 @@ class Session {
     this._connectPeer = this._connectPeer.bind(this)
     this.store.watch(this._oncore)
 
-    this.peerDiscovery = new PeerDiscovery(replicator, discoveryKey, { onpeer: this._connectPeer })
-    this._discoverySession = this.peerDiscovery.session({ server: true, client: true })
+    this.discovery = null
+  }
+
+  async _open() {
+    const { replicator, discoveryKey } = this
+
+    await replicator.ready()
+
+    this.discovery = new Discovery(replicator.dht, discoveryKey, {
+      announce: true,
+      wait: replicator.listening,
+      suspended: replicator.suspended,
+      keyPair: replicator.keyPair,
+      onpeer: this._connectPeer,
+      relayAddresses: () => replicator.server.relayAddresses,
+    })
+
+    this.discovery.refresh().catch(safetyCatch)
   }
 
   _oncore(core) {
@@ -256,7 +274,7 @@ class Session {
     stream.on('open', () => {
       this.replicator._connecting.delete(peerId)
 
-      if (this.peerDiscovery.destroyed || this.replicator.suspended) {
+      if (this.discovery.destroyed || this.replicator.suspended) {
         stream.destroy()
         return
       }
@@ -273,13 +291,22 @@ class Session {
     })
   }
 
-  async suspend() { /* stub */ }
-  async resume() { /* stub */ }
+  async suspend({ log = noop } = {}) {
+    await this.discovery.suspend({ log })
+  }
 
-  destroy() {
+  async resume({ log = noop } = {}) {
+    await this.discovery.resume()
+  }
+
+  async _close() {
     this.store.unwatch(this._oncore)
     this.cores.clear()
-    this.peerDiscovery.destroy()
+    await this.discovery.destroy()
+  }
+
+  async destroy() {
+    return this.close()
   }
 }
 
@@ -327,6 +354,6 @@ function toHex(buffer) {
 
 function noop() {}
 
-module.exports.PeerDiscovery = PeerDiscovery
+module.exports.PeerDiscovery = Discovery
 module.exports.Connection = Connection
 module.exports.Session = Session

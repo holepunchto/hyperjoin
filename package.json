@@ -40,6 +40,7 @@
   },
   "homepage": "https://github.com/holepunchto/replicator",
   "dependencies": {
+    "@holepunchto/replicator-discovery": "file:../discovery",
     "b4a": "^1.8.0",
     "hypercore": "^11.27.14",
     "ready-resource": "^1.2.0",

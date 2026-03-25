@@ -51,7 +51,8 @@ test('one server, two discovery keys - connection reuse', async (t) => {
   await testnet.destroy()
 })
 
-test('discoverySessions returns peer-discovery objects', async (t) => {
+// Obsolete; replaced by ReplicatorSessions<Corestore.session(), Discovery>
+test.skip('discoverySessions returns peer-discovery objects', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
