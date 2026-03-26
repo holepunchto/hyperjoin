@@ -3,7 +3,7 @@ const Corestore = require('corestore')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('..')
-const { connectionKeys, getConnection, joinRemote, onceServerConnection, seedA, seedB, seedC, spawnPeer } = require('./helpers')
+const { joinRemote, onceEvent, seedA, seedB, seedC, spawnPeer, toHex } = require('./helpers')
 
 test('Default keypair from corestore', async (t) => {
   const testnet = await createTestnet()
@@ -14,7 +14,7 @@ test('Default keypair from corestore', async (t) => {
   await replicator.ready()
 
   t.is(
-    replicator.keyPair.publicKey.toString('hex'),
+    toHex(replicator.peerId),
     '7dda4c84e7061170c5100be5d4c5cce9bb05ff2e1bd20d80d83408a10a6e73cc'
   )
 
@@ -38,8 +38,8 @@ test('Basic replication', async (t) => {
   t.is(remote[1].length, 2)
   t.is(p1.replicator.connectionCount, 1)
   t.is(p2.replicator.connectionCount, 1)
-  t.alike(connectionKeys(p2.replicator), [p1.peerId], 'p2 sees p1')
-  t.alike(connectionKeys(p1.replicator), [p2.peerId], 'p1 sees p2')
+  t.alike(Array.from(p2.replicator.connections, (connection) => toHex(connection.peerId)), [p1.peerId], 'p2 sees p1')
+  t.alike(Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)), [p2.peerId], 'p1 sees p2')
 
   await p1.destroy()
   await p2.destroy()
@@ -57,21 +57,21 @@ test('GC connections with no active mux sessions', async (t) => {
   const remote = await joinRemote(p2, p1)
   await remote[1].get(1)
 
-  const p2Key = b4a.toString(p2.replicator.keyPair.publicKey, 'hex')
-  const p3Key = b4a.toString(p3.replicator.keyPair.publicKey, 'hex')
+  const p2Key = toHex(p2.replicator.peerId)
+  const p3Key = toHex(p3.replicator.peerId)
 
-  const p3Connected = onceServerConnection(p1.replicator.server, p3.replicator.keyPair.publicKey)
+  const p3Connected = onceEvent(p1.replicator, 'connection')
   p3.replicator.join(p3.store.session(), p1.cores[0].discoveryKey)
   await p3Connected
 
   t.is(p1.replicator.connectionCount, 2, 'p1 connected to both peers')
   t.ok(
-    getConnection(p1.replicator, p2Key)._protomuxSessions() > 0,
+    p1.replicator.getConnection(p2Key)._protomuxSessions() > 0,
     'p2 has open core session to p1'
   )
-  t.is(!!getConnection(p1.replicator, p3Key), true, 'p3 should connect to p1')
+  t.is(p1.replicator.hasConnection(p3Key), true, 'p3 should connect to p1')
   t.is(
-    getConnection(p1.replicator, p3Key)._protomuxSessions(),
+    p1.replicator.getConnection(p3Key)._protomuxSessions(),
     0,
     'p3 connection has no protomux sessions'
   )
@@ -84,7 +84,7 @@ test('GC connections with no active mux sessions', async (t) => {
     'gc should evict the connection without active protmux sessions'
   )
   t.alike(
-    connectionKeys(p1.replicator),
+    Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)),
     [p2Key],
     'gc keeps the connection carrying opened local cores'
   )

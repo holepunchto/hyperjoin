@@ -1,7 +1,7 @@
 const test = require('brittle')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
-const { getConnection, joinRemote, onceServerConnection, seedA, seedB, spawnPeer } = require('./helpers')
+const { joinRemote, onceEvent, seedA, seedB, spawnPeer } = require('./helpers')
 
 test('suspend + resume', async (t) => {
   const testnet = await createTestnet()
@@ -13,11 +13,8 @@ test('suspend + resume', async (t) => {
   const remote = await joinRemote(p2, p1)
   await remote[0].get(0)
 
-  const p1Connection = getConnection(p1.replicator, p2.peerId)
-  const p2Connection = getConnection(p2.replicator, p1.peerId)
-
-  const p1Closed = new Promise((resolve) => p1Connection.stream.once('close', resolve))
-  const p2Closed = new Promise((resolve) => p2Connection.stream.once('close', resolve))
+  const p1Closed = onceEvent(p1.replicator, 'disconnect')
+  const p2Closed = onceEvent(p2.replicator, 'disconnect')
 
   await p2.replicator.suspend()
   await Promise.all([p1Closed, p2Closed])
@@ -26,7 +23,7 @@ test('suspend + resume', async (t) => {
   t.is(p1.replicator.connectionCount, 0)
   t.is(p2.replicator.connectionCount, 0)
 
-  const reconnected = onceServerConnection(p1.replicator.server, p2.replicator.keyPair.publicKey)
+  const reconnected = onceEvent(p1.replicator, 'connection')
   await p2.replicator.resume()
   await reconnected
 

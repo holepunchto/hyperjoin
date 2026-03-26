@@ -4,7 +4,7 @@ const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 
 const Replicator = require('..')
-const { joinRemote, onceServerConnection, seedA, seedB, spawnPeer } = require('./helpers')
+const { joinRemote, onceEvent, seedA, seedB, spawnPeer } = require('./helpers')
 
 test('one server, one client - first connection', async (t) => {
   const testnet = await createTestnet()
@@ -13,8 +13,8 @@ test('one server, one client - first connection', async (t) => {
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
+  const connected = onceEvent(p1.replicator, 'connection')
   const remote = await joinRemote(p2, p1)
-  const connected = onceServerConnection(p1.replicator.server, p2.replicator.keyPair.publicKey)
   const block = await Promise.all([remote[0].get(0), connected])
 
   t.alike(block[0], b4a.from('cells'))

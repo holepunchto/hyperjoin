@@ -17,16 +17,26 @@ exports.timeout = function timeout(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-exports.onceServerConnection = function onceServerConnection(server, publicKey) {
+exports.onceEvent = function onceEvent(emitter, event) {
+  return new Promise((resolve) => emitter.once(event, resolve))
+}
+
+exports.waitForEvents = function waitForEvents(emitter, event, count) {
   return new Promise((resolve) => {
-    const onconnection = (socket) => {
-      if (!b4a.equals(socket.remotePublicKey, publicKey)) return
-      server.removeListener('connection', onconnection)
-      resolve(socket)
+    let seen = 0
+
+    const onevent = () => {
+      if (++seen < count) return
+      emitter.removeListener(event, onevent)
+      resolve()
     }
 
-    server.on('connection', onconnection)
+    emitter.on(event, onevent)
   })
+}
+
+exports.toHex = function toHex(buffer) {
+  return b4a.toString(buffer, 'hex')
 }
 
 exports.joinRemote = async function joinRemote(peer, remotePeer) {
@@ -36,14 +46,6 @@ exports.joinRemote = async function joinRemote(peer, remotePeer) {
   peer.replicator.join(peer.store.session(), remotePeer.cores[0].discoveryKey)
 
   return remote
-}
-
-exports.connectionKeys = function connectionKeys(replicator) {
-  return Array.from(replicator.connections(), (connection) => b4a.toString(connection.peerId, 'hex'))
-}
-
-exports.getConnection = function getConnection(replicator, peerId) {
-  return replicator.inbound.get(peerId) || replicator.outbound.get(peerId) || null
 }
 
 exports.spawnPeer = async function spawnPeer(
@@ -81,7 +83,7 @@ exports.spawnPeer = async function spawnPeer(
     await store.close()
   }
 
-  const peerId = b4a.toString(replicator.keyPair.publicKey, 'hex')
+  const peerId = exports.toHex(replicator.peerId)
 
   return { store, replicator, session, peerId, destroy, cores: [one, two] }
 }
