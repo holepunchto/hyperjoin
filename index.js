@@ -17,7 +17,7 @@ module.exports = class Replicator extends ReadyResource {
   constructor(rootStore, opts = {}) {
     super()
 
-    const { seed, keyPair } = opts
+    const { seed, keyPair, relayThrough } = opts
     if (seed) this.keyPair = DHT.keyPair(seed)
     if (keyPair) this.keyPair = keyPair
 
@@ -30,7 +30,10 @@ module.exports = class Replicator extends ReadyResource {
         nodes: opts.nodes,
         port: opts.port
       })
-    this.server = this.dht.createServer(this._onincoming.bind(this))
+    this.relayThrough = relayThrough && toRelaySelector(relayThrough)
+    this.server = this.dht.createServer({
+      relayThrough: this._selectRelay.bind(this)
+    }, this._onincoming.bind(this))
     this.listening = null
 
     this.destroyed = false
@@ -105,6 +108,11 @@ module.exports = class Replicator extends ReadyResource {
     peerInfo = new PeerInfo({ publicKey, relayAddresses })
     this.peers.set(key, peerInfo)
     return peerInfo
+  }
+
+  _selectRelay(force) {
+    if (!this.relayThrough) return null
+    return this.relayThrough(force, this)
   }
 
   listen() {
@@ -426,7 +434,7 @@ class Session extends ReadyResource {
     const stream = this.replicator.dht.connect(peerInfo.publicKey, {
       keyPair: this.replicator.keyPair,
       relayAddresses: peerInfo.relayAddresses,
-      // relayThrough
+      relayThrough: this.replicator._selectRelay(peerInfo.forceRelaying)
     })
 
     this.replicator.emit('update')
@@ -510,6 +518,12 @@ function toHex(buffer) {
 }
 
 function noop() {}
+
+function toRelaySelector(relayThrough) {
+  return typeof relayThrough === 'function'
+    ? relayThrough
+    : (force, replicator) => (force || replicator.dht.randomized ? relayThrough : null)
+}
 
 module.exports.PeerDiscovery = Discovery
 module.exports.Connection = Connection
