@@ -38,6 +38,14 @@ exports.joinRemote = async function joinRemote(peer, remotePeer) {
   return remote
 }
 
+exports.connectionKeys = function connectionKeys(replicator) {
+  return Array.from(replicator.connections(), (connection) => b4a.toString(connection.peerId, 'hex'))
+}
+
+exports.getConnection = function getConnection(replicator, peerId) {
+  return replicator.inbound.get(peerId) || replicator.outbound.get(peerId) || null
+}
+
 exports.spawnPeer = async function spawnPeer(
   t,
   { seed, bootstrap, lowWatermark, highWatermark, manual = true, port } = {}

@@ -1,6 +1,6 @@
 const test = require('brittle')
 const createTestnet = require('hyperdht/testnet')
-const { seed, spawnPeer, timeout, onceServerConnection } = require('./helpers')
+const { connectionKeys, seed, spawnPeer, timeout, onceServerConnection } = require('./helpers')
 const b4a = require('b4a')
 
 test('many peers on one discovery key converge on the source peer', async (t) => {
@@ -21,10 +21,10 @@ test('many peers on one discovery key converge on the source peer', async (t) =>
 
   await timeout(1000)
 
-  t.is(peers[0].replicator.connections.size, cnt - 1)
+  t.is(peers[0].replicator.connectionCount, cnt - 1)
 
   for (const peer of peers.slice(1)) {
-    t.is(peer.replicator.connections.size, 1)
+    t.is(peer.replicator.connectionCount, 1)
   }
 
   for (const peer of peers) {
@@ -63,9 +63,8 @@ test('GC dedupes connections', async (t) => {
   t.is(p2.replicator.inbound.size, 1)
   t.is(p2.replicator.outbound.size, 1)
 
-  const extractKeys = (connections) => Array.from(connections).map(c => b4a.toString(c.peerId, 'hex'))
-  t.alike(extractKeys(p2.replicator.connections()), [p1.peerId, p1.peerId], 'duplicate p1')
-  t.alike(extractKeys(p1.replicator.connections()), [p2.peerId, p2.peerId], 'duplicate p2')
+  t.alike(connectionKeys(p2.replicator), [p1.peerId, p1.peerId], 'duplicate p1')
+  t.alike(connectionKeys(p1.replicator), [p2.peerId, p2.peerId], 'duplicate p2')
 
   await p1.replicator._gc()
   await p2.replicator._gc()
@@ -73,8 +72,8 @@ test('GC dedupes connections', async (t) => {
   t.is(p1.replicator.connectionCount, 1)
   t.is(p2.replicator.connectionCount, 1)
 
-  t.alike(extractKeys(p2.replicator.connections()), [p1.peerId], 'de-duped')
-  t.alike(extractKeys(p1.replicator.connections()), [p2.peerId], 'de-duped')
+  t.alike(connectionKeys(p2.replicator), [p1.peerId], 'de-duped')
+  t.alike(connectionKeys(p1.replicator), [p2.peerId], 'de-duped')
 
   await p1.destroy()
   await p2.destroy()

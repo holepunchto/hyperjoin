@@ -18,8 +18,8 @@ test('one server, one client - first connection', async (t) => {
   const block = await Promise.all([remote[0].get(0), connected])
 
   t.alike(block[0], b4a.from('cells'))
-  t.is(p1.replicator.connections.size, 1)
-  t.is(p2.replicator.connections.size, 1)
+  t.is(p1.replicator.connectionCount, 1)
+  t.is(p2.replicator.connectionCount, 1)
 
   await p1.destroy()
   await p2.destroy()
@@ -43,8 +43,8 @@ test('one server, two discovery keys - connection reuse', async (t) => {
 
   t.alike(await remote[0].get(0), b4a.from('cells'))
   t.alike(await remote[1].get(0), b4a.from('within'))
-  t.is(p1.replicator.connections.size, 1)
-  t.is(p2.replicator.connections.size, 1)
+  t.is(p1.replicator.connectionCount, 1)
+  t.is(p2.replicator.connectionCount, 1)
 
   await p1.destroy()
   await p2.destroy()

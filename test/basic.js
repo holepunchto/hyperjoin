@@ -3,7 +3,7 @@ const Corestore = require('corestore')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('..')
-const { joinRemote, onceServerConnection, seedA, seedB, seedC, spawnPeer } = require('./helpers')
+const { connectionKeys, getConnection, joinRemote, onceServerConnection, seedA, seedB, seedC, spawnPeer } = require('./helpers')
 
 test('Default keypair from corestore', async (t) => {
   const testnet = await createTestnet()
@@ -36,10 +36,10 @@ test('Basic replication', async (t) => {
   t.is(val.toString(), 'cells')
   t.is(remote[0].length, 2)
   t.is(remote[1].length, 2)
-  t.is(p1.replicator.connections.size, 1)
-  t.is(p2.replicator.connections.size, 1)
-  t.alike(Array.from(p2.replicator.connections.keys()), [p1.peerId], 'p2 sees p1')
-  t.alike(Array.from(p1.replicator.connections.keys()), [p2.peerId], 'p1 sees p2')
+  t.is(p1.replicator.connectionCount, 1)
+  t.is(p2.replicator.connectionCount, 1)
+  t.alike(connectionKeys(p2.replicator), [p1.peerId], 'p2 sees p1')
+  t.alike(connectionKeys(p1.replicator), [p2.peerId], 'p1 sees p2')
 
   await p1.destroy()
   await p2.destroy()
@@ -64,14 +64,14 @@ test('GC connections with no active mux sessions', async (t) => {
   p3.replicator.join(p3.store.session(), p1.cores[0].discoveryKey)
   await p3Connected
 
-  t.is(p1.replicator.connections.size, 2, 'p1 connected to both peers')
+  t.is(p1.replicator.connectionCount, 2, 'p1 connected to both peers')
   t.ok(
-    p1.replicator.connections.get(p2Key)._protomuxSessions() > 0,
+    getConnection(p1.replicator, p2Key)._protomuxSessions() > 0,
     'p2 has open core session to p1'
   )
-  t.is(p1.replicator.connections.has(p3Key), true, 'p3 should connect to p1')
+  t.is(!!getConnection(p1.replicator, p3Key), true, 'p3 should connect to p1')
   t.is(
-    p1.replicator.connections.get(p3Key)._protomuxSessions(),
+    getConnection(p1.replicator, p3Key)._protomuxSessions(),
     0,
     'p3 connection has no protomux sessions'
   )
@@ -79,12 +79,12 @@ test('GC connections with no active mux sessions', async (t) => {
   await p1.replicator._gc(() => Date.now())
 
   t.is(
-    p1.replicator.connections.size,
+    p1.replicator.connectionCount,
     1,
     'gc should evict the connection without active protmux sessions'
   )
   t.alike(
-    Array.from(p1.replicator.connections.keys()),
+    connectionKeys(p1.replicator),
     [p2Key],
     'gc keeps the connection carrying opened local cores'
   )
