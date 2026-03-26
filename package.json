@@ -10,6 +10,12 @@
       "default": "./index.js"
     }
   },
+  "imports": {
+    "events": {
+      "bare": "bare-events",
+      "default": "events"
+    }
+  },
   "files": [
     "package.json",
     "index.js",
@@ -42,6 +48,7 @@
   "dependencies": {
     "@holepunchto/replicator-discovery": "file:../discovery",
     "b4a": "^1.8.0",
+    "bare-events": "^2.8.2",
     "hypercore": "^11.27.14",
     "ready-resource": "^1.2.0",
     "safety-catch": "^1.0.3",

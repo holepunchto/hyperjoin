@@ -4,6 +4,7 @@ const safetyCatch = require('safety-catch')
 const Hypercore = require('hypercore')
 const b4a = require('b4a')
 const Discovery = require('@holepunchto/replicator-discovery')
+const PeerInfo = require('./lib/peer-info')
 
 const GC_INTERVAL = 5_000
 const WATERMARK_LOW = 20
@@ -38,6 +39,7 @@ module.exports = class Replicator extends ReadyResource {
     this.inbound = new Map() // hex(peerId) -> Connection
     this.outbound = new Map() // hex(peerId) -> Connection
     this._inflight = new Set() // hex(peerId) -> dedup in-flight dials
+    this.peers = new Map() // hex(peerId) -> PeerInfo
 
     this.sessions = new Map() // hex(discoveryKey) -> Session
 
@@ -87,6 +89,22 @@ module.exports = class Replicator extends ReadyResource {
   hasConnection(peerId) {
     if (typeof peerId !== 'string') peerId = toHex(peerId)
     return !!this.getConnection(peerId) || this._inflight.has(peerId)
+  }
+
+  _upsertPeer(publicKey, relayAddresses) {
+    if (b4a.equals(publicKey, this.peerId)) return null
+
+    const key = toHex(publicKey)
+    let peerInfo = this.peers.get(key)
+
+    if (peerInfo) {
+      peerInfo.relayAddresses = relayAddresses // new is always better
+      return peerInfo
+    }
+
+    peerInfo = new PeerInfo({ publicKey, relayAddresses })
+    this.peers.set(key, peerInfo)
+    return peerInfo
   }
 
   listen() {
@@ -160,6 +178,7 @@ module.exports = class Replicator extends ReadyResource {
     this.outbound.clear()
 
     this._inflight.clear()
+    this.peers.clear()
 
     await this.server.close()
     if (!this.dht.destroyed) await this.dht.destroy()
@@ -219,11 +238,13 @@ module.exports = class Replicator extends ReadyResource {
       return
     }
 
+    this._upsertPeer(peerId, null)
     this._initConnection(false, peerId, conn)
   }
 
   _initConnection(initiator, peerId, stream) {
     const hex = toHex(peerId)
+    const peerInfo = this.peers.get(hex) || null
 
     const map = initiator ? this.outbound : this.inbound
 
@@ -232,12 +253,23 @@ module.exports = class Replicator extends ReadyResource {
     // this.stats.connects.server.opened++ // TODO: backport stats
 
     const connection = new Connection(this, stream, peerId, initiator)
+    connection.peerInfo = peerInfo
     map.set(hex, connection)
+
+    if (peerInfo) {
+      if (initiator) {
+        peerInfo._connected()
+        peerInfo.client = true
+      } else {
+        peerInfo.client = false
+      }
+    }
 
     this.root.replicate(stream)
 
     stream.on('close', () => {
       map.delete(hex)
+      if (initiator && peerInfo) peerInfo._disconnected()
       this.emit('disconnect', connection)
       this.emit('update')
     })
@@ -373,10 +405,14 @@ class Session extends ReadyResource {
   }
 
   _connectPeer(peer, data) {
-    const peerId = toHex(peer.publicKey)
-
     if (this.replicator.suspended) return
     if (b4a.equals(peer.publicKey, this.replicator.peerId)) return
+
+    const peerInfo = this.replicator._upsertPeer(peer.publicKey, peer.relayAddresses)
+    peerInfo._topic(this.discoveryKey)
+
+    const peerId = toHex(peerInfo.publicKey)
+
     if (this.replicator.outbound.has(peerId)) return
     if (this.replicator.inbound.has(peerId)) return
     if (this.replicator._inflight.has(peerId)) return
@@ -387,9 +423,9 @@ class Session extends ReadyResource {
       if (!err) this.replicator.emit('update')
     }
 
-    const stream = this.replicator.dht.connect(peer.publicKey, {
+    const stream = this.replicator.dht.connect(peerInfo.publicKey, {
       keyPair: this.replicator.keyPair,
-      // relayAddresses: peerInfo.relayAddresses
+      relayAddresses: peerInfo.relayAddresses,
       // relayThrough
     })
 
@@ -405,7 +441,7 @@ class Session extends ReadyResource {
         return
       }
 
-      this.replicator._initConnection(true, peer.publicKey, stream)
+      this.replicator._initConnection(true, peerInfo.publicKey, stream)
     })
 
     stream.on('error', clearInflight)
@@ -478,3 +514,4 @@ function noop() {}
 module.exports.PeerDiscovery = Discovery
 module.exports.Connection = Connection
 module.exports.Session = Session
+module.exports.PeerInfo = PeerInfo
