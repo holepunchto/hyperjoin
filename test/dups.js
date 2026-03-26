@@ -1,10 +1,9 @@
 const test = require('brittle')
 const createTestnet = require('hyperdht/testnet')
-const { seed, spawnPeer, timeout } = require('./helpers')
+const { seed, spawnPeer, timeout, onceServerConnection } = require('./helpers')
+const b4a = require('b4a')
 
 test('many peers on one discovery key converge on the source peer', async (t) => {
-  t.timeout(15000)
-
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -32,5 +31,52 @@ test('many peers on one discovery key converge on the source peer', async (t) =>
     await peer.destroy()
   }
 
+  await testnet.destroy()
+})
+
+test('GC dedupes connections', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: Buffer.alloc(32, 0xa) })
+  const p2 = await spawnPeer(t, { bootstrap, seed: Buffer.alloc(32, 0xb) })
+
+  await Promise.all([...p1.replicator.sessions.values()].map(s => s.ready()))
+  await Promise.all([...p2.replicator.sessions.values()].map(s => s.ready()))
+
+  const s1 = [...p1.replicator.sessions.values()][0]
+  const s2 = [...p2.replicator.sessions.values()][0]
+
+  const in1 = onceServerConnection(p1.replicator.server, p2.replicator.keyPair.publicKey)
+  const in2 = onceServerConnection(p2.replicator.server, p1.replicator.keyPair.publicKey)
+
+  s1._connectPeer({ publicKey: p2.replicator.keyPair.publicKey }, {})
+  s2._connectPeer({ publicKey: p1.replicator.keyPair.publicKey }, {})
+
+  await Promise.all([in1, in2])
+
+  // assert duplicate state
+  t.is(p1.replicator.connectionCount, 2)
+  t.is(p2.replicator.connectionCount, 2)
+  t.is(p1.replicator.inbound.size, 1)
+  t.is(p1.replicator.outbound.size, 1)
+  t.is(p2.replicator.inbound.size, 1)
+  t.is(p2.replicator.outbound.size, 1)
+
+  const extractKeys = (connections) => Array.from(connections).map(c => b4a.toString(c.peerId, 'hex'))
+  t.alike(extractKeys(p2.replicator.connections()), [p1.peerId, p1.peerId], 'duplicate p1')
+  t.alike(extractKeys(p1.replicator.connections()), [p2.peerId, p2.peerId], 'duplicate p2')
+
+  await p1.replicator._gc()
+  await p2.replicator._gc()
+
+  t.is(p1.replicator.connectionCount, 1)
+  t.is(p2.replicator.connectionCount, 1)
+
+  t.alike(extractKeys(p2.replicator.connections()), [p1.peerId], 'de-duped')
+  t.alike(extractKeys(p1.replicator.connections()), [p2.peerId], 'de-duped')
+
+  await p1.destroy()
+  await p2.destroy()
   await testnet.destroy()
 })

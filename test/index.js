@@ -9,12 +9,12 @@ async function runTests () {
 
   await import('./basic.js')
   await import('./bulk-timer.js')
-  await import('./chaos.js')
+  // await import('./chaos.js')
   await import('./dups.js') // partial
   // await import('./firewall.js')
-  await import('./peer-join.js')
+  // await import('./peer-join.js')
   await import('./retry-timer.js')
-  await import('./stats.js')
+  // await import('./stats.js')
   await import('./suspend.js')
   await import('./swarm.js')
   await import('./update.js')

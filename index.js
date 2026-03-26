@@ -32,9 +32,11 @@ module.exports = class Replicator extends ReadyResource {
     this.destroyed = false
     this.suspended = false
 
-    this.connections = new Map() // hex(peerId) -> Connection
+    this.inbound = new Map() // hex(peerId) -> Connection
+    this.outbound = new Map() // hex(peerId) -> Connection
+    this._inflight = new Set() // hex(peerId) -> dedup in-flight dials
+
     this.sessions = new Map() // hex(discoveryKey) -> Session
-    this._connecting = new Set() // hex(peerId) -> dedup in-flight dials
 
     this._lowWatermark = opts.lowWatermark ?? WATERMARK_LOW
     this._highWatermark = opts.highWatermark ?? WATERMARK_HIGH
@@ -42,6 +44,15 @@ module.exports = class Replicator extends ReadyResource {
 
     this._gcInterval = null
     if (!this._manual) this._startGC()
+  }
+
+  *connections () {
+    yield *this.inbound.values()
+    yield *this.outbound.values()
+  }
+
+  get connectionCount () {
+    return this.inbound.size + this.outbound.size
   }
 
   async _open() {
@@ -78,13 +89,13 @@ module.exports = class Replicator extends ReadyResource {
       suspending.push(session.suspend({ log }))
     }
 
-    for (const connection of this.connections.values()) {
+    for (const connection of this.connections()) {
       pending.push(new Promise((resolve) => connection.stream.on('close', resolve)))
       connection.destroy()
     }
 
     this.suspended = true
-    this._connecting.clear()
+    this._inflight.clear()
     clearInterval(this._gcInterval)
     this._gcInterval = null
 
@@ -125,10 +136,11 @@ module.exports = class Replicator extends ReadyResource {
     for (const session of this.sessions.values()) session.destroy()
     this.sessions.clear()
 
-    for (const connection of this.connections.values()) connection.destroy()
-    this.connections.clear()
+    for (const connection of this.connections()) connection.destroy()
+    this.inbound.clear()
+    this.outbound.clear()
 
-    this._connecting.clear()
+    this._inflight.clear()
 
     await this.server.close()
     if (!this.dht.destroyed) await this.dht.destroy()
@@ -154,27 +166,28 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     const peerId = conn.remotePublicKey
-    const connection = this._getOrCreateConnection(peerId, conn, false)
+
+    this._initConnection(false, peerId, conn)
   }
 
-  _getOrCreateConnection(peerId, stream, initiator) {
+  _initConnection(initiator, peerId, stream) {
     const hex = toHex(peerId)
 
-    if (this._connecting.has(hex)) {
-      console.error('outgoing inbound connection')
-      return null
+    const map = initiator ? this.outbound : this.inbound
+
+    let connection = map.get(hex)
+    if (connection) {
+      // TODO: swap connection, kill old, use new.
+      return connection // <-- leaks new without closing
     }
 
-    let connection = this.connections.get(hex)
-    if (connection) return connection
-
     connection = new Connection(this, stream, peerId, initiator)
-    this.connections.set(hex, connection)
+    map.set(hex, connection)
 
     this.root.replicate(stream)
 
     stream.on('close', () => {
-      this.connections.delete(hex)
+      map.delete(hex)
     })
 
     stream.on('error', safetyCatch)
@@ -183,20 +196,45 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   _evictConnection(connection) {
-    this.connections.delete(toHex(connection.peerId))
+    const key = toHex(connection.peerId)
+
+    if (connection.initiator) {
+      this.outbound.delete(key)
+    } else {
+      this.inbound.delete(key)
+    }
+
     connection.destroy()
   }
 
   async _gc(now = Date.now) {
-    // TODO: dedupe
+    // Evict duplicates
+    const [src, dst] = this.inbound.size < this.outbound.size
+      ? [this.inbound, this.outbound]
+      : [this.outbound, this.inbound]
 
-    if (this.connections.size > this._highWatermark) {
-      for (const connection of this.connections.values()) {
+    for (const [key, connection] of src) {
+      if (!dst.has(key)) continue
+
+      const cmp = b4a.compare(this.keyPair.publicKey, connection.peerId)
+      if (cmp === 0) throw new Error('unreachable: self connection')
+
+      // low-peerId keeps inbound
+      const target = (cmp > 0) ^ connection.initiator
+        ? connection
+        : dst.get(key)
+
+      this._evictConnection(target)
+    }
+
+    // Evict idle
+    if (this.connectionCount > this._highWatermark) {
+      for (const connection of this.connections()) {
         if (!connection.isIdle(now)) continue
 
         this._evictConnection(connection)
 
-        if (this.connections.size <= this._lowWatermark) {
+        if (this.connectionCount <= this._lowWatermark) {
           break // target reached
         }
       }
@@ -210,7 +248,7 @@ module.exports = class Replicator extends ReadyResource {
 }
 
 class Session extends ReadyResource {
-  /** @param {Replicator} replicator */
+
   constructor(replicator, store, discoveryKey) {
     super()
     this.replicator = replicator
@@ -262,33 +300,30 @@ class Session extends ReadyResource {
 
     if (this.replicator.suspended) return
     if (b4a.equals(peer.publicKey, this.replicator.keyPair.publicKey)) return
-    if (this.replicator.connections.has(peerId)) return
-    if (this.replicator._connecting.has(peerId)) return
+    if (this.replicator.outbound.has(peerId)) return
+    if (this.replicator.inbound.has(peerId)) return
+    if (this.replicator._inflight.has(peerId)) return
 
-    this.replicator._connecting.add(peerId)
+    this.replicator._inflight.add(peerId)
+    const clearInflight = () => this.replicator._inflight.delete(peerId)
 
     const stream = this.replicator.dht.connect(peer.publicKey, {
       keyPair: this.replicator.keyPair
     })
 
     stream.on('open', () => {
-      this.replicator._connecting.delete(peerId)
+      clearInflight()
 
       if (this.discovery.destroyed || this.replicator.suspended) {
         stream.destroy()
         return
       }
 
-      this.replicator._getOrCreateConnection(peer.publicKey, stream, true)
+      this.replicator._initConnection(true, peer.publicKey, stream)
     })
 
-    stream.on('error', () => {
-      this.replicator._connecting.delete(peerId)
-    })
-
-    stream.on('close', () => {
-      this.replicator._connecting.delete(peerId)
-    })
+    stream.on('error', clearInflight)
+    stream.on('close', clearInflight)
   }
 
   async suspend({ log = noop } = {}) {
