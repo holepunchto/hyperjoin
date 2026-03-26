@@ -58,6 +58,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   get connections() { return this._connections() }
+  get connecting() { return this._inflight.size }
 
   *_connections () {
     yield *this.inbound.values()
@@ -136,8 +137,6 @@ module.exports = class Replicator extends ReadyResource {
 
     const pending = []
 
-    if (this.sessions.size > 0) pending.push(this.listen()) // TODO: Does nothing
-
     for (const session of this.sessions.values()) {
       pending.push(session.resume({ log }))
     }
@@ -173,8 +172,13 @@ module.exports = class Replicator extends ReadyResource {
     if (!this.suspended) this.listen().catch(safetyCatch)
 
     session = new Session(this, store, discoveryKey)
+    const dk = toHex(discoveryKey)
+    this.sessions.set(dk, session)
+
+    session.on('close', () => this.sessions.delete(dk))
+    store.on('close', session.close.bind(session))
+
     session.ready().catch(safetyCatch)
-    this.sessions.set(toHex(discoveryKey), session)
 
     return session
   }
@@ -187,15 +191,13 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     const peerId = conn.remotePublicKey
+    const hex = toHex(peerId)
 
     // TODO: clean up. the expectedInitiator case is covered in _gc();
     // Disabling it here for now.
-    //
-    // const exCon = this.getConnection(peerId) // Connection-instance
-    const exCon = this.inbound.get(toHex(peerId)) // Connection-instance
-
-    if (exCon) {
-      const existing = exCon.stream
+    if (this.inbound.has(hex)) {
+      // const existing = this.getConnection(hex).stream
+      const existing = this.inbound.get(hex).stream
       // If both connections are from the same peer,
       // - pick the new one if the existing stream is already established (has sent and received bytes),
       //   because the other client must have lost that connection and be reconnecting
@@ -217,9 +219,6 @@ module.exports = class Replicator extends ReadyResource {
       return
     }
 
-    // When reaching here, the connection will always be 'opened' next tick
-    // this.stats.connects.server.opened++ // TODO: backport stats
-
     this._initConnection(false, peerId, conn)
   }
 
@@ -230,6 +229,8 @@ module.exports = class Replicator extends ReadyResource {
 
     if (map.has(hex)) throw new Error('unreachable: connection leak') // sanity check
 
+    // this.stats.connects.server.opened++ // TODO: backport stats
+
     const connection = new Connection(this, stream, peerId, initiator)
     map.set(hex, connection)
 
@@ -238,11 +239,13 @@ module.exports = class Replicator extends ReadyResource {
     stream.on('close', () => {
       map.delete(hex)
       this.emit('disconnect', connection)
+      this.emit('update')
     })
 
     stream.on('error', safetyCatch)
 
-    this.emit('connection', connection)
+    this.emit('connection', connection) // TODO: rename to '_connection'; used by tests, don't misuse
+    this.emit('update')
 
     return connection
   }
@@ -255,8 +258,8 @@ module.exports = class Replicator extends ReadyResource {
     } else {
       this.inbound.delete(key)
     }
-
     connection.destroy()
+    this.emit('update')
   }
 
   _handleServerConnectionSwap(existing, conn) {
@@ -379,14 +382,23 @@ class Session extends ReadyResource {
     if (this.replicator._inflight.has(peerId)) return
 
     this.replicator._inflight.add(peerId)
-    const clearInflight = () => this.replicator._inflight.delete(peerId)
+    const clearInflight = (err) => {
+      this.replicator._inflight.delete(peerId)
+      if (!err) this.replicator.emit('update')
+    }
 
     const stream = this.replicator.dht.connect(peer.publicKey, {
-      keyPair: this.replicator.keyPair
+      keyPair: this.replicator.keyPair,
+      // relayAddresses: peerInfo.relayAddresses
+      // relayThrough
     })
+
+    this.replicator.emit('update')
 
     stream.on('open', () => {
       clearInflight()
+      stream.off('error', clearInflight)
+      stream.off('close', clearInflight)
 
       if (this.discovery.destroyed || this.replicator.suspended) {
         stream.destroy()
