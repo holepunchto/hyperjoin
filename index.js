@@ -109,7 +109,7 @@ module.exports = class Replicator extends ReadyResource {
 
   // TODO:
   // - move to Dialer
-  _upsertPeer(publicKey, relayAddresses) {
+  _updatePeer(publicKey, relayAddresses) {
     if (b4a.equals(publicKey, this.peerId)) return null
 
     const key = toHex(publicKey)
@@ -267,7 +267,7 @@ module.exports = class Replicator extends ReadyResource {
 
   _initConnection(initiator, peerId, stream, topic) {
     const hex = toHex(peerId)
-    const peerInfo = this._upsertPeer(peerId)
+    const peerInfo = this._updatePeer(peerId)
 
     const map = initiator ? this.outbound : this.inbound
 
@@ -330,27 +330,26 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
-  _connectPeer(topic, peer, data) {
+  _connectPeer(peer, topic) {
     if (this.suspended) return
 
-    const peerId = toHex(peer.publicKey)
-    if (b4a.equals(peerId, this.peerId)) return
+    const hex = toHex(peer.publicKey)
+    if (b4a.equals(peer.publicKey, this.peerId)) return
 
-    const peerInfo = this._upsertPeer(peer.publicKey, peer.relayAddresses)
-    peerInfo._topic(topic)
+    if (this.outbound.has(hex)) return
+    if (this.inbound.has(hex)) return
+    if (this._inflight.has(hex)) return
 
-    if (this.outbound.has(peerId)) return
-    if (this.inbound.has(peerId)) return
-    if (this._inflight.has(peerId)) return
-
-    this._inflight.add(peerId)
+    this._inflight.add(hex)
     const clearInflight = () => {
-      if (!this._inflight.has(peerId)) return
-      this._inflight.delete(peerId)
+      if (!this._inflight.has(hex)) return
+      this._inflight.delete(hex)
       this.emit('update')
     }
 
-    const stream = this.dht.connect(peerInfo.publicKey, {
+    const peerInfo = this._updatePeer(peer.publicKey)
+
+    const stream = this.dht.connect(peer.publicKey, {
       keyPair: this.keyPair,
       relayAddresses: peerInfo.relayAddresses,
       relayThrough: this._selectRelay(peerInfo.forceRelaying)
@@ -428,6 +427,7 @@ class Session extends ReadyResource {
     this.cores = new Map() // discoveryKey => Core
 
     this._oncore = this._oncore.bind(this)
+    this._onpeer = this._onpeer.bind(this)
     this.store.watch(this._oncore)
 
     this.discovery = null
@@ -438,18 +438,24 @@ class Session extends ReadyResource {
 
     await replicator.ready()
 
-    const onpeer = this.replicator._connectPeer.bind(this.replicator, this.discoveryKey)
-
     this.discovery = new Discovery(replicator.dht, discoveryKey, {
       announce: true,
       wait: replicator.listening,
       suspended: replicator.suspended,
       keyPair: replicator.keyPair,
       relayAddresses: () => replicator.server.relayAddresses,
-      onpeer
+      onpeer: this._onpeer
     })
 
     this.discovery.refresh().catch(safetyCatch)
+  }
+
+  _onpeer(peer, data) {
+    const peerInfo = this._updatePeer(peer.publicKey, peer.relayAddresses)
+    peerInfo._topic(this.discoveryKey)
+
+    // TODO: should invoked by Dialer
+    this.replicator._connectPeer(peer)
   }
 
   _oncore(core) {
@@ -499,7 +505,7 @@ class Connection {
   }
 
   get info() {
-    return this.replicator._upsertPeer(this.peerId)
+    return this.replicator._updatePeer(this.peerId)
   }
 
   isIdle(now = Date.now) {
