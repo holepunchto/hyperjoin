@@ -50,8 +50,8 @@ test('GC dedupes connections', async (t) => {
   const p2Connections = waitForEvents(p2.replicator, 'connection', 2)
 
   // Force inflight cross-connection
-  s1._connectPeer({ publicKey: p2.replicator.peerId }, {})
-  s2._connectPeer({ publicKey: p1.replicator.peerId }, {})
+  p1.replicator._connectPeer(s1.discoveryKey, { publicKey: p2.replicator.peerId }, {})
+  p2.replicator._connectPeer(s2.discoveryKey, { publicKey: p1.replicator.peerId }, {})
 
   await Promise.all([p1Connections, p2Connections])
 

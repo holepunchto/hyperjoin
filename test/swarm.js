@@ -51,30 +51,6 @@ test('one server, two discovery keys - connection reuse', async (t) => {
   await testnet.destroy()
 })
 
-// Obsolete; replaced by ReplicatorSessions<Corestore.session(), Discovery>
-test.skip('discoverySessions returns peer-discovery objects', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-
-  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
-  const replicator = new Replicator(store, { bootstrap, manual: true })
-
-  const topic1 = Buffer.alloc(32).fill('topic 1')
-  const topic2 = Buffer.alloc(32).fill('topic 2')
-
-  replicator.join(store.session(), topic1)
-  replicator.join(store.session(), topic2)
-
-  const discoverySessions = replicator.discoverySessions
-
-  t.alike(discoverySessions[0].topic, topic1)
-  t.alike(discoverySessions[1].topic, topic2)
-
-  await replicator.close()
-  await store.close()
-  await testnet.destroy()
-})
-
 test('port opt gets passed on to hyperdht', async (t) => {
   const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
   const replicator = new Replicator(store, { manual: true, port: [10000, 10100] })

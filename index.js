@@ -5,6 +5,7 @@ const Hypercore = require('hypercore')
 const b4a = require('b4a')
 const Discovery = require('@holepunchto/replicator-discovery')
 const PeerInfo = require('./lib/peer-info')
+// const Dialer = require('./lib/dialer')
 
 const GC_INTERVAL = 5_000
 const WATERMARK_LOW = 20
@@ -39,17 +40,24 @@ module.exports = class Replicator extends ReadyResource {
     this.destroyed = false
     this.suspended = false
 
+    this.sessions = new Map() // hex(discoveryKey) -> Session
     this.inbound = new Map() // hex(peerId) -> Connection
     this.outbound = new Map() // hex(peerId) -> Connection
     this._inflight = new Set() // hex(peerId) -> dedup in-flight dials
+
     this.peers = new Map() // hex(peerId) -> PeerInfo
 
-    this.sessions = new Map() // hex(discoveryKey) -> Session
+    /*
+    this.dialer = new Dialer(this, {
+      backoffs: opts.backoffs,
+      jitter: opts.jitter
+    })
+    */
 
     this._lowWatermark = opts.lowWatermark ?? WATERMARK_LOW
     this._highWatermark = opts.highWatermark ?? WATERMARK_HIGH
-    this._manual = opts.manual === true
 
+    this._manual = opts.manual === true
     this._gcInterval = null
     if (!this._manual) this._startGC()
   }
@@ -94,19 +102,23 @@ module.exports = class Replicator extends ReadyResource {
     return !!this.getConnection(peerId) || this._inflight.has(peerId)
   }
 
+  // TODO:
+  // - move to Dialer
+  // - clear PeerInfo
   _upsertPeer(publicKey, relayAddresses) {
     if (b4a.equals(publicKey, this.peerId)) return null
 
     const key = toHex(publicKey)
-    let peerInfo = this.peers.get(key)
 
-    if (peerInfo) {
-      peerInfo.relayAddresses = relayAddresses // new is always better
-      return peerInfo
+    let peerInfo = this.peers.get(key)
+    if (!peerInfo) {
+      peerInfo = new PeerInfo({ publicKey })
+      this.peers.set(key, peerInfo)
     }
 
-    peerInfo = new PeerInfo({ publicKey, relayAddresses })
-    this.peers.set(key, peerInfo)
+    // new is always better
+    if (relayAddresses) peerInfo.relayAddresses = relayAddresses
+
     return peerInfo
   }
 
@@ -221,7 +233,7 @@ module.exports = class Replicator extends ReadyResource {
     const hex = toHex(peerId)
 
     // TODO: clean up. the expectedInitiator case is covered in _gc();
-    // Disabling it here for now.
+    // Disabling it here for now:
     if (this.inbound.has(hex)) {
       // const existing = this.getConnection(hex).stream
       const existing = this.inbound.get(hex).stream
@@ -246,44 +258,36 @@ module.exports = class Replicator extends ReadyResource {
       return
     }
 
-    this._upsertPeer(peerId, null)
     this._initConnection(false, peerId, conn)
   }
 
-  _initConnection(initiator, peerId, stream) {
+  _initConnection(initiator, peerId, stream, topic) {
     const hex = toHex(peerId)
-    const peerInfo = this.peers.get(hex) || null
+    const peerInfo = this._upsertPeer(peerId)
 
     const map = initiator ? this.outbound : this.inbound
 
     if (map.has(hex)) throw new Error('unreachable: connection leak') // sanity check
 
-    // this.stats.connects.server.opened++ // TODO: backport stats
-
     const connection = new Connection(this, stream, peerId, initiator)
     connection.peerInfo = peerInfo
     map.set(hex, connection)
 
-    if (peerInfo) {
-      if (initiator) {
-        peerInfo._connected()
-        peerInfo.client = true
-      } else {
-        peerInfo.client = false
-      }
-    }
+    peerInfo._connected()
+    peerInfo.client = initiator
 
     this.root.replicate(stream)
 
     stream.on('close', () => {
       map.delete(hex)
-      if (initiator && peerInfo) peerInfo._disconnected()
+      if (initiator) peerInfo._disconnected()
       this.emit('disconnect', connection)
       this.emit('update')
     })
 
     stream.on('error', safetyCatch)
 
+    // this.stats.connects.server.opened++ // TODO: backport stats
     this.emit('connection', connection) // TODO: rename to '_connection'; used by tests, don't misuse
     this.emit('update')
 
@@ -320,6 +324,46 @@ module.exports = class Replicator extends ReadyResource {
     function onclose() {
       closed = true
     }
+  }
+
+  _connectPeer(topic, peer, data) {
+    if (this.suspended) return
+
+    const peerId = toHex(peer.publicKey)
+    if (b4a.equals(peerId, this.peerId)) return
+
+    const peerInfo = this._upsertPeer(peer.publicKey, peer.relayAddresses)
+    peerInfo._topic(topic)
+
+    if (this.outbound.has(peerId)) return
+    if (this.inbound.has(peerId)) return
+    if (this._inflight.has(peerId)) return
+
+    this._inflight.add(peerId)
+    const clearInflight = () => {
+      if (!this._inflight.has(peerId)) return
+      this._inflight.delete(peerId)
+      this.emit('update')
+    }
+
+    const stream = this.dht.connect(peerInfo.publicKey, {
+      keyPair: this.keyPair,
+      relayAddresses: peerInfo.relayAddresses,
+      relayThrough: this._selectRelay(peerInfo.forceRelaying)
+    })
+
+    this.emit('update')
+
+    stream.on('open', () => {
+      clearInflight()
+      stream.off('error', clearInflight)
+      stream.off('close', clearInflight)
+
+      this._initConnection(true, peer.publicKey, stream, topic)
+    })
+
+    stream.on('error', clearInflight)
+    stream.on('close', clearInflight)
   }
 
   async _gc(now = Date.now) {
@@ -374,7 +418,6 @@ class Session extends ReadyResource {
     this.cores = new Map() // discoveryKey => Core
 
     this._oncore = this._oncore.bind(this)
-    this._connectPeer = this._connectPeer.bind(this)
     this.store.watch(this._oncore)
 
     this.discovery = null
@@ -385,13 +428,15 @@ class Session extends ReadyResource {
 
     await replicator.ready()
 
+    const onpeer = this.replicator._connectPeer.bind(this.replicator, this.discoveryKey)
+
     this.discovery = new Discovery(replicator.dht, discoveryKey, {
       announce: true,
       wait: replicator.listening,
       suspended: replicator.suspended,
       keyPair: replicator.keyPair,
-      onpeer: this._connectPeer,
       relayAddresses: () => replicator.server.relayAddresses,
+      onpeer
     })
 
     this.discovery.refresh().catch(safetyCatch)
@@ -410,50 +455,6 @@ class Session extends ReadyResource {
   // Manual weak-ref, core must belong to store
   addLocal(core) {
     this._oncore(core.core)
-  }
-
-  _connectPeer(peer, data) {
-    if (this.replicator.suspended) return
-    if (b4a.equals(peer.publicKey, this.replicator.peerId)) return
-
-    const peerInfo = this.replicator._upsertPeer(peer.publicKey, peer.relayAddresses)
-    peerInfo._topic(this.discoveryKey)
-
-    const peerId = toHex(peerInfo.publicKey)
-
-    if (this.replicator.outbound.has(peerId)) return
-    if (this.replicator.inbound.has(peerId)) return
-    if (this.replicator._inflight.has(peerId)) return
-
-    this.replicator._inflight.add(peerId)
-    const clearInflight = (err) => {
-      this.replicator._inflight.delete(peerId)
-      if (!err) this.replicator.emit('update')
-    }
-
-    const stream = this.replicator.dht.connect(peerInfo.publicKey, {
-      keyPair: this.replicator.keyPair,
-      relayAddresses: peerInfo.relayAddresses,
-      relayThrough: this.replicator._selectRelay(peerInfo.forceRelaying)
-    })
-
-    this.replicator.emit('update')
-
-    stream.on('open', () => {
-      clearInflight()
-      stream.off('error', clearInflight)
-      stream.off('close', clearInflight)
-
-      if (this.discovery.destroyed || this.replicator.suspended) {
-        stream.destroy()
-        return
-      }
-
-      this.replicator._initConnection(true, peerInfo.publicKey, stream)
-    })
-
-    stream.on('error', clearInflight)
-    stream.on('close', clearInflight)
   }
 
   async suspend({ log = noop } = {}) {
