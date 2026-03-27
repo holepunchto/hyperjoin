@@ -13,8 +13,8 @@ test('suspend + resume', async (t) => {
   const remote = await joinRemote(p2, p1)
   await remote[0].get(0)
 
-  const p1Closed = onceEvent(p1.replicator, 'disconnect')
-  const p2Closed = onceEvent(p2.replicator, 'disconnect')
+  const p1Closed = onceEvent(p1.replicator, '_disconnect')
+  const p2Closed = onceEvent(p2.replicator, '_disconnect')
 
   await p2.replicator.suspend()
   await Promise.all([p1Closed, p2Closed])
@@ -23,7 +23,7 @@ test('suspend + resume', async (t) => {
   t.is(p1.replicator.connectionCount, 0)
   t.is(p2.replicator.connectionCount, 0)
 
-  const reconnected = onceEvent(p1.replicator, 'connection')
+  const reconnected = onceEvent(p1.replicator, '_connection')
   await p2.replicator.resume()
   await reconnected
 

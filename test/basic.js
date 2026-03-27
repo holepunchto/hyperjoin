@@ -50,7 +50,7 @@ test('GC connections with no active mux sessions', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, lowWatermark: 1, highWatermark: 1 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minPeers: 1, maxPeers: 1 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
   const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
 
@@ -60,7 +60,7 @@ test('GC connections with no active mux sessions', async (t) => {
   const p2Key = toHex(p2.replicator.peerId)
   const p3Key = toHex(p3.replicator.peerId)
 
-  const p3Connected = onceEvent(p1.replicator, 'connection')
+  const p3Connected = onceEvent(p1.replicator, '_connection')
   p3.replicator.join(p3.store.session(), p1.cores[0].discoveryKey)
   await p3Connected
 

@@ -13,7 +13,7 @@ test('one server, one client - first connection', async (t) => {
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
-  const connected = onceEvent(p1.replicator, 'connection')
+  const connected = onceEvent(p1.replicator, '_connection')
   const remote = await joinRemote(p2, p1)
   const block = await Promise.all([remote[0].get(0), connected])
 

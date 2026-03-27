@@ -50,7 +50,7 @@ exports.joinRemote = async function joinRemote(peer, remotePeer) {
 
 exports.spawnPeer = async function spawnPeer(
   t,
-  { seed, bootstrap, lowWatermark, highWatermark, manual = true, port } = {}
+  { seed, bootstrap, minPeers, maxPeers, manual = true, port } = {}
 ) {
   let storeOpts = {}
   if (seed) storeOpts = { primaryKey: seed, unsafe: true }
@@ -58,8 +58,8 @@ exports.spawnPeer = async function spawnPeer(
   const store = new Corestore(await t.tmp(), storeOpts)
   const replicator = new Replicator(store, {
     bootstrap,
-    lowWatermark,
-    highWatermark,
+    minPeers,
+    maxPeers,
     manual,
     port
   })
