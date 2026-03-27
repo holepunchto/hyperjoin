@@ -11,8 +11,10 @@ const GC_INTERVAL = 5_000
 const WATERMARK_LOW = 20
 const WATERMARK_HIGH = 40
 
-const ERR_DUPLICATE = 'Duplicate connection'
-const ERR_DESTROYED = 'Swarm has been destroyed'
+const ERR_DUPLICATE = 'DuplicateConnection'
+const ERR_IDLE = 'IdleConnection'
+const ERR_DESTROYED = 'ReplicatorDestroyed'
+const ERR_SUSPEND = 'SuspendDrop'
 
 module.exports = class Replicator extends ReadyResource {
   constructor(rootStore, opts = {}) {
@@ -31,12 +33,15 @@ module.exports = class Replicator extends ReadyResource {
         nodes: opts.nodes,
         port: opts.port
       })
-    this.relayThrough = relayThrough && toRelaySelector(relayThrough)
-    this.server = this.dht.createServer({
-      relayThrough: this._selectRelay.bind(this)
-    }, this._onincoming.bind(this))
-    this.listening = null
 
+    this.relayThrough = relayThrough && toRelaySelector(relayThrough)
+
+    this.server = this.dht.createServer(
+      { relayThrough: this._selectRelay.bind(this) },
+      this._onincoming.bind(this)
+    )
+
+    this.listening = null
     this.destroyed = false
     this.suspended = false
 
@@ -104,7 +109,6 @@ module.exports = class Replicator extends ReadyResource {
 
   // TODO:
   // - move to Dialer
-  // - clear PeerInfo
   _upsertPeer(publicKey, relayAddresses) {
     if (b4a.equals(publicKey, this.peerId)) return null
 
@@ -150,7 +154,7 @@ module.exports = class Replicator extends ReadyResource {
 
     for (const connection of this.connections) {
       pending.push(new Promise((resolve) => connection.stream.on('close', resolve)))
-      connection.destroy()
+      this._evictConnection(connection, ERR_SUSPEND)
     }
 
     this.suspended = true
@@ -193,7 +197,7 @@ module.exports = class Replicator extends ReadyResource {
     for (const session of this.sessions.values()) session.destroy()
     this.sessions.clear()
 
-    for (const connection of this.connections) connection.destroy()
+    for (const connection of this.connections) this._evictConnection(connection)
     this.inbound.clear()
     this.outbound.clear()
 
@@ -294,7 +298,7 @@ module.exports = class Replicator extends ReadyResource {
     return connection
   }
 
-  _evictConnection(connection) {
+  _evictConnection(connection, err) {
     const key = toHex(connection.peerId)
 
     if (connection.initiator) {
@@ -302,7 +306,7 @@ module.exports = class Replicator extends ReadyResource {
     } else {
       this.inbound.delete(key)
     }
-    connection.destroy()
+    connection.destroy(err)
     this.emit('update')
   }
 
@@ -383,7 +387,7 @@ module.exports = class Replicator extends ReadyResource {
         ? connection
         : dst.get(key)
 
-      this._evictConnection(target)
+      this._evictConnection(target, ERR_DUPLICATE)
     }
 
     // Evict idle
@@ -391,7 +395,7 @@ module.exports = class Replicator extends ReadyResource {
       for (const connection of this.connections) {
         if (!connection.isIdle(now)) continue
 
-        this._evictConnection(connection)
+        this._evictConnection(connection, ERR_IDLE)
 
         if (this.connectionCount <= this._lowWatermark) {
           break // target reached
@@ -400,6 +404,12 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     // TODO: Evict long-term idle (no bytes change)
+
+    // Collect Peers
+    for (const [key, info] of this.peers) {
+      if (!info.shouldGC()) continue
+      this.peers.delete(key)
+    }
   }
 
   _startGC() {
@@ -488,6 +498,10 @@ class Connection {
     return Hypercore.getProtocolMuxer(this.stream)
   }
 
+  get info() {
+    return this.replicator._upsertPeer(this.peerId)
+  }
+
   isIdle(now = Date.now) {
     if (this._protomuxSessions() === 0) return true
 
@@ -509,8 +523,9 @@ class Connection {
     return opened
   }
 
-  destroy() {
-    this.stream.destroy()
+  destroy(err) {
+    this.stream.destroy(err)
+    this.info._disconnected()
   }
 }
 
@@ -525,8 +540,3 @@ function toRelaySelector(relayThrough) {
     ? relayThrough
     : (force, replicator) => (force || replicator.dht.randomized ? relayThrough : null)
 }
-
-module.exports.PeerDiscovery = Discovery
-module.exports.Connection = Connection
-module.exports.Session = Session
-module.exports.PeerInfo = PeerInfo
