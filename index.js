@@ -4,8 +4,7 @@ const safetyCatch = require('safety-catch')
 const Hypercore = require('hypercore')
 const b4a = require('b4a')
 const Discovery = require('@holepunchto/replicator-discovery')
-const PeerInfo = require('./lib/peer-info')
-// const Dialer = require('./lib/dialer')
+const PeerStation = require('./lib/station')
 const { getStreamError } = require('streamx')
 
 const GC_INTERVAL = 5_000
@@ -33,7 +32,8 @@ module.exports = class Replicator extends ReadyResource {
       maxClientConnections = MAX_CLIENT_CONNECTIONS,
       maxServerConnections = MAX_SERVER_CONNECTIONS,
       maxParallel = MAX_PARALLEL,
-      firewall = allowAll
+      firewall = allowAll,
+      suspended
     } = opts
 
     if (seed) this.keyPair = DHT.keyPair(seed)
@@ -49,6 +49,11 @@ module.exports = class Replicator extends ReadyResource {
         port: opts.port
       })
 
+    this.ps = new PeerStation(this, {
+      firewall,
+      suspended
+    })
+
     this.relayThrough = relayThrough && toRelaySelector(relayThrough)
 
     this.server = this.dht.createServer(
@@ -62,29 +67,15 @@ module.exports = class Replicator extends ReadyResource {
 
     this.listening = null
     this.destroyed = false
-    this.suspended = false
+    this.suspended = suspended
 
     this.sessions = new Map() // hex(discoveryKey) -> Session
     this.inbound = new Map() // hex(peerId) -> Connection
     this.outbound = new Map() // hex(peerId) -> Connection
     this._inflight = new Set() // hex(peerId) -> dedup in-flight dials
 
-    this.peers = new Map() // hex(peerId) -> PeerInfo
-
-    /*
-    this.dialer = new Dialer(this, {
-      backoffs: opts.backoffs,
-      jitter: opts.jitter
-    })
-    this._timer = new RetryTimer(this._requeue.bind(this), {
-      backoffs: opts.backoffs,
-      jitter: opts.jitter
-    })
-    */
-
     this._minPeers = minPeers
     this._maxPeers = maxPeers
-    this._firewall = firewall
 
     this._manual = opts.manual === true
     this._gcInterval = null
@@ -131,25 +122,6 @@ module.exports = class Replicator extends ReadyResource {
     return !!this.getConnection(peerId) || this._inflight.has(peerId)
   }
 
-  // TODO:
-  // - move to Dialer
-  _updatePeer(publicKey, relayAddresses) {
-    if (b4a.equals(publicKey, this.peerId)) return null
-
-    const key = toHex(publicKey)
-
-    let peerInfo = this.peers.get(key)
-    if (!peerInfo) {
-      peerInfo = new PeerInfo({ publicKey })
-      this.peers.set(key, peerInfo)
-    }
-
-    // new is always better
-    if (relayAddresses) peerInfo.relayAddresses = relayAddresses
-
-    return peerInfo
-  }
-
   _selectRelay(force) {
     if (!this.relayThrough) return null
     return this.relayThrough(force, this)
@@ -180,6 +152,8 @@ module.exports = class Replicator extends ReadyResource {
       pending.push(new Promise((resolve) => connection.stream.on('close', resolve)))
       this._evictConnection(connection, ERR_SUSPEND)
     }
+
+    await this.ps.suspend({ log })
 
     this.suspended = true
     this._inflight.clear()
@@ -226,7 +200,7 @@ module.exports = class Replicator extends ReadyResource {
     this.outbound.clear()
 
     this._inflight.clear()
-    this.peers.clear()
+    this.ps.destroy()
 
     await this.server.close()
     if (!this.dht.destroyed) await this.dht.destroy()
@@ -344,17 +318,7 @@ module.exports = class Replicator extends ReadyResource {
   _handleFirewall(remotePublicKey, payload) {
     if (b4a.equals(remotePublicKey, this.keyPair.publicKey)) return true
 
-    let peerInfo = this.peers.get(b4a.toString(remotePublicKey, 'hex'))
-    if (peerInfo && peerInfo.banned) return true
-
-    const firewalled = this._firewall(remotePublicKey, payload)
-
-    if (firewalled) {
-      if (!peerInfo) peerInfo = this._updatePeer(remotePublicKey)
-      this._banPeer(peerInfo, true, new Error(ERR_FIREWALL))
-    }
-
-    return firewalled
+    return this.ps.handleFirewall(remotePublicKey, payload)
   }
 
   async _connect(peer, queued, topic) {
@@ -367,8 +331,7 @@ module.exports = class Replicator extends ReadyResource {
     if (this.inbound.has(hex)) return
     if (this._inflight.has(hex)) return
 
-
-    const peerInfo = this._updatePeer(peer.publicKey)
+    const peerInfo = this.ps.lookup(peer.publicKey)
 
     // TODO: Support async firewalling at some point. (clientside)
     if (this._handleFirewall(peerInfo.publicKey, null)) {
@@ -381,7 +344,6 @@ module.exports = class Replicator extends ReadyResource {
     let stream
     let error = null
     const opened = await new Promise((resolve) => {
-
       const onerror = (err) => { error = err }
 
       const onclose = () => {
@@ -412,38 +374,13 @@ module.exports = class Replicator extends ReadyResource {
     this._inflight.delete(hex)
 
     if (!opened) {
-      if (this.relayThrough && shouldForceRelaying(error)) {
-        peerInfo.forceRelaying = true
-        peerInfo.attempts = 0 // fastconnect to relay
-      }
-
-      if (shouldBan(error)) { // pre-init ban
-        this._banPeer(peerInfo, true, error)
-      }
-
-      // pre-init requeue
-      peerInfo.waiting = this._shouldRequeue(peerInfo) && this._timer.add(peerInfo)
-      // this._maybeDeletePeer(peerInfo) // TODO: moved to _gc(); verify side-effects
-
+      this.ps.connectFailed(peer.publicKey, error)
       this.emit('update')
       return
     }
 
     // stream opened - hand-off
     this._initConnection(true, peer.publicKey, stream, topic)
-  }
-
-  _shouldRequeue(peerInfo) {
-    if (this.suspended) return false
-    if (this.destroyed) return false
-    if (peerInfo.explicit) return true
-
-    for (const topic of peerInfo.topics) {
-      const key = toHex(topic)
-      if (this.sessions.has(key)) return true
-    }
-
-    return false
   }
 
   async _gc(now = Date.now) {
@@ -481,11 +418,7 @@ module.exports = class Replicator extends ReadyResource {
 
     // TODO: Evict long-term idle (no bytes change)
 
-    // Collect Peers
-    for (const [key, info] of this.peers) {
-      if (!info.shouldGC()) continue
-      this.peers.delete(key)
-    }
+    this.ps.collectGarbage()
   }
 
   _startGC() {
@@ -526,11 +459,11 @@ class Session extends ReadyResource {
     this.discovery.refresh().catch(safetyCatch)
   }
 
+  // TODO: remove + set onpeer: this.replicator.ps.seen.bind(this.replicator.ps)
   _onpeer(peer, data) {
-    const peerInfo = this.replicator._updatePeer(peer.publicKey, peer.relayAddresses)
-    peerInfo._topic(this.discoveryKey)
+    this.replicator.ps.seen(peer, this.discoveryKey)
 
-    // TODO: should invoked by Dialer
+    // TODO: should invoked by station
     this.replicator._connect(peer)
   }
 
@@ -584,7 +517,7 @@ class Connection {
   }
 
   get info() {
-    return this.replicator._updatePeer(this.peerId)
+    return this.replicator.ps.lookup(this.peerId)
   }
 
   isIdle(now = Date.now) {
@@ -611,14 +544,8 @@ class Connection {
   _onclose () {
     const rep = this.replicator
 
-    this.info.waiting = rep._shouldRequeue(this.info) // && rep._timer.add(this.info) // TODO timer
-
     const err = getStreamError(this.stream)
-    if (shouldBan(err)) {
-      this._banPeer(this.info, true, err)
-    }
-
-    this.info._disconnected()
+    this.replicator.ps.disconnected(this.peerId, err)
 
     const key = toHex(this.peerId)
     if (this.initiator) {
@@ -629,16 +556,12 @@ class Connection {
       // this.stats.connects.server.closed++
     }
 
-    // this._maybeDeletePeer(peerInfo) // moved to _gc()
-    // this._attemptClientConnections() // TODO: not yet implemented
-
     rep.emit('_disconnect', this)
     rep.emit('update')
   }
 
   destroy(err) {
     this.stream.destroy(err)
-    this.info._disconnected()
   }
 }
 
@@ -648,20 +571,7 @@ function toHex(buffer) {
   return b4a.toString(buffer, 'hex')
 }
 
-function shouldForceRelaying(code) {
-  return (
-    code === 'HOLEPUNCH_ABORTED' ||
-    code === 'HOLEPUNCH_DOUBLE_RANDOMIZED_NATS' ||
-    code === 'REMOTE_NOT_HOLEPUNCHABLE'
-  )
-}
-
 function allowAll() {
-  return false
-}
-
-function shouldBan() {
-  // return !!err && err.name === 'HypercoreError' && err.code === 'INVALID_OPERATION'
   return false
 }
 
