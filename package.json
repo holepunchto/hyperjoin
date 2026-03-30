@@ -52,6 +52,7 @@
     "hypercore": "^11.27.14",
     "ready-resource": "^1.2.0",
     "safety-catch": "^1.0.3",
+    "shuffled-priority-queue": "^2.1.0",
     "scope-lock": "^1.2.4"
   }
 }
