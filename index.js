@@ -94,8 +94,8 @@ module.exports = class Replicator extends ReadyResource {
         }
       }
     }
-    // this.dht.on('network-change', this._handleNetworkChange.bind(this))
-    // this.dht.on('network-update', this._handleNetworkUpdate.bind(this))
+    this.dht.on('network-change', this._handleNetworkChange.bind(this))
+    this.dht.on('network-update', this._handleNetworkUpdate.bind(this))
     this.on('update', this._handleUpdate.bind(this))
 
     this._manual = opts.manual === true
@@ -483,6 +483,27 @@ module.exports = class Replicator extends ReadyResource {
 
   _handleUpdate() {
     this.stats.updates++
+  }
+
+  async _handleNetworkUpdate() {
+    if (this.dht.online === false) return
+    this._handleNetworkChange()
+  }
+
+  async _handleNetworkChange() {
+    if (this.suspended) return
+
+    for (const connection of this.connections) {
+      connection.stream.sendKeepAlive()
+    }
+
+    const refreshes = []
+
+    for (const session of this.sessions.values()) {
+      refreshes.push(session.discovery.refresh())
+    }
+
+    await Promise.allSettled(refreshes)
   }
 }
 
