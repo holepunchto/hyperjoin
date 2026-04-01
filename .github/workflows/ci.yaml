@@ -10,7 +10,12 @@ jobs:
     name: Lint
     steps:
       - uses: holepunchto/actions/node-base@v1
+      - uses: actions/setup-node@v4
+        with:
+          registry-url: 'https://npm.pkg.github.com'
       - run: npm run lint
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   test:
     strategy:
       matrix:
@@ -21,4 +26,9 @@ jobs:
     name: Test / ${{ matrix.platform }}
     steps:
       - uses: holepunchto/actions/bare-base@v1
+      - uses: actions/setup-node@v4
+        with:
+          registry-url: 'https://npm.pkg.github.com'
       - run: npm test
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
