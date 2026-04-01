@@ -9,7 +9,6 @@ async function runTests() {
 
   await import('./basic.js')
   await import('./bulk-timer.js')
-  // await import('./chaos.js')
   await import('./firewall.js')
   await import('./retry-timer.js')
   await import('./stats.js')
