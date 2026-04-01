@@ -46,7 +46,7 @@
   },
   "homepage": "https://github.com/holepunchto/replicator",
   "dependencies": {
-    "@holepunchto/replicator-discovery": "github:holepunchto/replicator-discovery",
+    "@holepunchto/replicator-discovery": "^1.0.0",
     "b4a": "^1.8.0",
     "bare-events": "^2.8.2",
     "hypercore": "^11.27.14",
