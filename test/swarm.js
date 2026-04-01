@@ -1,7 +1,18 @@
 const test = require('brittle')
 const Corestore = require('corestore')
 const b4a = require('b4a')
-const { joinRemote, onceEvent, seed, spawnPeer, seedA, seedB, seedC, timeout, toHex, waitForEvents } = require('./helpers')
+const {
+  joinRemote,
+  onceEvent,
+  seed,
+  spawnPeer,
+  seedA,
+  seedB,
+  seedC,
+  timeout,
+  toHex,
+  waitForEvents
+} = require('./helpers')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('..')
 
@@ -531,8 +542,8 @@ test('GC dedupes connections', async (t) => {
   const p1 = await spawnPeer(t, { bootstrap, seed: Buffer.alloc(32, 0xa) })
   const p2 = await spawnPeer(t, { bootstrap, seed: Buffer.alloc(32, 0xb) })
 
-  await Promise.all([...p1.replicator.sessions.values()].map(s => s.ready()))
-  await Promise.all([...p2.replicator.sessions.values()].map(s => s.ready()))
+  await Promise.all([...p1.replicator.sessions.values()].map((s) => s.ready()))
+  await Promise.all([...p2.replicator.sessions.values()].map((s) => s.ready()))
 
   const s1 = [...p1.replicator.sessions.values()][0]
   const s2 = [...p2.replicator.sessions.values()][0]
@@ -552,8 +563,16 @@ test('GC dedupes connections', async (t) => {
   t.is(p2.replicator.inbound.size, 1)
   t.is(p2.replicator.outbound.size, 1)
 
-  t.alike(Array.from(p2.replicator.connections, (connection) => toHex(connection.peerId)), [p1.peerId, p1.peerId], 'duplicate p1')
-  t.alike(Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)), [p2.peerId, p2.peerId], 'duplicate p2')
+  t.alike(
+    Array.from(p2.replicator.connections, (connection) => toHex(connection.peerId)),
+    [p1.peerId, p1.peerId],
+    'duplicate p1'
+  )
+  t.alike(
+    Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)),
+    [p2.peerId, p2.peerId],
+    'duplicate p2'
+  )
 
   await p1.replicator._gc()
   await p2.replicator._gc()
@@ -561,8 +580,16 @@ test('GC dedupes connections', async (t) => {
   t.is(p1.replicator.connectionCount, 1)
   t.is(p2.replicator.connectionCount, 1)
 
-  t.alike(Array.from(p2.replicator.connections, (connection) => toHex(connection.peerId)), [p1.peerId], 'de-duped')
-  t.alike(Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)), [p2.peerId], 'de-duped')
+  t.alike(
+    Array.from(p2.replicator.connections, (connection) => toHex(connection.peerId)),
+    [p1.peerId],
+    'de-duped'
+  )
+  t.alike(
+    Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)),
+    [p2.peerId],
+    'de-duped'
+  )
 
   await p1.destroy()
   await p2.destroy()
@@ -745,8 +772,12 @@ test('one server, one client - correct deduplication when a client connection is
   let resolveClientReconnect = null
   let resolveServerReconnect = null
 
-  const clientReconnect = new Promise((resolve) => { resolveClientReconnect = resolve })
-  const serverReconnect = new Promise((resolve) => { resolveServerReconnect = resolve })
+  const clientReconnect = new Promise((resolve) => {
+    resolveClientReconnect = resolve
+  })
+  const serverReconnect = new Promise((resolve) => {
+    resolveServerReconnect = resolve
+  })
 
   p1.replicator.on('_connection', () => {
     serverConnections++

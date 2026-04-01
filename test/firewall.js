@@ -24,7 +24,9 @@ test('firewalled server - bad client is rejected', async (t) => {
   await server.ready()
   await server.discovery.flushed()
 
-  const client = p1.replicator.join(p1.store.session(), p2.cores[0].discoveryKey, { announce: false })
+  const client = p1.replicator.join(p1.store.session(), p2.cores[0].discoveryKey, {
+    announce: false
+  })
   await client.ready()
   await client.discovery.flushed()
   await p1.replicator.flush()
@@ -58,7 +60,9 @@ test('firewalled client - bad server is rejected', async (t) => {
   let clientConnections = 0
   p2.replicator.on('_connection', () => clientConnections++)
 
-  const client = p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey, { announce: false })
+  const client = p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey, {
+    announce: false
+  })
   await client.ready()
   await client.discovery.flushed()
   await p2.replicator.flush()

@@ -13,10 +13,7 @@ test('Default keypair from corestore', async (t) => {
 
   await replicator.ready()
 
-  t.is(
-    toHex(replicator.peerId),
-    '7dda4c84e7061170c5100be5d4c5cce9bb05ff2e1bd20d80d83408a10a6e73cc'
-  )
+  t.is(toHex(replicator.peerId), '7dda4c84e7061170c5100be5d4c5cce9bb05ff2e1bd20d80d83408a10a6e73cc')
 
   await replicator.close()
   await store.close()
@@ -38,8 +35,16 @@ test('Basic replication', async (t) => {
   t.is(remote[1].length, 2)
   t.is(p1.replicator.connectionCount, 1)
   t.is(p2.replicator.connectionCount, 1)
-  t.alike(Array.from(p2.replicator.connections, (connection) => toHex(connection.peerId)), [p1.peerId], 'p2 sees p1')
-  t.alike(Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)), [p2.peerId], 'p1 sees p2')
+  t.alike(
+    Array.from(p2.replicator.connections, (connection) => toHex(connection.peerId)),
+    [p1.peerId],
+    'p2 sees p1'
+  )
+  t.alike(
+    Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)),
+    [p2.peerId],
+    'p1 sees p2'
+  )
 
   await p1.destroy()
   await p2.destroy()
@@ -65,10 +70,7 @@ test('GC connections with no active mux sessions', async (t) => {
   await p3Connected
 
   t.is(p1.replicator.connectionCount, 2, 'p1 connected to both peers')
-  t.ok(
-    p1.replicator.getConnection(p2Key)._protomuxSessions() > 0,
-    'p2 has open core session to p1'
-  )
+  t.ok(p1.replicator.getConnection(p2Key)._protomuxSessions() > 0, 'p2 has open core session to p1')
   t.is(p1.replicator.hasConnection(p3Key), true, 'p3 should connect to p1')
   t.is(
     p1.replicator.getConnection(p3Key)._protomuxSessions(),

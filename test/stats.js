@@ -54,4 +54,4 @@ test('connectionsOpened and connectionsClosed stats', async (t) => {
   await testnet.destroy()
 })
 
-function noop () {}
+function noop() {}

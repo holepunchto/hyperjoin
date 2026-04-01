@@ -103,24 +103,32 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._manual) this._startGC()
   }
 
-  get peerId () {
+  get peerId() {
     return this.keyPair && this.keyPair.publicKey
   }
 
-  get connectionCount () {
+  get connectionCount() {
     return this.inbound.size + this.outbound.size
   }
 
-  get connections() { return this._connections() }
-  get connecting() { return this._inflight.size }
+  get connections() {
+    return this._connections()
+  }
+  get connecting() {
+    return this._inflight.size
+  }
 
   // used by testsuite
-  get _firewall() { return this.station._firewall }
-  set _firewall(callback) { this.station._firewall = callback }
+  get _firewall() {
+    return this.station._firewall
+  }
+  set _firewall(callback) {
+    this.station._firewall = callback
+  }
 
-  *_connections () {
-    yield *this.inbound.values()
-    yield *this.outbound.values()
+  *_connections() {
+    yield* this.inbound.values()
+    yield* this.outbound.values()
   }
 
   async _open() {
@@ -156,8 +164,7 @@ module.exports = class Replicator extends ReadyResource {
     if (!this.listening) {
       if (this.destroyed) throw new Error('Replicator destroyed')
 
-      this.listening = this.ready()
-        .then(() => this.server.listen(this.keyPair))
+      this.listening = this.ready().then(() => this.server.listen(this.keyPair))
     }
 
     return this.listening
@@ -391,7 +398,9 @@ module.exports = class Replicator extends ReadyResource {
     let stream
     let error = null
     const opened = await new Promise((resolve) => {
-      const onerror = (err) => { error = err }
+      const onerror = (err) => {
+        error = err
+      }
 
       const onclose = () => {
         stream.off('error', onerror)
@@ -432,9 +441,10 @@ module.exports = class Replicator extends ReadyResource {
 
   async _gc(now = Date.now) {
     // Evict peer-dupes
-    const [src, dst] = this.inbound.size < this.outbound.size
-      ? [this.inbound, this.outbound]
-      : [this.outbound, this.inbound]
+    const [src, dst] =
+      this.inbound.size < this.outbound.size
+        ? [this.inbound, this.outbound]
+        : [this.outbound, this.inbound]
 
     for (const [key, connection] of src) {
       if (!dst.has(key)) continue
@@ -443,9 +453,7 @@ module.exports = class Replicator extends ReadyResource {
       if (cmp === 0) throw new Error('unreachable: self connection')
 
       // low-peerId keeps inbound
-      const target = (cmp > 0) ^ connection.initiator
-        ? connection
-        : dst.get(key)
+      const target = (cmp > 0) ^ connection.initiator ? connection : dst.get(key)
 
       this._evictConnection(target, ERR_DUPLICATE)
     }
@@ -532,7 +540,9 @@ class Session extends ReadyResource {
     const weak = new Hypercore({ core, weak: true })
     this.cores.set(dk, weak)
 
-    weak.on('close', () => { this.cores.delete(dk) })
+    weak.on('close', () => {
+      this.cores.delete(dk)
+    })
   }
 
   // Manual weak-ref, core must belong to store
@@ -598,7 +608,7 @@ class Connection {
     return opened
   }
 
-  _onclose () {
+  _onclose() {
     const rep = this.replicator
 
     const err = getStreamError(this.stream)
