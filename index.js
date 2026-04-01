@@ -3,18 +3,36 @@ const DHT = require('hyperdht')
 const safetyCatch = require('safety-catch')
 const Hypercore = require('hypercore')
 const b4a = require('b4a')
-const ScopeLock = require('scope-lock')
+const Discovery = require('@holepunchto/replicator-discovery')
+const PeerStation = require('./lib/station')
+const { getStreamError } = require('streamx')
 
-const IDLE_TIMEOUT = 30_000
 const GC_INTERVAL = 5_000
-const WATERMARK_LOW = 20
-const WATERMARK_HIGH = 40
+const MIN_PEERS = 20
+const MAX_PEERS = 40
+
+const ERR_DUPLICATE = 'DuplicateConnection'
+const ERR_IDLE = 'IdleConnection'
+const ERR_DESTROYED = 'ReplicatorDestroyed'
+const ERR_SUSPEND = 'SuspendDrop'
 
 module.exports = class Replicator extends ReadyResource {
   constructor(rootStore, opts = {}) {
     super()
 
-    const { seed, keyPair } = opts
+    const {
+      seed,
+      keyPair,
+      relayThrough,
+      minPeers = MIN_PEERS,
+      maxPeers = MAX_PEERS,
+      maxClientConnections,
+      maxServerConnections,
+      maxParallel,
+      firewall = allowAll,
+      suspended
+    } = opts
+
     if (seed) this.keyPair = DHT.keyPair(seed)
     if (keyPair) this.keyPair = keyPair
 
@@ -28,22 +46,94 @@ module.exports = class Replicator extends ReadyResource {
         port: opts.port
       })
 
-    this.connections = new Map() // hex(peerId) -> Connection
+    this.ps = new PeerStation(this, {
+      firewall,
+      backoffs: opts.backoffs,
+      jitter: opts.jitter,
+      suspended,
+      maxParallel,
+      maxClientConnections,
+      maxServerConnections
+    })
+
+    this.relayThrough = relayThrough && toRelaySelector(relayThrough)
+
+    this.server = this.dht.createServer(
+      {
+        firewall: this._handleFirewall.bind(this),
+        relayThrough: this._selectRelay.bind(this),
+        handshakeClearWait: opts.handshakeClearWait
+      },
+      this._onincoming.bind(this)
+    )
+
+    this.listening = null
+    this.destroyed = false
+    this.suspended = suspended
+
     this.sessions = new Map() // hex(discoveryKey) -> Session
-    this._connecting = new Set() // hex(peerId) — dedup in-flight dials
+    this.inbound = new Map() // hex(peerId) -> Connection
+    this.outbound = new Map() // hex(peerId) -> Connection
+    this._inflight = new Set() // hex(peerId) -> dedup in-flight dials
 
-    this._lowWatermark = opts.lowWatermark ?? WATERMARK_LOW
-    this._highWatermark = opts.highWatermark ?? WATERMARK_HIGH
+    this._minPeers = minPeers
+    this._maxPeers = maxPeers
 
-    if (!opts.manual) {
-      this._gcInterval = setInterval(this._gc.bind(this), GC_INTERVAL)
+    this.stats = {
+      updates: 0,
+      bannedPeers: 0,
+      connects: {
+        client: {
+          attempted: 0,
+          opened: 0,
+          closed: 0
+        },
+        server: {
+          opened: 0,
+          closed: 0
+        }
+      }
     }
+    this.dht.on('network-change', this._handleNetworkChange.bind(this))
+    this.dht.on('network-update', this._handleNetworkUpdate.bind(this))
+    this.on('update', this._handleUpdate.bind(this))
 
-    this.ready().catch(safetyCatch)
+    this._manual = opts.manual === true
+    this._gcInterval = null
+    if (!this._manual) this._startGC()
   }
 
-  get topics() {
-    return Array.from(this.sessions.values()).map((sess) => sess.topic)
+  get peerId() {
+    return this.keyPair && this.keyPair.publicKey
+  }
+
+  get connectionCount() {
+    return this.inbound.size + this.outbound.size
+  }
+
+  get connections() {
+    return this._connections()
+  }
+  get connecting() {
+    return this._inflight.size
+  }
+
+  // used by testsuite
+  get _firewall() {
+    return this.station._firewall
+  }
+  set _firewall(callback) {
+    this.station._firewall = callback
+  }
+
+  *_connections() {
+    yield* this.inbound.values()
+    yield* this.outbound.values()
+  }
+
+  async _open() {
+    this.keyPair ||= await this.root.createKeyPair('replicator')
+    await this.dht.ready()
   }
 
   *cores() {
@@ -54,181 +144,449 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
-  async _open() {
-    this.keyPair ||= await this.root.createKeyPair('replicator')
+  getConnection(peerId) {
+    if (typeof peerId !== 'string') peerId = toHex(peerId)
 
-    await this.dht.ready()
+    return this.inbound.get(peerId) || this.outbound.get(peerId)
+  }
 
-    this.server = this.dht.createServer(this._onincoming.bind(this))
-    await this.server.listen(this.keyPair)
+  hasConnection(peerId) {
+    if (typeof peerId !== 'string') peerId = toHex(peerId)
+    return !!this.getConnection(peerId) || this._inflight.has(peerId)
+  }
+
+  _selectRelay(force) {
+    if (!this.relayThrough) return null
+    return this.relayThrough(force, this)
+  }
+
+  listen() {
+    if (!this.listening) {
+      if (this.destroyed) throw new Error('Replicator destroyed')
+
+      this.listening = this.ready().then(() => this.server.listen(this.keyPair))
+    }
+
+    return this.listening
+  }
+
+  async suspend({ log = noop } = {}) {
+    if (this.suspended) return
+
+    const pending = []
+    const suspending = [this.server.suspend({ log })]
+
+    for (const session of this.sessions.values()) {
+      suspending.push(session.suspend({ log }))
+    }
+
+    for (const connection of this.connections) {
+      pending.push(new Promise((resolve) => connection.stream.on('close', resolve)))
+      this._evictConnection(connection, ERR_SUSPEND)
+    }
+
+    await this.ps.suspend({ log })
+
+    this.suspended = true
+    this._inflight.clear()
+    clearInterval(this._gcInterval)
+    this._gcInterval = null
+
+    await Promise.allSettled(suspending)
+
+    await this.dht.suspend({ log })
+
+    await Promise.all(pending)
+  }
+
+  async resume({ log = noop } = {}) {
+    if (!this.suspended) return
+
+    await this.dht.resume({ log })
+    await this.server.resume({ log })
+    await this.ps.resume({ log })
+
+    this.suspended = false
+
+    const pending = []
+
+    for (const session of this.sessions.values()) {
+      pending.push(session.resume({ log }))
+    }
+
+    await Promise.all(pending)
+
+    if (!this._manual) this._startGC()
   }
 
   async _close() {
-    clearInterval(this._gcInterval)
+    this.destroyed = true
 
-    for (const session of this.sessions.values()) session.destroy()
+    clearInterval(this._gcInterval)
+    this._gcInterval = null
+    const tasks = []
+    for (const session of this.sessions.values()) tasks.push(session.destroy())
     this.sessions.clear()
 
-    for (const connection of this.connections.values()) connection.destroy()
-    this.connections.clear()
+    for (const connection of this.connections) this._evictConnection(connection)
+    this.inbound.clear()
+    this.outbound.clear()
 
-    this._connecting.clear()
+    this._inflight.clear()
+    this.ps.destroy()
 
+    await Promise.all(tasks)
     await this.server.close()
     if (!this.dht.destroyed) await this.dht.destroy()
   }
 
-  join(store, discoveryKey) {
-    let session = this.sessions.get(toHex(discoveryKey))
-    if (session) return session
+  join(store, discoveryKey, { announce = true } = {}) {
+    const dk = toHex(discoveryKey)
+    if (this.sessions.has(dk)) throw new Error('session exists')
 
-    session = new Session(this, store, discoveryKey)
-    this.sessions.set(toHex(discoveryKey), session)
+    if (!this.suspended) this.listen().catch(safetyCatch)
+
+    const session = new Session(this, store, discoveryKey, { announce })
+    this.sessions.set(dk, session)
+
+    session.on('close', () => this.sessions.delete(dk))
+    store.on('close', session.close.bind(session))
+
+    session.ready().catch(safetyCatch)
 
     return session
   }
 
-  _onincoming(conn) {
-    const peerId = conn.remotePublicKey
-    const connection = this._getOrCreateConnection(peerId, conn, false)
+  joinPeer(publicKey) {
+    const peerInfo = this.ps.lookup(publicKey)
+    if (!peerInfo) return
 
-    // discoveryKey unknown, adding to all sessions
-    for (const session of this.sessions.values()) {
-      for (const core of session.cores.values()) {
-        connection.addRef(core.discoveryKey)
-      }
+    if (!this.ps.explicitPeers.has(peerInfo)) {
+      peerInfo.explicit = true
+      this.ps.explicitPeers.add(peerInfo)
+    }
+
+    if (this.hasConnection(publicKey)) return
+    if (peerInfo._updatePriority()) {
+      this.ps._enqueue(peerInfo)
     }
   }
 
-  _getOrCreateConnection(peerId, stream, initiator) {
+  leavePeer(publicKey) {
+    const key = toHex(publicKey)
+    if (!this.ps.peers.has(key)) return
+
+    const peerInfo = this.ps.peers.get(key)
+    peerInfo.explicit = false
+    this.ps.explicitPeers.delete(peerInfo)
+    this.ps._maybeDeletePeer(peerInfo)
+  }
+
+  async flush() {
+    return this.ps.flush()
+  }
+
+  _onincoming(conn) {
+    if (this.destroyed || this.suspended) {
+      // TODO: Investigate why a final server connection can be received after close
+      conn.on('error', noop)
+      return conn.destroy(ERR_DESTROYED)
+    }
+
+    const peerId = conn.remotePublicKey
     const hex = toHex(peerId)
 
-    let connection = this.connections.get(hex)
-    if (connection) return connection
+    if (this.inbound.has(hex)) {
+      const existing = this.inbound.get(hex).stream
+      // If both connections are from the same peer,
+      // - pick the new one if the existing stream is already established (has sent and received bytes),
+      //   because the other client must have lost that connection and be reconnecting
+      const keepNew = existing.rawBytesRead > 0 && existing.rawBytesWritten > 0
 
-    connection = new Connection(this, stream, peerId, initiator)
-    this.connections.set(hex, connection)
+      if (keepNew === false) {
+        existing.sendKeepAlive()
+        conn.on('error', noop)
+        conn.destroy(new Error(ERR_DUPLICATE))
+      } else {
+        existing.on('error', noop)
+        existing.destroy(new Error(ERR_DUPLICATE))
+        this._handleServerConnectionSwap(existing, conn)
+      }
 
+      return
+    }
+
+    // When reaching here, the connection will always be 'opened' next tick
+
+    this._initConnection(false, peerId, conn)
+  }
+
+  // stream param expected opened stream
+  _initConnection(initiator, peerId, stream, topic) {
+    const hex = toHex(peerId)
+
+    const map = initiator ? this.outbound : this.inbound
+
+    if (map.has(hex)) throw new Error('unreachable: connection leak') // sanity check
+
+    const connection = new Connection(this, stream, peerId, initiator)
+
+    connection.info._connected()
+    connection.info.client = initiator
+
+    map.set(hex, connection)
     this.root.replicate(stream)
 
-    stream.on('close', () => {
-      this.connections.delete(hex)
-    })
+    if (initiator) this.stats.connects.client.opened++
+    else this.stats.connects.server.opened++
 
-    stream.on('error', safetyCatch)
+    this.emit('connected', connection) // testsuite only
+    this.emit('update')
 
     return connection
   }
 
-  _evictConnection(connection) {
-    this.connections.delete(toHex(connection.peerId))
-    connection.destroy()
+  _evictConnection(connection, err) {
+    connection.destroy(err)
+  }
+
+  _handleServerConnectionSwap(existing, conn) {
+    let closed = false
+
+    existing.on('close', () => {
+      if (closed) return
+
+      conn.removeListener('error', noop)
+      conn.removeListener('close', onclose)
+
+      this._onincoming(conn)
+    })
+
+    conn.on('error', noop)
+    conn.on('close', onclose)
+
+    function onclose() {
+      closed = true
+    }
+  }
+
+  _handleFirewall(remotePublicKey, payload) {
+    if (b4a.equals(remotePublicKey, this.keyPair.publicKey)) return true
+
+    return this.ps.handleFirewall(remotePublicKey, payload)
+  }
+
+  async _connect(peer, queued, topic) {
+    if (this.suspended) return
+
+    const hex = toHex(peer.publicKey)
+    if (b4a.equals(peer.publicKey, this.peerId)) return
+
+    if (this.outbound.has(hex)) return
+    if (this.inbound.has(hex)) return
+    if (this._inflight.has(hex)) return
+
+    const peerInfo = this.ps.lookup(peer.publicKey)
+
+    // TODO: Support async firewalling at some point.
+    if (this._handleFirewall(peerInfo.publicKey, null)) {
+      return
+    }
+
+    this._inflight.add(hex)
+
+    let stream
+    let error = null
+    const opened = await new Promise((resolve) => {
+      const onerror = (err) => {
+        error = err
+      }
+
+      const onclose = () => {
+        stream.off('error', onerror)
+        resolve(false)
+      }
+
+      const onopen = () => {
+        stream.off('error', onerror)
+        stream.off('close', onclose)
+        resolve(true)
+      }
+
+      stream = this.dht.connect(peer.publicKey, {
+        keyPair: this.keyPair,
+        relayAddresses: peerInfo.relayAddresses,
+        relayThrough: this._selectRelay(peerInfo.forceRelaying)
+      })
+
+      stream.once('error', onerror)
+      stream.once('close', onclose)
+      stream.once('open', onopen)
+
+      this.stats.connects.client.attempted++
+      this.emit('update')
+    })
+
+    this._inflight.delete(hex)
+
+    if (!opened) {
+      this.ps.connectFailed(peer.publicKey, error)
+      this.emit('update')
+      return
+    }
+
+    // stream opened - hand-off
+    this._initConnection(true, peer.publicKey, stream, topic)
   }
 
   async _gc(now = Date.now) {
-    /* V2
-    for (const topic of this.topics) {
-      topic.reannounce().catch(safetyCatch)
-    }
-    */
+    // Evict peer-dupes
+    const [src, dst] =
+      this.inbound.size < this.outbound.size
+        ? [this.inbound, this.outbound]
+        : [this.outbound, this.inbound]
 
-    if (this.connections.size > this._highWatermark) {
-      for (const connection of this.connections.values()) {
+    for (const [key, connection] of src) {
+      if (!dst.has(key)) continue
+
+      const cmp = b4a.compare(this.peerId, connection.peerId)
+      if (cmp === 0) throw new Error('unreachable: self connection')
+
+      // low-peerId keeps inbound
+      const target = (cmp > 0) ^ connection.initiator ? connection : dst.get(key)
+
+      this._evictConnection(target, ERR_DUPLICATE)
+    }
+
+    // Evict idle
+    if (this.connectionCount > this._maxPeers) {
+      for (const connection of this.connections) {
         if (!connection.isIdle(now)) continue
 
-        this._evictConnection(connection)
+        this._evictConnection(connection, ERR_IDLE)
 
-        if (this.connections.size <= this._lowWatermark) {
+        if (this.connectionCount <= this._minPeers) {
           break // target reached
         }
       }
     }
+
+    // TODO: Evict long-term idle (no bytes change)
+
+    this.ps.collectGarbage()
+  }
+
+  _startGC() {
+    if (this._gcInterval) return
+    this._gcInterval = setInterval(this._gc.bind(this), GC_INTERVAL)
+  }
+
+  _handleUpdate() {
+    this.stats.updates++
+  }
+
+  async _handleNetworkUpdate() {
+    if (this.dht.online === false) return
+    this._handleNetworkChange()
+  }
+
+  async _handleNetworkChange() {
+    if (this.suspended) return
+
+    for (const connection of this.connections) {
+      connection.stream.sendKeepAlive()
+    }
+
+    const refreshes = []
+
+    for (const session of this.sessions.values()) {
+      refreshes.push(session.discovery.refresh())
+    }
+
+    await Promise.allSettled(refreshes)
   }
 }
 
-class Topic {
-  constructor(session, discoveryKey) {
-    this.session = session
-    this.replicator = session.replicator
+class Session extends ReadyResource {
+  constructor(replicator, store, discoveryKey, opts = {}) {
+    super()
+    this.replicator = replicator
+    this.store = store // instance from Replicator.root.session()
     this.discoveryKey = discoveryKey
-    this.destroyed = false
+    this.cores = new Map() // discoveryKey => Core
 
-    this._activeQuery = null
-    this._queue = Promise.resolve()
-    this._lock = new ScopeLock({ debounce: true })
+    this._oncore = this._oncore.bind(this)
+    this._onpeer = this._onpeer.bind(this)
+    this.store.watch(this._oncore)
+
+    this.discovery = null
+    this._opts = opts
   }
 
-  async reannounce() {
-    if (this.destroyed) return
+  async _open() {
+    const { replicator, discoveryKey } = this
 
-    const proceed = await this._lock.lock()
-    if (!proceed) return
+    await replicator.ready()
 
-    const query = this.replicator.dht.announce(
-      this.discoveryKey,
-      this.replicator.keyPair,
-      this.replicator.server.relayAddresses
-    )
-    this._activeQuery = query
+    this.discovery = new Discovery(replicator.dht, discoveryKey, {
+      announce: true,
+      wait: replicator.listening,
+      suspended: replicator.suspended,
+      keyPair: replicator.keyPair,
+      relayAddresses: () => replicator.server.relayAddresses,
+      onpeer: this._onpeer,
+      ...this._opts
+    })
 
-    try {
-      for await (const data of query) {
-        if (this.destroyed) return
-        for (const peer of data.peers) this._connectPeer(peer)
-      }
-
-      await query.finished()
-    } catch (err) {
-      if (!this.destroyed) safetyCatch(err)
-    } finally {
-      this._activeQuery = null
-      this._lock.unlock()
-    }
+    this.discovery.refresh().catch(safetyCatch)
   }
 
-  _connectPeer(peer) {
-    const peerId = toHex(peer.publicKey)
+  setAnnounce(value) {
+    this.discovery.setAnnounce(value)
+    this.discovery.refresh().catch(safetyCatch)
+  }
 
-    // skip self
-    if (b4a.equals(peer.publicKey, this.replicator.server.publicKey)) return
+  get announce() {
+    return this.discovery.announce
+  }
 
-    // already connected
-    if (this.replicator.connections.has(peerId)) return
+  _onpeer(peer, data) {
+    this.replicator.ps.seen(peer, this.discoveryKey)
+  }
 
-    // already dialing
-    if (this.replicator._connecting.has(peerId)) return
-    this.replicator._connecting.add(peerId)
+  _oncore(core) {
+    const dk = toHex(core.discoveryKey)
+    if (this.cores.has(dk)) return
 
-    const stream = this.replicator.dht.connect(peer.publicKey, { keyPair: this.replicator.keyPair })
+    const weak = new Hypercore({ core, weak: true })
+    this.cores.set(dk, weak)
 
-    stream.on('open', () => {
-      this.replicator._connecting.delete(peerId)
-
-      if (this.destroyed) {
-        stream.destroy()
-        return
-      }
-
-      this.replicator._getOrCreateConnection(peer.publicKey, stream, true, this.discoveryKey)
-    })
-
-    stream.on('error', () => {
-      this.replicator._connecting.delete(peerId)
-    })
-
-    stream.on('close', () => {
-      this.replicator._connecting.delete(peerId)
+    weak.on('close', () => {
+      this.cores.delete(dk)
     })
   }
 
-  destroy() {
-    if (this.destroyed) return
-    this.destroyed = true
+  // Manual weak-ref, core must belong to store
+  addLocal(core) {
+    this._oncore(core.core)
+  }
 
-    if (this._activeQuery) {
-      this._activeQuery.destroy()
-      this._activeQuery = null
-    }
+  async suspend({ log = noop } = {}) {
+    await this.discovery.suspend({ log })
+  }
+
+  async resume({ log = noop } = {}) {
+    await this.discovery.resume()
+  }
+
+  async _close() {
+    this.store.unwatch(this._oncore)
+    this.cores.clear()
+    await this.discovery.destroy()
+  }
+
+  async destroy() {
+    return this.close()
   }
 }
 
@@ -238,55 +596,22 @@ class Connection {
     this.initiator = initiator
     this.stream = stream
     this.peerId = peerId
-    this.refs = new Map()
-    this.lastActive = Date.now()
+    this._onclose = this._onclose.bind(this)
+    stream.on('close', this._onclose)
   }
 
   get protomux() {
     return Hypercore.getProtocolMuxer(this.stream)
   }
 
-  addRef(discoveryKey) {
-    const hex = toHex(discoveryKey)
-    if (this.refs.has(hex)) return
-
-    this.refs.set(hex, {
-      discoveryKey,
-      lastActive: Date.now()
-    })
-  }
-
-  hasRef(discoveryKey) {
-    const hex = toHex(discoveryKey)
-    return this.refs.has(hex)
-  }
-
-  removeRef(discoveryKey) {
-    this.refs.delete(toHex(discoveryKey))
-  }
-
-  touch(discoveryKey) {
-    // TODO: reintroduce
-    const ref = this.refs.get(toHex(discoveryKey))
-    if (!ref) return
-
-    const now = Date.now()
-    ref.lastActive = now
-    this.lastActive = now
+  get info() {
+    return this.replicator.ps.lookup(this.peerId)
   }
 
   isIdle(now = Date.now) {
-    if (this.refs.size === 0) return true
-
-    // find Connection without protomux sesions of local cores
     if (this._protomuxSessions() === 0) return true
 
-    const ts = now()
-    for (const ref of this.refs.values()) {
-      if (ts - ref.lastActive < IDLE_TIMEOUT) return false
-    }
-
-    return true
+    return false
   }
 
   _protomuxSessions() {
@@ -304,63 +629,43 @@ class Connection {
     return opened
   }
 
-  destroy() {
-    this.refs.clear()
-    this.stream.destroy()
-  }
-}
+  _onclose() {
+    const rep = this.replicator
 
-class Session {
-  constructor(replicator, store, discoveryKey) {
-    this.replicator = replicator
-    this.store = store // instance from Replicator.root.session()
-    this.discoveryKey = discoveryKey
-    this.cores = new Map() // discoveryKey => Core
+    const err = getStreamError(this.stream)
 
-    this._oncore = this._oncore.bind(this)
-    this.store.watch(this._oncore)
-
-    this.topic = new Topic(this, discoveryKey)
-    this.topic.reannounce().catch(safetyCatch)
-  }
-
-  _oncore(core) {
-    const dk = toHex(core.discoveryKey)
-    if (this.cores.has(dk)) return
-
-    const weak = new Hypercore({ core, weak: true })
-    this.cores.set(dk, weak)
-
-    weak.on('close', () => {
-      this.cores.delete(dk)
-
-      for (const connection of this.replicator.connections.values()) {
-        connection.removeRef(weak.discoveryKey)
-      }
-    })
-
-    // add ref to existing connections
-    for (const connection of this.replicator.connections.values()) {
-      connection.addRef(weak.discoveryKey)
+    const key = toHex(this.peerId)
+    if (this.initiator) {
+      rep.outbound.delete(key)
+      rep.stats.connects.client.closed++
+    } else {
+      rep.inbound.delete(key)
+      rep.stats.connects.server.closed++
     }
+
+    this.replicator.ps.disconnected(this.peerId, err)
+
+    rep.emit('disconnected', this)
+    rep.emit('update')
   }
 
-  // Manual weak-ref, core must belong to store
-  addLocal(core) {
-    this._oncore(core.core)
-  }
-
-  destroy() {
-    this.store.unwatch(this._oncore)
-    this.cores.clear()
-    this.topic.destroy()
+  destroy(err) {
+    this.stream.destroy(err)
   }
 }
+
+function noop() {}
 
 function toHex(buffer) {
   return b4a.toString(buffer, 'hex')
 }
 
-module.exports.Topic = Topic
-module.exports.Connection = Connection
-module.exports.Session = Session
+function allowAll() {
+  return false
+}
+
+function toRelaySelector(relayThrough) {
+  return typeof relayThrough === 'function'
+    ? relayThrough
+    : (force, replicator) => (force || replicator.dht.randomized ? relayThrough : null)
+}
