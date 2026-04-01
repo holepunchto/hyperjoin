@@ -1,6 +1,6 @@
 const test = require('brittle')
 const createTestnet = require('hyperdht/testnet')
-const { timeout, spawnPeer, seedA, seedB } = require('./helpers')
+const { timeout, spawnPeer, seedA, seedB } = require('../helpers')
 
 const BACKOFFS = [100, 200, 300, 400]
 
@@ -18,7 +18,7 @@ test('firewalled server - bad client is rejected', async (t) => {
   })
 
   let serverConnections = 0
-  p2.replicator.on('_connection', () => serverConnections++)
+  p2.replicator.on('connected', () => serverConnections++)
 
   const server = [...p2.replicator.sessions.values()][0]
   await server.ready()
@@ -58,7 +58,7 @@ test('firewalled client - bad server is rejected', async (t) => {
   })
 
   let clientConnections = 0
-  p2.replicator.on('_connection', () => clientConnections++)
+  p2.replicator.on('connected', () => clientConnections++)
 
   const client = p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey, {
     announce: false
@@ -94,7 +94,7 @@ test('firewalled server - rejection does not trigger retry cascade', async (t) =
   })
 
   let serverConnections = 0
-  p2.replicator.on('_connection', () => serverConnections++)
+  p2.replicator.on('connected', () => serverConnections++)
 
   const server = [...p2.replicator.sessions.values()][0]
   await server.ready()

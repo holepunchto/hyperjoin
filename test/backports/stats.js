@@ -1,6 +1,6 @@
 const test = require('brittle')
 const createTestnet = require('hyperdht/testnet')
-const { onceEvent, spawnPeer, seedA, seedB } = require('./helpers')
+const { onceEvent, spawnPeer, seedA, seedB } = require('../helpers')
 
 const BACKOFFS = [100, 200, 300, 400]
 
@@ -16,10 +16,10 @@ test('connectionsOpened and connectionsClosed stats', async (t) => {
   const tClose = t.test('Close connection')
   tClose.plan(4)
 
-  const p1Connected = onceEvent(p1.replicator, '_connection')
-  const p2Connected = onceEvent(p2.replicator, '_connection')
+  const p1Connected = onceEvent(p1.replicator, 'connected')
+  const p2Connected = onceEvent(p2.replicator, 'connected')
 
-  p2.replicator.on('_connection', (connection) => {
+  p2.replicator.on('connected', (connection) => {
     tOpen.is(p2.replicator.stats.connects.client.opened, 1, 'opened connection is in stats')
     tOpen.is(p2.replicator.stats.connects.client.attempted, 1, 'attemped connection is in stats')
     tClose.is(p2.replicator.stats.connects.client.closed, 0, 'sanity check')
@@ -32,7 +32,7 @@ test('connectionsOpened and connectionsClosed stats', async (t) => {
     connection.stream.end()
   })
 
-  p1.replicator.on('_connection', (connection) => {
+  p1.replicator.on('connected', (connection) => {
     tOpen.is(p1.replicator.stats.connects.server.opened, 1, 'opened server connection is in stats')
     tClose.is(p1.replicator.stats.connects.server.closed, 0, 'sanity check')
 

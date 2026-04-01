@@ -8,12 +8,12 @@ async function runTests() {
   test.pause()
 
   await import('./basic.js')
-  await import('./bulk-timer.js')
-  await import('./firewall.js')
-  await import('./retry-timer.js')
-  await import('./stats.js')
-  await import('./suspend.js')
-  await import('./swarm.js')
+  await import('./backports/bulk-timer.js')
+  await import('./backports/firewall.js')
+  await import('./backports/retry-timer.js')
+  await import('./backports/stats.js')
+  await import('./backports/suspend.js')
+  await import('./backports/swarm.js')
 
   test.resume()
 }

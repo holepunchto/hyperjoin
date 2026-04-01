@@ -1,9 +1,9 @@
 const test = require('brittle')
 const crypto = require('hypercore-crypto')
 const { isLinux } = require('which-runtime')
-const { timeout } = require('./helpers')
+const { timeout } = require('../helpers')
 
-const RetryTimer = require('../lib/retry-timer')
+const RetryTimer = require('../../lib/retry-timer')
 
 const BACKOFFS = [50, 150, 250, 350]
 const MAX_JITTER = 20

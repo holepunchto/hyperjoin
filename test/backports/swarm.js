@@ -12,9 +12,9 @@ const {
   timeout,
   toHex,
   waitForEvents
-} = require('./helpers')
+} = require('../helpers')
 const createTestnet = require('hyperdht/testnet')
-const Replicator = require('..')
+const Replicator = require('../..')
 
 const BACKOFFS = [100, 200, 300, 400]
 
@@ -35,7 +35,7 @@ test('join peer - can establish direct connections to public keys', async (t) =>
   let p1Connected = false
   let p2Connected = false
 
-  p1.replicator.on('_connection', () => {
+  p1.replicator.on('connected', () => {
     if (!p1Connected) {
       p1Connected = true
       firstConnection.pass('p1 got first connection')
@@ -44,7 +44,7 @@ test('join peer - can establish direct connections to public keys', async (t) =>
     connections.pass('p1 got a connection')
   })
 
-  p2.replicator.on('_connection', () => {
+  p2.replicator.on('connected', () => {
     if (!p2Connected) {
       p2Connected = true
       firstConnection.pass('p2 got first connection')
@@ -89,8 +89,8 @@ test('leave peer - will stop reconnecting to previously joined peers', async (t)
 
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
-  const p1Connected = onceEvent(p1.replicator, '_connection')
-  const p2Connected = onceEvent(p2.replicator, '_connection')
+  const p1Connected = onceEvent(p1.replicator, 'connected')
+  const p2Connected = onceEvent(p2.replicator, 'connected')
 
   await p2.replicator.listen()
 
@@ -100,12 +100,12 @@ test('leave peer - will stop reconnecting to previously joined peers', async (t)
   const close = t.test('close')
   close.plan(2)
 
-  p1.replicator.on('_connection', (connection) => {
+  p1.replicator.on('connected', (connection) => {
     connection.stream.once('close', () => close.pass('p1 connection closed'))
     open.pass('p1 got a connection')
   })
 
-  p2.replicator.on('_connection', (connection) => {
+  p2.replicator.on('connected', (connection) => {
     connection.stream.once('close', () => close.pass('p2 connection closed'))
     open.pass('p2 got a connection')
   })
@@ -114,16 +114,16 @@ test('leave peer - will stop reconnecting to previously joined peers', async (t)
 
   await open
 
-  p1.replicator.removeAllListeners('_connection')
-  p2.replicator.removeAllListeners('_connection')
+  p1.replicator.removeAllListeners('connected')
+  p2.replicator.removeAllListeners('connected')
 
   p1.replicator.leavePeer(p2.replicator.peerId)
   t.alike(p1.replicator.ps.explicitPeers.size, 0)
   t.alike(p1.replicator.connectionCount, 1)
   t.alike(p2.replicator.connectionCount, 1)
 
-  p1.replicator.on('_connection', () => t.fail('p1 got a connection after leave'))
-  p2.replicator.on('_connection', () => t.fail('p2 got a connection after leave'))
+  p1.replicator.on('connected', () => t.fail('p1 got a connection after leave'))
+  p2.replicator.on('connected', () => t.fail('p2 got a connection after leave'))
 
   for (const connection of p1.replicator.connections) connection.stream.end()
   for (const connection of p2.replicator.connections) connection.stream.end()
@@ -170,12 +170,12 @@ test('leave peer - no memory leak if other side closed connection first', async 
     })
   })
 
-  p1.replicator.on('_connection', (connection) => {
+  p1.replicator.on('connected', (connection) => {
     connection.stream.once('close', () => close.pass('p1 connection closed'))
     open.pass('p1 got a connection')
   })
 
-  p2.replicator.on('_connection', (connection) => {
+  p2.replicator.on('connected', (connection) => {
     connection.stream.once('close', () => close.pass('p2 connection closed'))
     open.pass('p2 got a connection')
   })
@@ -184,8 +184,8 @@ test('leave peer - no memory leak if other side closed connection first', async 
 
   await open
 
-  p1.replicator.removeAllListeners('_connection')
-  p2.replicator.removeAllListeners('_connection')
+  p1.replicator.removeAllListeners('connected')
+  p2.replicator.removeAllListeners('connected')
 
   t.is(p1.replicator.connectionCount, 1)
 
@@ -237,14 +237,14 @@ test('one server, one client - first connection', async (t) => {
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
-  const connected = onceEvent(p2.replicator, '_connection')
+  const connected = onceEvent(p2.replicator, 'connected')
 
-  p2.replicator.on('_connection', (connection) => {
+  p2.replicator.on('connected', (connection) => {
     t.pass('p2')
     connection.stream.end()
   })
 
-  p1.replicator.on('_connection', (connection) => {
+  p1.replicator.on('connected', (connection) => {
     connection.stream.end()
   })
 
@@ -269,12 +269,12 @@ test('two servers - first connection', async (t) => {
   connection1Test.plan(1)
   connection2Test.plan(1)
 
-  p1.replicator.on('_connection', (connection) => {
+  p1.replicator.on('connected', (connection) => {
     connection1Test.pass('p1')
     connection.stream.end()
   })
 
-  p2.replicator.on('_connection', (connection) => {
+  p2.replicator.on('connected', (connection) => {
     connection2Test.pass('p2')
     connection.stream.end()
   })
@@ -307,7 +307,7 @@ test('one server, one client - single reconnect', async (t) => {
   let clientConnected = false
   let serverDisconnected = false
 
-  p2.replicator.on('_connection', () => {
+  p2.replicator.on('connected', () => {
     if (!clientConnected) {
       clientConnected = true
       return
@@ -316,7 +316,7 @@ test('one server, one client - single reconnect', async (t) => {
     clientReconnects.pass('client reconnected')
   })
 
-  p1.replicator.on('_connection', (connection) => {
+  p1.replicator.on('connected', (connection) => {
     if (!serverDisconnected) {
       serverDisconnected = true
       connection.stream.destroy()
@@ -345,7 +345,7 @@ test('one server, one client - maximum reconnects', async (t) => {
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB, backoffs: BACKOFFS, jitter: 0 })
 
   let connections = 0
-  p2.replicator.on('_connection', (connection) => {
+  p2.replicator.on('connected', (connection) => {
     connections++
     connection.stream.destroy()
   })
@@ -370,7 +370,7 @@ test('one server, one client - banned peer does not reconnect', async (t) => {
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB, backoffs: BACKOFFS, jitter: 0 })
 
   let connections = 0
-  p2.replicator.on('_connection', (connection) => {
+  p2.replicator.on('connected', (connection) => {
     connections++
     connection.info.ban(true)
     connection.stream.destroy()
@@ -431,11 +431,11 @@ test('two servers, two clients - simple deduplication', async (t) => {
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA, backoffs: BACKOFFS, jitter: 0 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB, backoffs: BACKOFFS, jitter: 0 })
 
-  p1.replicator.on('_connection', () => {
+  p1.replicator.on('connected', () => {
     connection1Test.pass('p1 connection')
   })
 
-  p2.replicator.on('_connection', () => {
+  p2.replicator.on('connected', () => {
     connection2Test.pass('p2 connection')
   })
 
@@ -462,7 +462,7 @@ test('one server, two clients - topic multiplexing', async (t) => {
   let clientConnections = 0
   let peerInfo = null
 
-  p2.replicator.on('_connection', (connection) => {
+  p2.replicator.on('connected', (connection) => {
     clientConnections++
     peerInfo = connection.info
   })
@@ -502,7 +502,7 @@ test('one server, two clients - first connection', async (t) => {
   connection2Test.plan(1)
   connection3Test.plan(1)
 
-  p1.replicator.on('_connection', (connection) => {
+  p1.replicator.on('connected', (connection) => {
     const peerId = toHex(connection.peerId)
     if (peerId === p2.peerId) {
       connection1To2Test.pass('p1 connected with p2')
@@ -513,11 +513,11 @@ test('one server, two clients - first connection', async (t) => {
     }
   })
 
-  p2.replicator.on('_connection', (connection) => {
+  p2.replicator.on('connected', (connection) => {
     connection2Test.ok(toHex(connection.peerId) === p1.peerId, 'p2 connected with p1')
   })
 
-  p3.replicator.on('_connection', (connection) => {
+  p3.replicator.on('connected', (connection) => {
     connection3Test.ok(toHex(connection.peerId) === p1.peerId, 'p3 connected with p1')
   })
 
@@ -548,8 +548,8 @@ test('GC dedupes connections', async (t) => {
   const s1 = [...p1.replicator.sessions.values()][0]
   const s2 = [...p2.replicator.sessions.values()][0]
 
-  const p1Connections = waitForEvents(p1.replicator, '_connection', 2)
-  const p2Connections = waitForEvents(p2.replicator, '_connection', 2)
+  const p1Connections = waitForEvents(p1.replicator, 'connected', 2)
+  const p2Connections = waitForEvents(p2.replicator, 'connected', 2)
 
   p1.replicator._connect({ publicKey: p2.replicator.peerId }, false, s1.discoveryKey)
   p2.replicator._connect({ publicKey: p1.replicator.peerId }, false, s2.discoveryKey)
@@ -736,7 +736,7 @@ test('two servers, one client - refreshing a peer discovery instance discovers n
   const p3 = await spawnPeer(t, { bootstrap, seed: seedC, backoffs: BACKOFFS, jitter: 0 })
 
   let clientConnections = 0
-  p3.replicator.on('_connection', () => {
+  p3.replicator.on('connected', () => {
     clientConnections++
   })
 
@@ -779,12 +779,12 @@ test('one server, one client - correct deduplication when a client connection is
     resolveServerReconnect = resolve
   })
 
-  p1.replicator.on('_connection', () => {
+  p1.replicator.on('connected', () => {
     serverConnections++
     if (serverConnections === 2) resolveServerReconnect()
   })
 
-  p2.replicator.on('_connection', (connection) => {
+  p2.replicator.on('connected', (connection) => {
     clientConnections++
     if (clientConnections === 2) resolveClientReconnect()
     if (clientConnections === 1) setTimeout(() => connection.stream.destroy(), 50)
@@ -855,7 +855,7 @@ test('rejoining with different client/server opts refreshes', async (t) => {
 
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
-  p2.replicator.on('_connection', () => {})
+  p2.replicator.on('connected', () => {})
   const client = p2.replicator.join(p2.store.session(), one.discoveryKey)
   await client.ready()
   await client.discovery.flushed()
@@ -921,12 +921,12 @@ test('peer-discovery object deleted when corresponding connection closes (server
   const otherConnected = t.test('connection')
   otherConnected.plan(1)
 
-  p2.replicator.on('_connection', () => {
+  p2.replicator.on('connected', () => {
     connected.pass('p2')
   })
 
-  const connClosed = onceEvent(p1.replicator, '_disconnect')
-  p1.replicator.on('_connection', () => {
+  const connClosed = onceEvent(p1.replicator, 'disconnected')
+  p1.replicator.on('connected', () => {
     otherConnected.pass('p1')
   })
 
@@ -958,17 +958,17 @@ test('no default error handler set when connection event is emitted', async (t) 
 
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
-  const p1Connected = onceEvent(p1.replicator, '_connection')
-  const p2Connected = onceEvent(p2.replicator, '_connection')
+  const p1Connected = onceEvent(p1.replicator, 'connected')
+  const p2Connected = onceEvent(p2.replicator, 'connected')
 
-  p2.replicator.on('_connection', (connection) => {
+  p2.replicator.on('connected', (connection) => {
     // protomux/index:333 'we handle this in "close"'
     t.is(connection.stream.listeners('error').length, 1, 'no upstream error listeners')
     connection.stream.on('error', () => {})
     connection.stream.end()
   })
 
-  p1.replicator.on('_connection', (connection) => {
+  p1.replicator.on('connected', (connection) => {
     // protomux/index:333 'we handle this in "close"'
     t.is(connection.stream.listeners('error').length, 1, 'no upstream error listeners')
     connection.stream.on('error', () => {})
@@ -992,10 +992,10 @@ test('topic and peer get unslabbed in PeerInfo', async (t) => {
 
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
-  const p1Connected = onceEvent(p1.replicator, '_connection')
-  const p2Connected = onceEvent(p2.replicator, '_connection')
+  const p1Connected = onceEvent(p1.replicator, 'connected')
+  const p2Connected = onceEvent(p2.replicator, 'connected')
 
-  p2.replicator.on('_connection', (connection) => {
+  p2.replicator.on('connected', (connection) => {
     t.is(
       [...p2.replicator.ps.peers.values()][0].publicKey.buffer.byteLength,
       32,
@@ -1011,7 +1011,7 @@ test('topic and peer get unslabbed in PeerInfo', async (t) => {
     connection.stream.end()
   })
 
-  p1.replicator.on('_connection', (connection) => {
+  p1.replicator.on('connected', (connection) => {
     t.is(
       [...p1.replicator.ps.peers.values()][0].publicKey.buffer.byteLength,
       32,
@@ -1071,10 +1071,10 @@ test('firewall for server connections results in peer ban', async (t) => {
     jitter: 0
   })
 
-  p2.replicator.on('_connection', () => {
+  p2.replicator.on('connected', () => {
     t.fail('should not connect due to firewall and ban')
   })
-  p1.replicator.on('_connection', () => {
+  p1.replicator.on('connected', () => {
     t.fail('should not connect due to firewall and ban')
   })
 
@@ -1130,10 +1130,10 @@ test('ban stat and event', async (t) => {
     t.alike(err.message, 'Peer is firewalled')
   })
 
-  p2.replicator.on('_connection', (connection) => {
+  p2.replicator.on('connected', (connection) => {
     connection.stream.on('error', () => {})
   })
-  p1.replicator.on('_connection', (connection) => {
+  p1.replicator.on('connected', (connection) => {
     connection.stream.on('error', () => {})
   })
 

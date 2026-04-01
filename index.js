@@ -340,7 +340,7 @@ module.exports = class Replicator extends ReadyResource {
     if (initiator) this.stats.connects.client.opened++
     else this.stats.connects.server.opened++
 
-    this.emit('_connection', connection) // testsuite only
+    this.emit('connected', connection) // testsuite only
     this.emit('update')
 
     return connection
@@ -645,7 +645,7 @@ class Connection {
 
     this.replicator.ps.disconnected(this.peerId, err)
 
-    rep.emit('_disconnect', this)
+    rep.emit('disconnected', this)
     rep.emit('update')
   }
 

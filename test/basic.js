@@ -65,7 +65,7 @@ test('GC connections with no active mux sessions', async (t) => {
   const p2Key = toHex(p2.replicator.peerId)
   const p3Key = toHex(p3.replicator.peerId)
 
-  const p3Connected = onceEvent(p1.replicator, '_connection')
+  const p3Connected = onceEvent(p1.replicator, 'connected')
   p3.replicator.join(p3.store.session(), p1.cores[0].discoveryKey)
   await p3Connected
 

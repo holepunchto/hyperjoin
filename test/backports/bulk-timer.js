@@ -1,6 +1,6 @@
 const test = require('brittle')
 
-const BulkTimer = require('../lib/bulk-timer')
+const BulkTimer = require('../../lib/bulk-timer')
 
 const TEST_INTERVAL = 500
 
