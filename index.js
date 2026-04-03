@@ -219,27 +219,6 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._manual) this._startGC()
   }
 
-  async _close() {
-    this.destroyed = true
-
-    clearInterval(this._gcInterval)
-    this._gcInterval = null
-    const tasks = []
-    for (const session of this.sessions.values()) tasks.push(session.destroy())
-    this.sessions.clear()
-
-    for (const connection of this.connections) this._evictConnection(connection)
-    this.inbound.clear()
-    this.outbound.clear()
-
-    this._inflight.clear()
-    this.ps.destroy()
-
-    await Promise.all(tasks)
-    await this.server.close()
-    if (!this.dht.destroyed) await this.dht.destroy()
-  }
-
   join(store, discoveryKey, { announce = true } = {}) {
     const dk = toHex(discoveryKey)
     if (this.sessions.has(dk)) throw new Error('session exists')
@@ -504,6 +483,31 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     await Promise.allSettled(refreshes)
+  }
+
+  async _close() {
+    this.destroyed = true
+
+    clearInterval(this._gcInterval)
+    this._gcInterval = null
+    const tasks = []
+    for (const session of this.sessions.values()) tasks.push(session.destroy())
+    this.sessions.clear()
+
+    for (const connection of this.connections) this._evictConnection(connection)
+    this.inbound.clear()
+    this.outbound.clear()
+
+    this._inflight.clear()
+    this.ps.destroy()
+
+    await Promise.all(tasks)
+    await this.server.close()
+    if (!this.dht.destroyed) await this.dht.destroy()
+  }
+
+  async destroy() {
+    return this.close()
   }
 }
 
