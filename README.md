@@ -13,8 +13,10 @@ const store = new Corestore('./storage')
 
 const rep = new Replicator(store)
 await rep.ready()
-const discoveryKey = '...'
+
 const session = store.session()
+
+const discoveryKey = '...'
 rep.join(session, discoveryKey, { announce: true })
 
 const core = session.get({ name: 'example' })
