@@ -22,7 +22,7 @@ jobs:
         node-version: [lts/*]
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    name: Test / ${{ matrix.platform }}
+    name: Test / ${{ matrix.os }}
     steps:
       - uses: holepunchto/actions/bare-base@v1
       - uses: actions/setup-node@v4
