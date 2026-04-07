@@ -13,15 +13,12 @@ const store = new Corestore('./storage')
 
 const rep = new Replicator(store)
 await rep.ready()
-
+const discoveryKey = '...'
 const session = store.session()
+rep.join(session, discoveryKey, { announce: true })
+
 const core = session.get({ name: 'example' })
 await core.ready()
-
-const repSession = rep.join(session, core.discoveryKey, { announce: true })
-
-// Cores opened before join() must be added manually.
-repSession.addLocal(core)
 
 await rep.close()
 await store.close()
