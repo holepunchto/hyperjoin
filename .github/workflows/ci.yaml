@@ -19,9 +19,8 @@ jobs:
   test:
     strategy:
       matrix:
-        include:
-          - os: ubuntu-latest
-            platform: linux
+        node-version: [lts/*]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     name: Test / ${{ matrix.platform }}
     steps:
