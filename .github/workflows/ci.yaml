@@ -10,8 +10,6 @@ jobs:
     name: Lint
     steps:
       - uses: holepunchto/actions/bare-base@v1
-        with:
-          registry-url: 'https://npm.pkg.github.com'
       - run: npm run lint
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
