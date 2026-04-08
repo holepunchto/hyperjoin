@@ -745,7 +745,9 @@ test('two servers, one client - refreshing a peer discovery instance discovers n
     clientConnections++
   })
 
-  const session = p3.replicator.join(p3.store.session(), p1.cores[0].discoveryKey)
+  const session = p3.replicator.join(p3.store.session(), p1.cores[0].discoveryKey, {
+    announce: false
+  })
   await session.ready()
   await p3.replicator.flush()
 
