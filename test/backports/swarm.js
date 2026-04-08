@@ -300,6 +300,7 @@ test('one server, one client - single reconnect', async (t) => {
 
   const serverReconnects = t.test('server reconnects')
   const clientReconnects = t.test('client reconnects')
+  const firstClientConnect = new Promise((resolve) => p2.replicator.once('connected', resolve))
 
   serverReconnects.plan(1)
   clientReconnects.plan(1)
@@ -316,9 +317,13 @@ test('one server, one client - single reconnect', async (t) => {
     clientReconnects.pass('client reconnected')
   })
 
-  p1.replicator.on('connected', (connection) => {
+  p1.replicator.on('connected', async (connection) => {
     if (!serverDisconnected) {
       serverDisconnected = true
+
+      await firstClientConnect // 'connected' event in replicator has different semantics.
+      t.ok(clientConnected)
+
       connection.stream.destroy()
       return
     }
