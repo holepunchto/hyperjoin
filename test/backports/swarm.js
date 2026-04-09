@@ -757,7 +757,7 @@ test('two servers, one client - refreshing a peer discovery instance discovers n
   await p2.replicator.flush()
   t.is(clientConnections, 1)
 
-  await session.discovery.refresh()
+  await session.refresh()
   await p3.replicator.flush()
   t.is(clientConnections, 2)
 
@@ -858,7 +858,7 @@ test('rejoining with different client/server opts refreshes', async (t) => {
   session.addLocal(one)
   await session.ready()
   session.setAnnounce(true)
-  await session.discovery.refresh()
+  await session.refresh()
 
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
