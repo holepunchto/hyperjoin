@@ -8,6 +8,7 @@ async function runTests() {
   test.pause()
 
   await import('./basic.js')
+  await import('./autoswarm.js')
   await import('./backports/bulk-timer.js')
   await import('./backports/firewall.js')
   await import('./backports/retry-timer.js')
