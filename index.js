@@ -7,7 +7,7 @@ const Discovery = require('@holepunchto/replicator-discovery')
 const PeerStation = require('./lib/station')
 const { getStreamError } = require('streamx')
 
-const GC_INTERVAL = 5_000
+const GC_INTERVAL = 5000
 const MIN_PEERS = 20
 const MAX_PEERS = 40
 
@@ -67,7 +67,6 @@ module.exports = class Replicator extends ReadyResource {
       this._onincoming.bind(this)
     )
 
-    this.listening = null
     this.destroyed = false
     this.suspended = suspended
 
@@ -134,6 +133,8 @@ module.exports = class Replicator extends ReadyResource {
   async _open() {
     this.keyPair ||= await this.root.createKeyPair('replicator')
     await this.dht.ready()
+
+    await this.server.listen(this.keyPair)
   }
 
   *cores() {
@@ -158,16 +159,6 @@ module.exports = class Replicator extends ReadyResource {
   _selectRelay(force) {
     if (!this.relayThrough) return null
     return this.relayThrough(force, this)
-  }
-
-  listen() {
-    if (!this.listening) {
-      if (this.destroyed) throw new Error('Replicator destroyed')
-
-      this.listening = this.ready().then(() => this.server.listen(this.keyPair))
-    }
-
-    return this.listening
   }
 
   async suspend({ log = noop } = {}) {
@@ -222,8 +213,6 @@ module.exports = class Replicator extends ReadyResource {
   join(store, discoveryKey, { announce = true } = {}) {
     const dk = toHex(discoveryKey)
     if (this.sessions.has(dk)) throw new Error('session exists')
-
-    if (!this.suspended) this.listen().catch(safetyCatch)
 
     const session = new Session(this, store, discoveryKey, { announce })
     this.sessions.set(dk, session)
@@ -529,25 +518,33 @@ class Session extends ReadyResource {
 
   async _open() {
     const { replicator, discoveryKey } = this
+    const { announce } = this._opts
 
     await replicator.ready()
 
+    const { suspended, keyPair } = replicator
+
     this.discovery = new Discovery(replicator.dht, discoveryKey, {
-      announce: true,
-      wait: replicator.listening,
-      suspended: replicator.suspended,
-      keyPair: replicator.keyPair,
+      announce,
+      suspended,
+      keyPair,
       relayAddresses: () => replicator.server.relayAddresses,
       onpeer: this._onpeer,
       ...this._opts
     })
 
+    // starts Discovery internal refresh timer
     this.discovery.refresh().catch(safetyCatch)
   }
 
   setAnnounce(value) {
     this.discovery.setAnnounce(value)
-    this.discovery.refresh().catch(safetyCatch)
+
+    this.refresh().catch(safetyCatch)
+  }
+
+  async refresh() {
+    return this.discovery.refresh()
   }
 
   get announce() {
