@@ -24,8 +24,6 @@ test('join peer - can establish direct connections to public keys', async (t) =>
 
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
-  await p2.replicator.listen()
-
   const firstConnection = t.test('first connection')
   firstConnection.plan(2)
 
@@ -92,8 +90,6 @@ test('leave peer - will stop reconnecting to previously joined peers', async (t)
   const p1Connected = onceEvent(p1.replicator, 'connected')
   const p2Connected = onceEvent(p2.replicator, 'connected')
 
-  await p2.replicator.listen()
-
   const open = t.test('open')
   open.plan(2)
 
@@ -146,8 +142,6 @@ test('leave peer - no memory leak if other side closed connection first', async 
 
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
-
-  await p2.replicator.listen()
 
   const open = t.test('open')
   open.plan(2)
@@ -857,8 +851,9 @@ test('rejoining with different client/server opts refreshes', async (t) => {
   const session = replicator.join(local, one.discoveryKey, { announce: false })
   session.addLocal(one)
   await session.ready()
+  await session.discovery.flushed()
   session.setAnnounce(true)
-  await session.discovery.refresh()
+  await session.refresh()
 
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
