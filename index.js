@@ -225,31 +225,6 @@ module.exports = class Replicator extends ReadyResource {
     return session
   }
 
-  joinPeer(publicKey) {
-    const peerInfo = this.ps.lookup(publicKey)
-    if (!peerInfo) return
-
-    if (!this.ps.explicitPeers.has(peerInfo)) {
-      peerInfo.explicit = true
-      this.ps.explicitPeers.add(peerInfo)
-    }
-
-    if (this.hasConnection(publicKey)) return
-    if (peerInfo._updatePriority()) {
-      this.ps._enqueue(peerInfo)
-    }
-  }
-
-  leavePeer(publicKey) {
-    const key = toHex(publicKey)
-    if (!this.ps.peers.has(key)) return
-
-    const peerInfo = this.ps.peers.get(key)
-    peerInfo.explicit = false
-    this.ps.explicitPeers.delete(peerInfo)
-    this.ps._maybeDeletePeer(peerInfo)
-  }
-
   async flush() {
     return this.ps.flush()
   }

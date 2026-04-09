@@ -84,7 +84,6 @@ function randomPeerInfo() {
     reconnecting: true,
     proven: false,
     banned: false,
-    explicit: false,
     attempts: 0,
     reconnect(val) {
       this.reconnecting = !!val
