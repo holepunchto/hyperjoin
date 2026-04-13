@@ -63,7 +63,7 @@ test('autoswarm: active instances', async (t) => {
 
   async function performJoin (peer) {
     const repSession = await peer.join(topic)
-    await repSession.startActive()
+    repSession.startActive()
   }
   await Promise.all([p1, p2].map(performJoin))
 
@@ -126,27 +126,41 @@ test.skip('autoswarm: can enable discovery swarming', async (t) => {
 test.skip('autoswarm: replicator activates fallbacks', (t) => {})
 
 async function spawnSwarm(t) {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
+  const swarm = new TestSwarm(t)
+  await swarm.ready()
+  return swarm
+}
 
-  const peers = []
-  const writers = new Map()
-  const rootPath = await t.tmp()
+class TestSwarm extends ReadyResource {
+  constructor(t) {
+    super()
+    this.t = t
+    this.testnet = null
+    this.bootstrap = null
+    this.rootPath = null
+    this.peers = []
+    this.writers = new Map()
+    this._peerCounter = 0
+  }
 
-  const propagate = async () => {
-    let done = []
+  async _open() {
+    this.testnet = await createTestnet()
+    this.bootstrap = this.testnet.bootstrap
+    this.rootPath = await this.t.tmp()
+  }
+
+  async propagate() {
+    const done = []
     let cores = 0
     let topics = 0
 
-    for (const [topic, keys] of writers) {
+    for (const [topic, keys] of this.writers) {
       topics++
       for (const key of keys) {
-        for (const peer of peers) {
+        for (const peer of this.peers) {
           if (!peer.sessions.has(topic)) continue
           const { session } = peer.sessions.get(topic)
-
-          const p = session.get({ key }).ready()
-          done.push(p)
+          done.push(session.get({ key }).ready())
           cores++
         }
       }
@@ -157,48 +171,51 @@ async function spawnSwarm(t) {
     return { cores, topics }
   }
 
-  const refresh = () => Promise.all(peers.map(p => p.replicator.refresh()))
-  const flush = () => Promise.all(peers.map(p => p.replicator.flush()))
-  const gc = () => Promise.all(peers.map(p => p.replicator._gc()))
+  refresh() {
+    return Promise.all(this.peers.map((p) => p.replicator.refresh()))
+  }
 
-  return {
-    propagate,
-    refresh,
-    flush,
-    gc,
+  flush() {
+    return Promise.all(this.peers.map((p) => p.replicator.flush()))
+  }
 
-    async spawnPeer(opts) {
-      const peer = new TestPeer(rootPath, {
-        bootstrap,
-        autoswarm: true,
-        ...opts
-      })
+  gc() {
+    return Promise.all(this.peers.map((p) => p.replicator._gc()))
+  }
 
-      peers.push(peer)
-      peer.on('writer', (topic, core) => {
-        const ws = writers.get(topic) || []
-        ws.push(core.key)
-        writers.set(topic, ws)
-      })
+  async spawnPeer(opts) {
+    const peer = new TestPeer(++this._peerCounter, this.rootPath, {
+      bootstrap: this.bootstrap,
+      autoswarm: true,
+      ...opts
+    })
 
-      await peer.ready()
+    this.peers.push(peer)
+    peer.on('writer', (topic, core) => {
+      const writers = this.writers.get(topic) || []
+      writers.push(core.key)
+      this.writers.set(topic, writers)
+    })
 
-      return peer
-    },
+    await peer.ready()
 
-    async destroy() {
-      await Promise.all(peers.map(p => p.destroy()))
-      await testnet.destroy()
-    }
+    return peer
+  }
+
+  async _close() {
+    await Promise.all(this.peers.map((p) => p.destroy()))
+    await this.testnet.destroy()
+  }
+
+  async destroy() {
+    return this.close()
   }
 }
 
-let _peerCounter = 0
-
 class TestPeer extends ReadyResource {
-  constructor(path, opts) {
+  constructor(id, path, opts) {
     super()
-    this._id = ++_peerCounter
+    this._id = id
     this._path = `${path}/${this._id}`
     this._opts = opts
     this.sessions = new Map()
