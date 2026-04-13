@@ -5,6 +5,7 @@ const ReadyResource = require('ready-resource')
 const b4a = require('b4a')
 const Replicator = require('..')
 
+// hyperswarm mode
 test('autoswarm: disabled, all are active (sanity test)', async (t) => {
   const swarm = await spawnSwarm(t)
 
@@ -15,28 +16,32 @@ test('autoswarm: disabled, all are active (sanity test)', async (t) => {
     p1.join(topic),
     p2.join(topic),
   ])
+
   await swarm.propagate()
   await swarm.refresh()
+  await swarm.flush()
+  await swarm.gc()
 
-  await new Promise((resolve) => setTimeout(resolve, 2000))
-
-  t.not(p1.replicator.connectionCount, 0)
-  t.not(p2.replicator.connectionCount, 0)
+  t.is(p1.replicator.connectionCount, 1)
+  t.is(p2.replicator.connectionCount, 1)
 
   await swarm.destroy()
 })
 
-test('autoswarm: enabled, two new instances do not swarm (sanity test)', async (t) => {
+// replicator mode
+
+test('autoswarm: enabled, two new instances do not swarm without intent (sanity test)', async (t) => {
   const swarm = await spawnSwarm(t)
 
-  const p1 = await swarm.spawnPeer({ autoswarm: true })
-  const p2 = await swarm.spawnPeer({ autoswarm: true })
+  const p1 = await swarm.spawnPeer()
+  const p2 = await swarm.spawnPeer()
 
   const topic = b4a.alloc(32, 0x1)
   await Promise.all([
     p1.join(topic),
     p2.join(topic),
   ])
+
   await swarm.propagate()
   await swarm.refresh()
 
@@ -58,17 +63,17 @@ test('autoswarm: active instances', async (t) => {
 
   async function performJoin (peer) {
     const repSession = await peer.join(topic)
-    repSession.startActive()
+    await repSession.startActive()
   }
   await Promise.all([p1, p2].map(performJoin))
+
   await swarm.propagate()
-  await swarm.refresh()
-  await swarm.refresh() // TODO: REMOVE!
+  await swarm.refresh() // announce
+  await swarm.refresh() // lookup
+  await swarm.flush() // dht-query + dials
 
-  await new Promise((resolve) => setTimeout(resolve, 2000))
-
-  t.not(p1.replicator.connectionCount, 0)
-  t.not(p2.replicator.connectionCount, 0)
+  t.is(p1.replicator.connectionCount, 1)
+  t.is(p2.replicator.connectionCount, 1)
 
   await swarm.destroy()
 })
@@ -152,11 +157,15 @@ async function spawnSwarm(t) {
     return { cores, topics }
   }
 
-  const refresh = () => Promise.all(peers.map(p => p.refresh()))
+  const refresh = () => Promise.all(peers.map(p => p.replicator.refresh()))
+  const flush = () => Promise.all(peers.map(p => p.replicator.flush()))
+  const gc = () => Promise.all(peers.map(p => p.replicator._gc()))
 
   return {
     propagate,
     refresh,
+    flush,
+    gc,
 
     async spawnPeer(opts) {
       const peer = new TestPeer(rootPath, {
@@ -201,8 +210,12 @@ class TestPeer extends ReadyResource {
     this.store = new Corestore(this._path, storeOpts)
     this.replicator = new Replicator(this.store, {
       manual: true,
+      autoswarm: true,
       ...this._opts
     })
+
+    // this.replicator.on('connected', () => console.log(`p${this._id} connection`, this.replicator.connectionCount))
+    // this.replicator.on('update', () => console.log(`p${this._id} update`, this.replicator.connectionCount))
   }
 
   async _open() {
@@ -234,14 +247,6 @@ class TestPeer extends ReadyResource {
   async _close() {
     await this.replicator.close()
     await this.store.close()
-  }
-
-  async refresh() {
-    let done = []
-    for (const { repSession } of this.sessions.values()) {
-      done.push(repSession.refresh())
-    }
-    return Promise.all(done)
   }
 
   destroy() {

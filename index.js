@@ -228,10 +228,6 @@ module.exports = class Replicator extends ReadyResource {
     return session
   }
 
-  async flush() {
-    return this.ps.flush()
-  }
-
   _onincoming(conn) {
     if (this.destroyed || this.suspended) {
       // TODO: Investigate why a final server connection can be received after close
@@ -385,7 +381,7 @@ module.exports = class Replicator extends ReadyResource {
     this._initConnection(true, peer.publicKey, stream, topic)
   }
 
-  async _gc(now = Date.now) {
+  async _gc(now = Date.now()) {
     // Evict peer-dupes
     const [src, dst] =
       this.inbound.size < this.outbound.size
@@ -430,6 +426,31 @@ module.exports = class Replicator extends ReadyResource {
   _handleUpdate() {
     this.stats.updates++
   }
+
+  async refresh(now = Date.now()) {
+    await this.flush() // TODO: blocks unnanounce
+
+    let done = []
+    for (const sess of this.sessions.values()) {
+      done.push(sess.refresh(now))
+    }
+    await Promise.all(done)
+
+    await this._gc(now)
+  }
+
+  // @deprecated, legacy compat (dht + connection queue, done)
+  async flush() {
+    const pending = []
+    for (const sess of this.sessions.values()) {
+      pending.push(sess.flush())
+    }
+    await Promise.all(pending)
+
+    // pending connects
+    return this.ps.flush()
+  }
+
 
   async _handleNetworkUpdate() {
     if (this.dht.online === false) return
@@ -496,7 +517,7 @@ class Connection {
     return this.replicator.ps.lookup(this.peerId)
   }
 
-  isIdle(now = Date.now) {
+  isIdle(now = Date.now()) {
     if (this._protomuxSessions() === 0) return true
 
     return false
