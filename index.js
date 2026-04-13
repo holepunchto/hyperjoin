@@ -112,19 +112,20 @@ module.exports = class Replicator extends ReadyResource {
     return this.inbound.size + this.outbound.size
   }
 
-  get connections() {
-    return this._connections()
-  }
   get connecting() {
     return this._inflight.size
   }
 
-  // used by testsuite
+  // used by backports testsuite
   get _firewall() {
     return this.station._firewall
   }
   set _firewall(callback) {
     this.station._firewall = callback
+  }
+
+  get connections() {
+    return this._connections() // combined iterator
   }
 
   *_connections() {
@@ -212,11 +213,11 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._manual) this._startGC()
   }
 
-  join(store, discoveryKey, { announce = true } = {}) {
-    const dk = toHex(discoveryKey)
+  join(store, topic, { announce = true } = {}) {
+    const dk = toHex(topic)
     if (this.sessions.has(dk)) throw new Error('session exists')
 
-    const session = new Session(this, store, discoveryKey, { announce })
+    const session = new Session(this, store, topic, { announce })
     this.sessions.set(dk, session)
 
     session.on('close', () => this.sessions.delete(dk))

@@ -1,12 +1,44 @@
 const test = require('brittle')
 const createTestnet = require('hyperdht/testnet')
-const { spawnPeer } = require('./helpers')
+const Corestore = require('corestore')
+const ReadyResource = require('ready-resource')
+const b4a = require('b4a')
+const Replicator = require('..')
 
-test.skip('autoswarm: two new instances do not swarm (sanity test)', async (t) => {
+test('autoswarm: disabled, all are active (sanity test)', async (t) => {
+  const swarm = await spawnSwarm(t)
+
+  const p1 = await swarm.spawnPeer({ autoswarm: false })
+  const p2 = await swarm.spawnPeer({ autoswarm: false })
+  const topic = b4a.alloc(32, 0x1)
+  await Promise.all([
+    p1.join(topic),
+    p2.join(topic),
+  ])
+  await swarm.propagate()
+  await swarm.refresh()
+
+  await new Promise((resolve) => setTimeout(resolve, 2000))
+
+  t.not(p1.replicator.connectionCount, 0)
+  t.not(p2.replicator.connectionCount, 0)
+
+  await swarm.destroy()
+})
+
+test('autoswarm: enabled, two new instances do not swarm (sanity test)', async (t) => {
   const swarm = await spawnSwarm(t)
 
   const p1 = await swarm.spawnPeer({ autoswarm: true })
-  const p2 = await swarm.spawnPeer({ autoswarm: false })
+  const p2 = await swarm.spawnPeer({ autoswarm: true })
+
+  const topic = b4a.alloc(32, 0x1)
+  await Promise.all([
+    p1.join(topic),
+    p2.join(topic),
+  ])
+  await swarm.propagate()
+  await swarm.refresh()
 
   await new Promise((resolve) => setTimeout(resolve, 2000))
 
@@ -16,18 +48,27 @@ test.skip('autoswarm: two new instances do not swarm (sanity test)', async (t) =
   await swarm.destroy()
 })
 
-test.skip('autoswarm: active instances', async (t) => {
+test('autoswarm: active instances', async (t) => {
   const swarm = await spawnSwarm(t)
+
+  const topic = b4a.alloc(32, 0x1)
 
   const p1 = await swarm.spawnPeer()
   const p2 = await swarm.spawnPeer()
-  p1.repSession.startActive()
-  p2.repSession.startActive()
+
+  async function performJoin (peer) {
+    const repSession = await peer.join(topic)
+    repSession.startActive()
+  }
+  await Promise.all([p1, p2].map(performJoin))
+  await swarm.propagate()
+  await swarm.refresh()
+  await swarm.refresh() // TODO: REMOVE!
 
   await new Promise((resolve) => setTimeout(resolve, 2000))
 
-  t.is(p1.replicator.connectionCount, 1)
-  t.is(p2.replicator.connectionCount, 1)
+  t.not(p1.replicator.connectionCount, 0)
+  t.not(p2.replicator.connectionCount, 0)
 
   await swarm.destroy()
 })
@@ -80,38 +121,62 @@ test.skip('autoswarm: can enable discovery swarming', async (t) => {
 test.skip('autoswarm: replicator activates fallbacks', (t) => {})
 
 async function spawnSwarm(t) {
-  const topic = Buffer.alloc(32, 0xAA)
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
   const peers = []
-  let commonCores = null
+  const writers = new Map()
+  const rootPath = await t.tmp()
+
+  const propagate = async () => {
+    let done = []
+    let cores = 0
+    let topics = 0
+
+    for (const [topic, keys] of writers) {
+      topics++
+      for (const key of keys) {
+        for (const peer of peers) {
+          if (!peer.sessions.has(topic)) continue
+          const { session } = peer.sessions.get(topic)
+
+          const p = session.get({ key }).ready()
+          done.push(p)
+          cores++
+        }
+      }
+    }
+
+    await Promise.all(done)
+
+    return { cores, topics }
+  }
+
+  const refresh = () => Promise.all(peers.map(p => p.refresh()))
 
   return {
-    topic,
+    propagate,
+    refresh,
+
     async spawnPeer(opts) {
-      const peer = await spawnPeer(t, {
+      const peer = new TestPeer(rootPath, {
         bootstrap,
         autoswarm: true,
         ...opts
       })
 
-      if (!commonCores) {
-        commonCores = peer.cores.map(c => c.key)
-      } else {
-        // refresh session
-        await peer.session.close()
-        peer.session = peer.store.session()
-
-        peer.cores = commonCores.map((key) => peer.session.get({ key }))
-      }
-
       peers.push(peer)
+      peer.on('writer', (topic, core) => {
+        const ws = writers.get(topic) || []
+        ws.push(core.key)
+        writers.set(topic, ws)
+      })
 
-      const repSession = await peer.replicator.join(peer.session, topic)
+      await peer.ready()
 
-      return { ...peer, repSession }
+      return peer
     },
+
     async destroy() {
       await Promise.all(peers.map(p => p.destroy()))
       await testnet.destroy()
@@ -119,6 +184,71 @@ async function spawnSwarm(t) {
   }
 }
 
+let _peerCounter = 0
+
+class TestPeer extends ReadyResource {
+  constructor(path, opts) {
+    super()
+    this._id = ++_peerCounter
+    this._path = `${path}/${this._id}`
+    this._opts = opts
+    this.sessions = new Map()
+
+    const { seed } = opts
+    let storeOpts = {}
+    if (seed) storeOpts = { primaryKey: seed, unsafe: true }
+
+    this.store = new Corestore(this._path, storeOpts)
+    this.replicator = new Replicator(this.store, {
+      manual: true,
+      ...this._opts
+    })
+  }
+
+  async _open() {
+    await this.replicator.ready()
+  }
+
+  async join (topic, nCores = 3) {
+    const ns = this.store.namespace(topic)
+    const session = ns.session()
+    const repSession = this.replicator.join(session, topic)
+    await repSession.ready()
+
+    this.sessions.set(toHex(topic), { session, repSession })
+
+    let done = []
+    for (let i = 0; i < nCores; i++) {
+      const core = session.get({ name: `peer-${this._id}-writer-${i}` })
+      const p = core.ready()
+        .then(() => core.append(b4a.from('block')))
+        .then(() => this.emit('writer', toHex(topic), core))
+      done.push(p)
+    }
+
+    await Promise.all(done)
+
+    return repSession
+  }
+
+  async _close() {
+    await this.replicator.close()
+    await this.store.close()
+  }
+
+  async refresh() {
+    let done = []
+    for (const { repSession } of this.sessions.values()) {
+      done.push(repSession.refresh())
+    }
+    return Promise.all(done)
+  }
+
+  destroy() {
+    return this.close()
+  }
+}
+
 function toHex(buffer) {
-  return buffer.toString('hex')
+  return b4a.toString(buffer, 'hex')
 }
