@@ -5,7 +5,7 @@ const ReadyResource = require('ready-resource')
 const b4a = require('b4a')
 const Replicator = require('..')
 
-// hyperswarm mode
+// hyperswarm mode (deprecated)
 test('autoswarm: disabled, all are active (sanity test)', async (t) => {
   const swarm = await spawnSwarm(t)
 
@@ -53,7 +53,7 @@ test('autoswarm: enabled, two new instances do not swarm without intent (sanity 
   await swarm.destroy()
 })
 
-test.solo('autoswarm: manually activated instances', async (t) => {
+test('autoswarm: manually activated instances', async (t) => {
   const swarm = await spawnSwarm(t)
 
   const topic = b4a.alloc(32, 0x1)
@@ -268,7 +268,7 @@ class TestPeer extends ReadyResource {
       ...this._opts
     })
 
-    this.replicator.on('connected', (conn) => console.log(`p${this._id} connection`, this.replicator.connectionCount, conn.peerId.toString('hex')))
+    // this.replicator.on('connected', (conn) => console.log(`p${this._id} connection`, this.replicator.connectionCount, conn.peerId.toString('hex')))
     // this.replicator.on('update', () => console.log(`p${this._id} update`, this.replicator.connectionCount))
   }
 

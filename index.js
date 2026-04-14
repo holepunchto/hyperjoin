@@ -217,24 +217,28 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._manual) this._startGC()
   }
 
-  join(store, topic, { announce = true } = {}) {
+  join(store, topic, { active = false } = {}) {
     const dk = toHex(topic)
     if (this.sessions.has(dk)) throw new Error('session exists')
 
-    const session = new Session(this, store, topic, { announce })
+    active ||= !this.autoswarm // TODO: deprecated
+
+    const session = new Session(this, store, topic, { active })
     this.sessions.set(dk, session)
 
     session.on('close', () => this.sessions.delete(dk))
     store.on('close', session.close.bind(session))
 
-    session.ready().catch(safetyCatch)
+    session.ready()
+      .then(() => !this.autoswarm && session.refresh()) // TODO: deprecated
+      .catch(safetyCatch)
 
     return session
   }
 
   _onincoming(conn) {
     if (this.destroyed || this.suspended) {
-      // TODO: Investigate why a final server connection can be received after close
+      // OLD-TODO: Investigate why a final server connection can be received after close
       conn.on('error', noop)
       return conn.destroy(ERR_DESTROYED)
     }
@@ -452,7 +456,7 @@ module.exports = class Replicator extends ReadyResource {
     await Promise.all(pending)
 
     // pending connects
-    return this.ps.flush()
+    await this.ps.flush()
   }
 
 
