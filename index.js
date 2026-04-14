@@ -118,14 +118,18 @@ module.exports = class Replicator extends ReadyResource {
 
   // used by backports testsuite
   get _firewall() {
-    return this.station._firewall
+    return this.ps._firewall
   }
   set _firewall(callback) {
-    this.station._firewall = callback
+    this.ps._firewall = callback
   }
 
   get connections() {
     return this._connections() // combined iterator
+  }
+
+  get peers() {
+    return this.ps.peers
   }
 
   *_connections() {

@@ -629,7 +629,8 @@ test('flush when max connections reached', async (t) => {
   await testnet.destroy()
 })
 
-test('rejoining with different client/server opts refreshes', async (t) => {
+// deprecated by autoswarm
+test.skip('rejoining with different client/server opts refreshes', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 

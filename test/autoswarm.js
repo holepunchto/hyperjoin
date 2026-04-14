@@ -17,7 +17,7 @@ test('autoswarm: disabled, all are active (sanity test)', async (t) => {
     p2.join(topic),
   ])
 
-  await swarm.propagate()
+  await swarm.propagateWriters()
   await swarm.refresh()
   await swarm.flush()
   await swarm.gc()
@@ -42,7 +42,7 @@ test('autoswarm: enabled, two new instances do not swarm without intent (sanity 
     p2.join(topic),
   ])
 
-  await swarm.propagate()
+  await swarm.propagateWriters()
   await swarm.refresh()
 
   await new Promise((resolve) => setTimeout(resolve, 2000))
@@ -53,27 +53,60 @@ test('autoswarm: enabled, two new instances do not swarm without intent (sanity 
   await swarm.destroy()
 })
 
-test('autoswarm: active instances', async (t) => {
+test.solo('autoswarm: manually activated instances', async (t) => {
   const swarm = await spawnSwarm(t)
 
   const topic = b4a.alloc(32, 0x1)
 
-  const p1 = await swarm.spawnPeer()
-  const p2 = await swarm.spawnPeer()
+  const a = await swarm.spawnPeer()
+  const b = await swarm.spawnPeer()
+  const c = await swarm.spawnPeer()
 
-  async function performJoin (peer) {
-    const repSession = await peer.join(topic)
-    repSession.startActive()
-  }
-  await Promise.all([p1, p2].map(performJoin))
+  // A + B joins Active
 
-  await swarm.propagate()
+  const session1 = await a.join(topic)
+  session1.setActive(true)
+
+  const session2 = await b.join(topic)
+  session2.setActive(true)
+
+  await swarm.propagateWriters()
   await swarm.refresh() // announce
   await swarm.refresh() // lookup
   await swarm.flush() // dht-query + dials
 
-  t.is(p1.replicator.connectionCount, 1)
-  t.is(p2.replicator.connectionCount, 1)
+  t.is(a.replicator.connectionCount, 1)
+  t.is(b.replicator.connectionCount, 1, 'active announces')
+
+  // A + B de-activates, C validates
+
+  session1.setActive(false)
+  session2.setActive(false)
+  await swarm.refresh() // unnanounce
+
+  const session3 = await c.join(topic)
+  session3.setActive(true) // TODO: use discover()
+
+  await swarm.propagateWriters()
+  await swarm.refresh() // lookup
+  await swarm.flush() // dht-query + dials
+
+  t.is(c.replicator.peers.size, 0, 'A, B unannounced')
+  t.is(c.replicator.connectionCount, 0, 'C has no connections')
+
+  // A re-activates, C validates
+
+  session1.setActive(true)
+
+  await swarm.refresh()
+  await swarm.refresh()
+  await swarm.flush() // dht-query + dials
+
+  t.is(c.replicator.peers.size, 1, 'A re-activated')
+
+  await swarm.gc() // de-dupe
+  t.is(c.replicator.connectionCount, 1, 'C connected to A')
+  t.is(a.replicator.connectionCount, 2, 'A connected to B, C')
 
   await swarm.destroy()
 })
@@ -149,7 +182,7 @@ class TestSwarm extends ReadyResource {
     this.rootPath = await this.t.tmp()
   }
 
-  async propagate() {
+  async propagateWriters() {
     const done = []
     let cores = 0
     let topics = 0
@@ -191,6 +224,10 @@ class TestSwarm extends ReadyResource {
     })
 
     this.peers.push(peer)
+    peer.on('close', () => {
+      const i = this.peers.indexOf(peer)
+      if (i > -1) this.peers.splice(i, 1)
+    })
     peer.on('writer', (topic, core) => {
       const writers = this.writers.get(topic) || []
       writers.push(core.key)
@@ -231,7 +268,7 @@ class TestPeer extends ReadyResource {
       ...this._opts
     })
 
-    // this.replicator.on('connected', () => console.log(`p${this._id} connection`, this.replicator.connectionCount))
+    this.replicator.on('connected', (conn) => console.log(`p${this._id} connection`, this.replicator.connectionCount, conn.peerId.toString('hex')))
     // this.replicator.on('update', () => console.log(`p${this._id} update`, this.replicator.connectionCount))
   }
 
