@@ -108,6 +108,7 @@ test('autoswarm: manually activated instances', async (t) => {
 test.skip('autoswarm: can enable discovery swarming', async (t) => {
   const swarm = await spawnSwarm(t)
 
+  const defaultTimeout = 60 * 1000 // 1m
   const updatedDiscoveryTimeout = 500
   const p1 = await swarm.spawnPeer({
     refreshInterval: 50, // TODO: not implemented
@@ -126,7 +127,7 @@ test.skip('autoswarm: can enable discovery swarming', async (t) => {
   await p1.replicator.refresh()
 
   t.is(session1.announce, false)
-  t.is(session1.discoveryTimeout, discoveryTimeout)
+  t.is(session1.discoveryTimeout, defaultTimeout)
 
   p2.repSession.startActive()
   await p2.replicator.refresh()
@@ -278,7 +279,7 @@ class TestPeer extends ReadyResource {
 
     this.sessions.set(toHex(topic), { session, repSession })
 
-    let done = []
+    const done = []
     for (let i = 0; i < nCores; i++) {
       const core = session.get({ name: `peer-${this._id}-writer-${i}` })
       const p = core

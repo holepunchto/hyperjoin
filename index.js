@@ -390,7 +390,7 @@ module.exports = class Replicator extends ReadyResource {
     this._initConnection(true, peer.publicKey, stream, topic)
   }
 
-  async _gc(now = Date.now()) {
+  _gc(now = Date.now()) {
     // Evict peer-dupes
     const [src, dst] =
       this.inbound.size < this.outbound.size
@@ -439,7 +439,7 @@ module.exports = class Replicator extends ReadyResource {
   async refresh(now = Date.now()) {
     await this.flush() // TODO: blocks unnanounce
 
-    let done = []
+    const done = []
     for (const sess of this.sessions.values()) {
       done.push(sess.refresh(now))
     }
@@ -462,7 +462,7 @@ module.exports = class Replicator extends ReadyResource {
 
   async _handleNetworkUpdate() {
     if (this.dht.online === false) return
-    this._handleNetworkChange()
+    await this._handleNetworkChange()
   }
 
   async _handleNetworkChange() {
@@ -503,7 +503,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async destroy() {
-    return this.close()
+    await this.close()
   }
 }
 

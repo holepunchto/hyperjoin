@@ -100,5 +100,5 @@ test('GC connections with no active mux sessions', async (t) => {
   await testnet.destroy()
 })
 
-test.skip('Sessions are garbage collected', async () => {})
-test.skip('sessions are garbage collected & reactivated', async () => {})
+test.skip('Sessions are garbage collected', () => {})
+test.skip('sessions are garbage collected & reactivated', () => {})
