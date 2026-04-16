@@ -79,7 +79,7 @@ Close the replicator and all joined sessions.
 Pin topic into `active` mode; bypasses auto-rotation and
 forces session to be active until manually turned off.
 
-### `rs.discover()`
+### `rs.startDiscovery()`
 
 TBD
 

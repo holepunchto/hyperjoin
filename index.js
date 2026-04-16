@@ -229,7 +229,8 @@ module.exports = class Replicator extends ReadyResource {
     session.on('close', () => this.sessions.delete(dk))
     store.on('close', session.close.bind(session))
 
-    session.ready()
+    session
+      .ready()
       .then(() => !this.autoswarm && session.refresh()) // TODO: deprecated
       .catch(safetyCatch)
 
@@ -458,7 +459,6 @@ module.exports = class Replicator extends ReadyResource {
     // pending connects
     await this.ps.flush()
   }
-
 
   async _handleNetworkUpdate() {
     if (this.dht.online === false) return

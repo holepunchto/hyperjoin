@@ -12,10 +12,7 @@ test('autoswarm: disabled, all are active (sanity test)', async (t) => {
   const p1 = await swarm.spawnPeer({ autoswarm: false })
   const p2 = await swarm.spawnPeer({ autoswarm: false })
   const topic = b4a.alloc(32, 0x1)
-  await Promise.all([
-    p1.join(topic),
-    p2.join(topic),
-  ])
+  await Promise.all([p1.join(topic), p2.join(topic)])
 
   await swarm.propagateWriters()
   await swarm.refresh()
@@ -37,10 +34,7 @@ test('autoswarm: enabled, two new instances do not swarm without intent (sanity 
   const p2 = await swarm.spawnPeer()
 
   const topic = b4a.alloc(32, 0x1)
-  await Promise.all([
-    p1.join(topic),
-    p2.join(topic),
-  ])
+  await Promise.all([p1.join(topic), p2.join(topic)])
 
   await swarm.propagateWriters()
   await swarm.refresh()
@@ -118,7 +112,7 @@ test.skip('autoswarm: can enable discovery swarming', async (t) => {
   const p1 = await swarm.spawnPeer({
     refreshInterval: 50, // TODO: not implemented
     gcIdleTime: 100, // TODO: not implemented
-    updatedDiscoveryTimeout,
+    updatedDiscoveryTimeout
   })
   const p2 = await swarm.spawnPeer()
 
@@ -276,7 +270,7 @@ class TestPeer extends ReadyResource {
     await this.replicator.ready()
   }
 
-  async join (topic, nCores = 3) {
+  async join(topic, nCores = 3) {
     const ns = this.store.namespace(topic)
     const session = ns.session()
     const repSession = this.replicator.join(session, topic)
@@ -287,7 +281,8 @@ class TestPeer extends ReadyResource {
     let done = []
     for (let i = 0; i < nCores; i++) {
       const core = session.get({ name: `peer-${this._id}-writer-${i}` })
-      const p = core.ready()
+      const p = core
+        .ready()
         .then(() => core.append(b4a.from('block')))
         .then(() => this.emit('writer', toHex(topic), core))
       done.push(p)
