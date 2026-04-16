@@ -445,7 +445,7 @@ module.exports = class Replicator extends ReadyResource {
     }
     await Promise.all(done)
 
-    await this._gc(now)
+    this._gc(now)
   }
 
   // @deprecated, legacy compat (dht + connection queue, done)
