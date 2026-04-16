@@ -298,7 +298,7 @@ module.exports = class Replicator extends ReadyResource {
 
   async _evictConnection(connection, err) {
     if (connection.stream.closed) return
-    const closed = new Promise(resolve => connection.stream.once('close', resolve))
+    const closed = new Promise((resolve) => connection.stream.once('close', resolve))
     connection.destroy(err)
     await closed
   }
@@ -487,7 +487,7 @@ module.exports = class Replicator extends ReadyResource {
     clearInterval(this._gcInterval)
     this._gcInterval = null
     const tasks = []
-    for (const session of this.sessions.values()){
+    for (const session of this.sessions.values()) {
       tasks.push(session.destroy())
     }
     this.sessions.clear()
