@@ -3,7 +3,15 @@ const Corestore = require('corestore')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('..')
-const { joinRemote, onceEvent, seedA, seedB, seedC, spawnPeer, toHex } = require('./helpers')
+const {
+  joinRemote,
+  onceEvent,
+  seedA,
+  seedB,
+  seedC,
+  spawnPeer,
+  toHex
+} = require('./helpers/backports')
 
 test('Default keypair from corestore', async (t) => {
   const testnet = await createTestnet()
@@ -100,5 +108,5 @@ test('GC connections with no active mux sessions', async (t) => {
   await testnet.destroy()
 })
 
-test.skip('Sessions are garbage collected', async () => {})
-test.skip('sessions are garbage collected & reactivated', async () => {})
+test.skip('Sessions are garbage collected', () => {})
+test.skip('sessions are garbage collected & reactivated', () => {})

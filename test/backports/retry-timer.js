@@ -1,7 +1,7 @@
 const test = require('brittle')
 const crypto = require('hypercore-crypto')
 const { isLinux } = require('which-runtime')
-const { timeout } = require('../helpers')
+const { timeout } = require('../helpers/backports')
 
 const RetryTimer = require('../../lib/retry-timer')
 

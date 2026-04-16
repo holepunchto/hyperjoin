@@ -12,7 +12,7 @@ const {
   timeout,
   toHex,
   waitForEvents
-} = require('../helpers')
+} = require('../helpers/backports')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('../..')
 
@@ -260,7 +260,7 @@ test('one server, two clients - topic multiplexing', async (t) => {
     peerInfo = connection.info
   })
 
-  p1.replicator.join(p1.session, p1.cores[1].discoveryKey).addLocal(p1.cores[1])
+  await p1.replicator.join(p1.session, p1.cores[1].discoveryKey).ready()
   await p1.replicator.flush()
 
   p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey)
@@ -534,7 +534,7 @@ test('two servers, one client - refreshing a peer discovery instance discovers n
   })
 
   const session = p3.replicator.join(p3.store.session(), p1.cores[0].discoveryKey, {
-    announce: false
+    discover: true
   })
   await session.ready()
   await p3.replicator.flush()
@@ -642,19 +642,19 @@ test('rejoining with different client/server opts refreshes', async (t) => {
   await one.ready()
   await one.append([b4a.from('cells'), b4a.from('interlinked')])
 
-  const session = replicator.join(local, one.discoveryKey, { announce: false })
-  session.addLocal(one)
-  await session.ready()
-  await session.discovery.flushed()
-  session.setAnnounce(true)
-  await session.refresh()
+  const session1 = replicator.join(local, one.discoveryKey, { discover: true })
+  await session1.flush()
+  await session1.close()
+
+  const session2 = replicator.join(local, one.discoveryKey, { active: true })
+  await session2.ready()
+  await session2.refresh()
 
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
   p2.replicator.on('connected', () => {})
   const client = p2.replicator.join(p2.store.session(), one.discoveryKey)
-  await client.ready()
-  await client.discovery.flushed()
+  await client.flush()
   await p2.replicator.flush()
 
   t.is(p2.replicator.connectionCount, 1)
@@ -669,13 +669,12 @@ test('closing all discovery sessions clears session-owned peer state', async (t)
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minPeers: 0, maxPeers: 0 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
   const store2 = p1.store.session()
   const session1 = p1.replicator.sessions.get(toHex(p1.cores[0].discoveryKey))
   const session2 = p1.replicator.join(store2, p1.cores[1].discoveryKey)
-  session2.addLocal(p1.cores[1])
 
   const remote1 = p2.session.get(p1.cores[0].key)
   const remote2 = p2.session.get(p1.cores[1].key)
@@ -692,9 +691,11 @@ test('closing all discovery sessions clears session-owned peer state', async (t)
 
   const closed1 = onceEvent(session1, 'close')
   const closed2 = onceEvent(session2, 'close')
+  const disconnected = onceEvent(p1.replicator, 'disconnected')
 
   await Promise.all([p1.session.close(), store2.close(), closed1, closed2])
   await p1.replicator._gc()
+  await disconnected
 
   t.is(p1.replicator.sessions.size, 0)
   t.is(p1.replicator.ps.peers.size, 0)
