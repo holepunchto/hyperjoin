@@ -25,7 +25,7 @@ test('firewalled server - bad client is rejected', async (t) => {
   await server.discovery.flushed()
 
   const client = p1.replicator.join(p1.store.session(), p2.cores[0].discoveryKey, {
-    announce: false
+    discover: true
   })
   await client.ready()
   await client.discovery.flushed()
@@ -61,7 +61,7 @@ test('firewalled client - bad server is rejected', async (t) => {
   p2.replicator.on('connected', () => clientConnections++)
 
   const client = p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey, {
-    announce: false
+    discover: true
   })
   await client.ready()
   await client.discovery.flushed()
@@ -100,7 +100,7 @@ test('firewalled server - rejection does not trigger retry cascade', async (t) =
   await server.ready()
   await server.discovery.flushed()
 
-  p1.replicator.join(p1.store.session(), p2.cores[0].discoveryKey, { announce: false })
+  p1.replicator.join(p1.store.session(), p2.cores[0].discoveryKey, { discover: true })
 
   await timeout(BACKOFFS[2] * 5)
 

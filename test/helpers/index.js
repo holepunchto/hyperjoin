@@ -67,7 +67,7 @@ exports.spawnPeer = async function spawnPeer(t, opts = {}) {
   await one.ready()
   await one.append([b4a.from('cells'), b4a.from('interlinked')])
 
-  replicator.join(session, one.discoveryKey).addLocal(one)
+  replicator.join(session, one.discoveryKey)
 
   const two = session.get({ name: 'two' })
   await two.ready()

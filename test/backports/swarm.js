@@ -260,7 +260,7 @@ test('one server, two clients - topic multiplexing', async (t) => {
     peerInfo = connection.info
   })
 
-  p1.replicator.join(p1.session, p1.cores[1].discoveryKey).addLocal(p1.cores[1])
+  await p1.replicator.join(p1.session, p1.cores[1].discoveryKey).ready()
   await p1.replicator.flush()
 
   p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey)
@@ -534,7 +534,7 @@ test('two servers, one client - refreshing a peer discovery instance discovers n
   })
 
   const session = p3.replicator.join(p3.store.session(), p1.cores[0].discoveryKey, {
-    announce: false
+    discover: true
   })
   await session.ready()
   await p3.replicator.flush()
@@ -643,11 +643,10 @@ test.skip('rejoining with different client/server opts refreshes', async (t) => 
   await one.ready()
   await one.append([b4a.from('cells'), b4a.from('interlinked')])
 
-  const session = replicator.join(local, one.discoveryKey, { announce: false })
-  session.addLocal(one)
+  const session = replicator.join(local, one.discoveryKey, { discover: true })
   await session.ready()
   await session.discovery.flushed()
-  session.setAnnounce(true)
+  session.setActive(true)
   await session.refresh()
 
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
@@ -676,7 +675,6 @@ test('closing all discovery sessions clears session-owned peer state', async (t)
   const store2 = p1.store.session()
   const session1 = p1.replicator.sessions.get(toHex(p1.cores[0].discoveryKey))
   const session2 = p1.replicator.join(store2, p1.cores[1].discoveryKey)
-  session2.addLocal(p1.cores[1])
 
   const remote1 = p2.session.get(p1.cores[0].key)
   const remote2 = p2.session.get(p1.cores[1].key)

@@ -217,13 +217,13 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._manual) this._startGC()
   }
 
-  join(store, topic, { active = false } = {}) {
+  join(store, topic, { active = false, discover = false } = {}) {
     const dk = toHex(topic)
     if (this.sessions.has(dk)) throw new Error('session exists')
 
-    active ||= !this.autoswarm // TODO: deprecated
+    active ||= !this.autoswarm && !discover // TODO: deprecated
 
-    const session = new Session(this, store, topic, { active })
+    const session = new Session(this, store, topic, { active, discover })
     this.sessions.set(dk, session)
 
     session.on('close', () => this.sessions.delete(dk))
