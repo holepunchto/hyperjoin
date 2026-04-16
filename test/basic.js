@@ -3,7 +3,15 @@ const Corestore = require('corestore')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('..')
-const { joinRemote, onceEvent, seedA, seedB, seedC, spawnPeer, toHex } = require('./helpers')
+const {
+  joinRemote,
+  onceEvent,
+  seedA,
+  seedB,
+  seedC,
+  spawnPeer,
+  toHex
+} = require('./helpers/backports')
 
 test('Default keypair from corestore', async (t) => {
   const testnet = await createTestnet()

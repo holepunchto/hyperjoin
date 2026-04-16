@@ -12,7 +12,7 @@ const {
   timeout,
   toHex,
   waitForEvents
-} = require('../helpers')
+} = require('../helpers/backports')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('../..')
 

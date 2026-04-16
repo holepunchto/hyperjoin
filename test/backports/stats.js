@@ -1,6 +1,6 @@
 const test = require('brittle')
 const createTestnet = require('hyperdht/testnet')
-const { onceEvent, spawnPeer, seedA, seedB } = require('../helpers')
+const { onceEvent, spawnPeer, seedA, seedB } = require('../helpers/backports')
 
 const BACKOFFS = [100, 200, 300, 400]
 

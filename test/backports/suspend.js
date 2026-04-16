@@ -1,7 +1,7 @@
 const test = require('brittle')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
-const { joinRemote, onceEvent, seedA, seedB, spawnPeer } = require('../helpers')
+const { joinRemote, onceEvent, seedA, seedB, spawnPeer } = require('../helpers/backports')
 
 test('suspend + resume', async (t) => {
   const testnet = await createTestnet()

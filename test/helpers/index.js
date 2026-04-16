@@ -1,84 +1,153 @@
+const createTestnet = require('hyperdht/testnet')
 const Corestore = require('corestore')
+const ReadyResource = require('ready-resource')
 const b4a = require('b4a')
 const Replicator = require('../..')
 
-const seedA = Buffer.alloc(32, 0xa)
-const seedB = Buffer.alloc(32, 0xb)
-const seedC = Buffer.alloc(32, 0xc)
+module.exports = { spawnSwarm }
 
-exports.seedA = seedA
-exports.seedB = seedB
-exports.seedC = seedC
-exports.seed = function seed(byte) {
-  return Buffer.alloc(32, byte)
+async function spawnSwarm(t) {
+  const swarm = new TestSwarm(t)
+  await swarm.ready()
+  return swarm
 }
 
-exports.timeout = function timeout(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-exports.onceEvent = function onceEvent(emitter, event) {
-  return new Promise((resolve) => emitter.once(event, resolve))
-}
-
-exports.waitForEvents = function waitForEvents(emitter, event, count) {
-  return new Promise((resolve) => {
-    let seen = 0
-
-    const onevent = () => {
-      if (++seen < count) return
-      emitter.removeListener(event, onevent)
-      resolve()
-    }
-
-    emitter.on(event, onevent)
-  })
-}
-
-exports.toHex = function toHex(buffer) {
-  return b4a.toString(buffer, 'hex')
-}
-
-exports.joinRemote = async function joinRemote(peer, remotePeer) {
-  const remote = remotePeer.cores.map((core) => peer.session.get(core.key))
-  await Promise.all(remote.map((core) => core.ready()))
-
-  peer.replicator.join(peer.store.session(), remotePeer.cores[0].discoveryKey)
-
-  return remote
-}
-
-exports.spawnPeer = async function spawnPeer(t, opts = {}) {
-  const { seed } = opts
-  let storeOpts = {}
-  if (seed) storeOpts = { primaryKey: seed, unsafe: true }
-
-  const store = new Corestore(await t.tmp(), storeOpts)
-  const replicator = new Replicator(store, {
-    manual: true,
-    ...opts
-  })
-
-  await replicator.ready()
-
-  const session = store.session()
-
-  const one = session.get({ name: 'one' })
-  await one.ready()
-  await one.append([b4a.from('cells'), b4a.from('interlinked')])
-
-  replicator.join(session, one.discoveryKey)
-
-  const two = session.get({ name: 'two' })
-  await two.ready()
-  await two.append([b4a.from('within'), b4a.from('Cells')])
-
-  const destroy = async () => {
-    await replicator.close()
-    await store.close()
+class TestSwarm extends ReadyResource {
+  constructor(t) {
+    super()
+    this.t = t
+    this.testnet = null
+    this.bootstrap = null
+    this.rootPath = null
+    this.peers = []
+    this.writers = new Map()
+    this._peerCounter = 0
   }
 
-  const peerId = exports.toHex(replicator.peerId)
+  async _open() {
+    this.testnet = await createTestnet()
+    this.bootstrap = this.testnet.bootstrap
+    this.rootPath = await this.t.tmp()
+  }
 
-  return { store, replicator, session, peerId, destroy, cores: [one, two] }
+  async propagateWriters() {
+    const done = []
+
+    for (const [topic, keys] of this.writers) {
+      for (const key of keys) {
+        for (const peer of this.peers) {
+          if (!peer.sessions.has(topic)) continue
+          const { session } = peer.sessions.get(topic)
+          done.push(session.get({ key }).ready())
+        }
+      }
+    }
+
+    await Promise.all(done)
+  }
+
+  refresh() {
+    return Promise.all(this.peers.map((p) => p.replicator.refresh()))
+  }
+
+  flush() {
+    return Promise.all(this.peers.map((p) => p.replicator.flush()))
+  }
+
+  gc() {
+    return Promise.all(this.peers.map((p) => p.replicator._gc()))
+  }
+
+  async spawnPeer(opts) {
+    const peer = new TestPeer(++this._peerCounter, this.rootPath, {
+      bootstrap: this.bootstrap,
+      autoswarm: true,
+      ...opts
+    })
+
+    this.peers.push(peer)
+    peer.on('close', () => {
+      const i = this.peers.indexOf(peer)
+      if (i > -1) this.peers.splice(i, 1)
+    })
+    peer.on('writer', (topic, core) => {
+      const writers = this.writers.get(topic) || []
+      writers.push(core.key)
+      this.writers.set(topic, writers)
+    })
+
+    await peer.ready()
+
+    return peer
+  }
+
+  async _close() {
+    await Promise.all(this.peers.map((p) => p.destroy()))
+    await this.testnet.destroy()
+  }
+
+  async destroy() {
+    return this.close()
+  }
+}
+
+class TestPeer extends ReadyResource {
+  constructor(id, path, opts) {
+    super()
+    this._id = id
+    this._path = `${path}/${this._id}`
+    this._opts = opts
+    this.sessions = new Map()
+
+    const { seed } = opts
+    let storeOpts = {}
+    if (seed) storeOpts = { primaryKey: seed, unsafe: true }
+
+    this.store = new Corestore(this._path, storeOpts)
+    this.replicator = new Replicator(this.store, {
+      manual: true,
+      autoswarm: true,
+      ...this._opts
+    })
+  }
+
+  async _open() {
+    await this.replicator.ready()
+  }
+
+  async join(topic, nCores = 3) {
+    const ns = this.store.namespace(topic)
+    const session = ns.session()
+    const repSession = this.replicator.join(session, topic)
+    await repSession.ready()
+
+    this.sessions.set(toHex(topic), { session, repSession })
+
+    const done = []
+    for (let i = 0; i < nCores; i++) {
+      const core = session.get({ name: `peer-${this._id}-writer-${i}` })
+      const p = core
+        .ready()
+        .then(() => core.append(b4a.from('block')))
+        .then(() => this.emit('writer', toHex(topic), core))
+      done.push(p)
+    }
+
+    await Promise.all(done)
+
+    return repSession
+  }
+
+  async _close() {
+    await this.replicator.close()
+    await this.store.close()
+  }
+
+  destroy() {
+    return this.close()
+  }
+}
+
+function toHex(buffer) {
+  return b4a.toString(buffer, 'hex')
 }
