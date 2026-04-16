@@ -68,6 +68,7 @@ test('autoswarm: manually activated instances', async (t) => {
   await swarm.refresh() // announce
   await swarm.refresh() // lookup
   await swarm.flush() // dht-query + dials
+  await swarm.gc() // de-dupe
 
   t.is(a.replicator.connectionCount, 1)
   t.is(b.replicator.connectionCount, 1, 'active announces')
