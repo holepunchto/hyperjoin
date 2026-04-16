@@ -179,8 +179,7 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     for (const connection of this.connections) {
-      pending.push(new Promise((resolve) => connection.stream.on('close', resolve)))
-      this._evictConnection(connection, ERR_SUSPEND)
+      pending.push(this._evictConnection(connection, ERR_SUSPEND))
     }
 
     await this.ps.suspend({ log })
@@ -297,8 +296,11 @@ module.exports = class Replicator extends ReadyResource {
     return connection
   }
 
-  _evictConnection(connection, err) {
+  async _evictConnection(connection, err) {
+    if (connection.stream.closed) return
+    const closed = new Promise(resolve => connection.stream.once('close', resolve))
     connection.destroy(err)
+    await closed
   }
 
   _handleServerConnectionSwap(existing, conn) {
@@ -390,7 +392,9 @@ module.exports = class Replicator extends ReadyResource {
     this._initConnection(true, peer.publicKey, stream, topic)
   }
 
-  _gc(now = Date.now()) {
+  async _gc(now = Date.now()) {
+    const evictions = []
+
     // Evict peer-dupes
     const [src, dst] =
       this.inbound.size < this.outbound.size
@@ -406,7 +410,7 @@ module.exports = class Replicator extends ReadyResource {
       // low-peerId keeps inbound
       const target = (cmp > 0) ^ connection.initiator ? connection : dst.get(key)
 
-      this._evictConnection(target, ERR_DUPLICATE)
+      evictions.push(this._evictConnection(target, ERR_DUPLICATE))
     }
 
     // Evict idle
@@ -414,13 +418,15 @@ module.exports = class Replicator extends ReadyResource {
       for (const connection of this.connections) {
         if (!connection.isIdle(now)) continue
 
-        this._evictConnection(connection, ERR_IDLE)
+        evictions.push(this._evictConnection(connection, ERR_IDLE))
 
         if (this.connectionCount <= this._minPeers) {
           break // target reached
         }
       }
     }
+
+    await Promise.all(evictions)
 
     // TODO: Evict long-term idle (no bytes change)
 
@@ -429,7 +435,7 @@ module.exports = class Replicator extends ReadyResource {
 
   _startGC() {
     if (this._gcInterval) return
-    this._gcInterval = setInterval(this._gc.bind(this), GC_INTERVAL)
+    this._gcInterval = setInterval(() => this._gc().catch(safetyCatch), GC_INTERVAL)
   }
 
   _handleUpdate() {
@@ -445,7 +451,7 @@ module.exports = class Replicator extends ReadyResource {
     }
     await Promise.all(done)
 
-    this._gc(now)
+    await this._gc(now)
   }
 
   // @deprecated, legacy compat (dht + connection queue, done)
@@ -472,13 +478,7 @@ module.exports = class Replicator extends ReadyResource {
       connection.stream.sendKeepAlive()
     }
 
-    const refreshes = []
-
-    for (const session of this.sessions.values()) {
-      refreshes.push(session.discovery.refresh())
-    }
-
-    await Promise.allSettled(refreshes)
+    await this.refresh()
   }
 
   async _close() {
@@ -487,10 +487,15 @@ module.exports = class Replicator extends ReadyResource {
     clearInterval(this._gcInterval)
     this._gcInterval = null
     const tasks = []
-    for (const session of this.sessions.values()) tasks.push(session.destroy())
+    for (const session of this.sessions.values()){
+      tasks.push(session.destroy())
+    }
     this.sessions.clear()
 
-    for (const connection of this.connections) this._evictConnection(connection)
+    for (const connection of this.connections) {
+      tasks.push(this._evictConnection(connection))
+    }
+
     this.inbound.clear()
     this.outbound.clear()
 
