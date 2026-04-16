@@ -669,7 +669,7 @@ test('closing all discovery sessions clears session-owned peer state', async (t)
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minPeers: 0, maxPeers: 0 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
   const store2 = p1.store.session()
@@ -691,9 +691,11 @@ test('closing all discovery sessions clears session-owned peer state', async (t)
 
   const closed1 = onceEvent(session1, 'close')
   const closed2 = onceEvent(session2, 'close')
+  const disconnected = onceEvent(p1.replicator, 'disconnected')
 
   await Promise.all([p1.session.close(), store2.close(), closed1, closed2])
   await p1.replicator._gc()
+  await disconnected
 
   t.is(p1.replicator.sessions.size, 0)
   t.is(p1.replicator.ps.peers.size, 0)
