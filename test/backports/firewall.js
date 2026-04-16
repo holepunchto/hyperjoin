@@ -21,14 +21,12 @@ test('firewalled server - bad client is rejected', async (t) => {
   p2.replicator.on('connected', () => serverConnections++)
 
   const server = [...p2.replicator.sessions.values()][0]
-  await server.ready()
-  await server.discovery.flushed()
+  await server.flush()
 
   const client = p1.replicator.join(p1.store.session(), p2.cores[0].discoveryKey, {
     discover: true
   })
-  await client.ready()
-  await client.discovery.flushed()
+  await client.flush()
   await p1.replicator.flush()
   await new Promise((resolve) => setImmediate(resolve))
 
@@ -63,8 +61,7 @@ test('firewalled client - bad server is rejected', async (t) => {
   const client = p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey, {
     discover: true
   })
-  await client.ready()
-  await client.discovery.flushed()
+  await client.flush()
   await p2.replicator.flush()
   await new Promise((resolve) => setImmediate(resolve))
 
@@ -97,8 +94,7 @@ test('firewalled server - rejection does not trigger retry cascade', async (t) =
   p2.replicator.on('connected', () => serverConnections++)
 
   const server = [...p2.replicator.sessions.values()][0]
-  await server.ready()
-  await server.discovery.flushed()
+  await server.flush()
 
   p1.replicator.join(p1.store.session(), p2.cores[0].discoveryKey, { discover: true })
 

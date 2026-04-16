@@ -629,8 +629,7 @@ test('flush when max connections reached', async (t) => {
   await testnet.destroy()
 })
 
-// deprecated by autoswarm
-test.skip('rejoining with different client/server opts refreshes', async (t) => {
+test('rejoining with different client/server opts refreshes', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -643,18 +642,19 @@ test.skip('rejoining with different client/server opts refreshes', async (t) => 
   await one.ready()
   await one.append([b4a.from('cells'), b4a.from('interlinked')])
 
-  const session = replicator.join(local, one.discoveryKey, { discover: true })
-  await session.ready()
-  await session.discovery.flushed()
-  session.setActive(true)
-  await session.refresh()
+  const session1 = replicator.join(local, one.discoveryKey, { discover: true })
+  await session1.flush()
+  await session1.close()
+
+  const session2 = replicator.join(local, one.discoveryKey, { active: true })
+  await session2.ready()
+  await session2.refresh()
 
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
   p2.replicator.on('connected', () => {})
   const client = p2.replicator.join(p2.store.session(), one.discoveryKey)
-  await client.ready()
-  await client.discovery.flushed()
+  await client.flush()
   await p2.replicator.flush()
 
   t.is(p2.replicator.connectionCount, 1)
