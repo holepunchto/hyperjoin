@@ -415,7 +415,8 @@ module.exports = class Replicator extends ReadyResource {
   async _gc(now = Date.now()) {
     const evictions = []
 
-    // Evict peer-dupes
+    // peer-dedupe
+
     const [src, dst] =
       this.inbound.size < this.outbound.size
         ? [this.inbound, this.outbound]
@@ -433,7 +434,17 @@ module.exports = class Replicator extends ReadyResource {
       evictions.push(this._evictConnection(target, ERR_DUPLICATE))
     }
 
-    // Evict idle
+    // Evict idle sessions
+
+    for (const session of this.sessions.values()) {
+      if (!session.isIdle) continue
+
+      evictions.push(session.destroy())
+    }
+
+
+    // Evict idle connections
+
     if (this.connectionCount > this._maxPeers) {
       for (const connection of this.connections) {
         if (!connection.isIdle(now)) continue

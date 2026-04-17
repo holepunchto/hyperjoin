@@ -125,8 +125,8 @@ test('autoswarm: can enable discovery swarming', async (t) => {
   t.is(p1.replicator.connectionCount, 0)
   t.is(p2.replicator.connectionCount, 0)
 
-  let replicated = 0
-  session1.once('replicated', () => replicated++)
+  let idle = 0
+  session1.once('idle', () => idle++)
 
   session1.startDiscovery()
   await p1.replicator.refresh()
@@ -155,7 +155,8 @@ test('autoswarm: can enable discovery swarming', async (t) => {
 
   // Evicted on next refresh
   await p1.replicator.refresh(now + gcIdleTime + 1)
-  t.is(replicated, 1, '"replicated" event fired')
+  t.is(idle, 1, '"idle" event fired')
+  t.is(p1.replicator.sessions.size, 0, 'session ejected')
 
   await swarm.destroy()
 })
