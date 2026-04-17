@@ -108,9 +108,10 @@ test('autoswarm: can enable discovery swarming', async (t) => {
 
   const defaultTimeout = 60 * 1000 // 1m
   const updatedDiscoveryTimeout = 500
+  const gcIdleTime = 100
   const p1 = await swarm.spawnPeer({
     refreshInterval: 50, // TODO: not implemented
-    gcIdleTime: 100, // TODO: not implemented
+    gcIdleTime,
     updatedDiscoveryTimeout
   })
   const p2 = await swarm.spawnPeer()
@@ -123,6 +124,9 @@ test('autoswarm: can enable discovery swarming', async (t) => {
 
   t.is(p1.replicator.connectionCount, 0)
   t.is(p2.replicator.connectionCount, 0)
+
+  let replicated = 0
+  session1.once('replicated', () => replicated++)
 
   session1.startDiscovery()
   await p1.replicator.refresh()
@@ -148,6 +152,10 @@ test('autoswarm: can enable discovery swarming', async (t) => {
   await p1.replicator.refresh(now)
 
   t.is(session1.isDiscovering, false)
+
+  // Evicted on next refresh
+  await p1.replicator.refresh(now + gcIdleTime + 1)
+  t.is(replicated, 1, '"replicated" event fired')
 
   await swarm.destroy()
 })
