@@ -11,6 +11,12 @@ const GC_INTERVAL = 5000
 const MIN_PEERS = 20
 const MAX_PEERS = 40
 
+const DEFAULT_SWARM_GC_IDLE_TIME = 30 * 1000
+
+const DEFAULT_DISCOVERY_TIMEOUT = 60 * 1000
+const UPDATED_DISCOVERY_TIMEOUT = 10 * 1000
+const START_DISCOVERY_SWARMING_DELAY = 5 * 1000 // 5s
+
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
 const ERR_DESTROYED = 'ReplicatorDestroyed'
@@ -31,7 +37,15 @@ module.exports = class Replicator extends ReadyResource {
       maxParallel,
       firewall = allowAll,
       suspended,
-      autoswarm = false // heuristics not enabled by default
+      autoswarm = false, // TODO: default enabled
+
+      // Discovery
+      defaultDiscoveryTimeout = DEFAULT_DISCOVERY_TIMEOUT,
+      updatedDiscoveryTimeout = UPDATED_DISCOVERY_TIMEOUT,
+      startDiscoverySwarmingDelay = START_DISCOVERY_SWARMING_DELAY,
+
+      // Idle
+      gcIdleTime = DEFAULT_SWARM_GC_IDLE_TIME
     } = opts
 
     if (seed) this.keyPair = DHT.keyPair(seed)
@@ -78,7 +92,13 @@ module.exports = class Replicator extends ReadyResource {
 
     this._minPeers = minPeers
     this._maxPeers = maxPeers
+
     this.autoswarm = autoswarm
+    this._gcIdleTime = gcIdleTime
+
+    this._defaultDiscoveryTimeout = defaultDiscoveryTimeout
+    this._updatedDiscoveryTimeout = updatedDiscoveryTimeout
+    this._startDiscoverySwarmingDelay = startDiscoverySwarmingDelay
 
     this.stats = {
       updates: 0,

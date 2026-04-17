@@ -103,7 +103,7 @@ test('autoswarm: manually activated instances', async (t) => {
   await swarm.destroy()
 })
 
-test.skip('autoswarm: can enable discovery swarming', async (t) => {
+test('autoswarm: can enable discovery swarming', async (t) => {
   const swarm = await spawnSwarm(t)
 
   const defaultTimeout = 60 * 1000 // 1m
@@ -115,24 +115,27 @@ test.skip('autoswarm: can enable discovery swarming', async (t) => {
   })
   const p2 = await swarm.spawnPeer()
 
-  const { topic } = swarm
+  const topic = b4a.alloc(32, 0x1)
+  const session1 = await p1.join(topic)
+  const session2 = await p2.join(topic)
+
+  await swarm.propagateWriters()
 
   t.is(p1.replicator.connectionCount, 0)
   t.is(p2.replicator.connectionCount, 0)
 
-  const session1 = p1.repSession
   session1.startDiscovery()
   await p1.replicator.refresh()
 
   t.is(session1.announce, false)
   t.is(session1.discoveryTimeout, defaultTimeout)
 
-  p2.repSession.startActive()
+  session2.setActive(true)
   await p2.replicator.refresh()
 
   // discovery window is shortened on successfull replication
 
-  session1.notifyDiscoveryUpdate()
+  session1.bumpDiscovery()
   await p1.replicator.refresh()
 
   t.is(p1.replicator.sessions.get(toHex(topic)), session1, 'still open')
@@ -141,10 +144,10 @@ test.skip('autoswarm: can enable discovery swarming', async (t) => {
 
   // discovery should deactivate
 
-  await new Promise((resolve) => setTimeout(resolve, updatedDiscoveryTimeout * 5))
-  await p1.replicator.refresh()
+  const now = session1.discoveryStartTime + session1.discoveryTimeout + 1
+  await p1.replicator.refresh(now)
 
-  t.absent(p1.replicator.sessions.get(toHex(topic)))
+  t.is(session1.isDiscovering, false)
 
   await swarm.destroy()
 })
