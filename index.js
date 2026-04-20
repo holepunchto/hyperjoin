@@ -16,6 +16,7 @@ const DEFAULT_SWARM_GC_IDLE_TIME = 30 * 1000
 const DEFAULT_DISCOVERY_TIMEOUT = 60 * 1000
 const UPDATED_DISCOVERY_TIMEOUT = 10 * 1000
 const START_DISCOVERY_SWARMING_DELAY = 5 * 1000 // 5s
+const START_AUTO_SWARMING_DELAY = 5 * 1000 // 5s
 
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
@@ -45,7 +46,11 @@ module.exports = class Replicator extends ReadyResource {
       startDiscoverySwarmingDelay = START_DISCOVERY_SWARMING_DELAY,
 
       // Idle
-      gcIdleTime = DEFAULT_SWARM_GC_IDLE_TIME
+      gcIdleTime = DEFAULT_SWARM_GC_IDLE_TIME,
+
+      // autoswarm
+      slots = 8,
+      startAutoSwarmingDelay = START_AUTO_SWARMING_DELAY
     } = opts
 
     if (seed) this.keyPair = DHT.keyPair(seed)
@@ -95,6 +100,8 @@ module.exports = class Replicator extends ReadyResource {
 
     this.autoswarm = autoswarm
     this._gcIdleTime = gcIdleTime
+    this.slots = slots
+    this._startAutoSwarmingDelay = startAutoSwarmingDelay
 
     this._defaultDiscoveryTimeout = defaultDiscoveryTimeout
     this._updatedDiscoveryTimeout = updatedDiscoveryTimeout
@@ -475,6 +482,8 @@ module.exports = class Replicator extends ReadyResource {
   async refresh(now = Date.now()) {
     await this.flush() // TODO: blocks unnanounce
 
+    this._autoselect(now)
+
     const done = []
     for (const sess of this.sessions.values()) {
       done.push(sess.refresh(now))
@@ -494,6 +503,40 @@ module.exports = class Replicator extends ReadyResource {
 
     // pending connects
     await this.ps.flush()
+  }
+
+  _autoselect(now = Date.now()) {
+    const flat = Array.from(this.sessions.values())
+      // exclude discovering & manual-pins
+      .filter(s => !s.isDiscovering && !s.isActive)
+
+    let active = 0
+    for (const session of flat) if(session.active) active++
+
+    if (active >= this.slots) return // slots full
+
+    function heuristicSort(a, b) {
+      const prio = b.priority - a.priority
+      return prio
+
+      // TODO: use
+      /*
+      const bumpValue = session.topic.bump
+      const leastStarted = a._autostarts - b._autostarts
+      const leastTimeActive = a.timeActive - b.timeActive
+      const oldestSeeded = b._autoEndTime - a._autoEndTime
+      const bytesTransferred = ...
+      */
+    }
+
+    flat.sort(heuristicSort)
+
+    // autostart empty slots
+
+    const limit = Math.min(this.slots - active, flat.length)
+    for (let i = 0; i < limit; i++) {
+      flat[i]._autoStart(now)
+    }
   }
 
   async _handleNetworkUpdate() {

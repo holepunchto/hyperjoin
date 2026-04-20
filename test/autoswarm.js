@@ -109,6 +109,7 @@ test('autoswarm: can enable discovery swarming', async (t) => {
   const defaultTimeout = 60 * 1000 // 1m
   const updatedDiscoveryTimeout = 500
   const gcIdleTime = 100
+
   const p1 = await swarm.spawnPeer({
     refreshInterval: 50, // TODO: not implemented
     gcIdleTime,
@@ -162,7 +163,40 @@ test('autoswarm: can enable discovery swarming', async (t) => {
   await swarm.destroy()
 })
 
-test.skip('autoswarm: replicator activates fallbacks', (t) => {})
+test('autoswarm: replicator activates sessions', async (t) => {
+  const swarm = await spawnSwarm(t)
+  const gcIdleTime = 100
+  const slots = 4
+
+  const topics = new Array(10)
+    .fill(null)
+    .map((_, i) => b4a.alloc(32, i))
+
+  const p1 = await swarm.spawnPeer({ slots })
+
+  let joins = []
+  const nCores = 5
+  for (const topic of topics) {
+    joins.push(p1.join(topic, nCores))
+  }
+  await swarm.propagateWriters()
+  await Promise.all(joins)
+
+  t.is(listActive(p1).length, 0)
+
+  await p1.replicator.refresh()
+  t.is(listActive(p1).length, slots, 'topics auto activate')
+
+  await swarm.destroy()
+
+  function listActive(peer) {
+    let active = []
+    for (const [key, session] of peer.replicator.sessions) {
+      if (session.active) active.push(key)
+    }
+    return active
+  }
+})
 
 function toHex(buffer) {
   return b4a.toString(buffer, 'hex')
