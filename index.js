@@ -442,7 +442,6 @@ module.exports = class Replicator extends ReadyResource {
       evictions.push(session.destroy())
     }
 
-
     // Evict idle connections
 
     if (this.connectionCount > this._maxPeers) {
