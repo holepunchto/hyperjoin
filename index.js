@@ -11,6 +11,7 @@ const GC_INTERVAL = 5000
 const MIN_PEERS = 20
 const MAX_PEERS = 40
 
+const DEFAULT_AUTO_SLOTS = 8
 const DEFAULT_SWARM_GC_IDLE_TIME = 30 * 1000
 
 const DEFAULT_DISCOVERY_TIMEOUT = 60 * 1000
@@ -49,7 +50,7 @@ module.exports = class Replicator extends ReadyResource {
       gcIdleTime = DEFAULT_SWARM_GC_IDLE_TIME,
 
       // autoswarm
-      slots = 8,
+      slots = DEFAULT_AUTO_SLOTS,
       startAutoSwarmingDelay = START_AUTO_SWARMING_DELAY
     } = opts
 
@@ -171,8 +172,12 @@ module.exports = class Replicator extends ReadyResource {
     await this.server.listen(this.keyPair)
   }
 
-  *cores() {
+  *cores({ active = false } = {}) {
     for (const session of this.sessions.values()) {
+      if (active && !session.active && !session.isDiscovering) {
+        continue
+      }
+
       for (const [discoveryKey, core] of session.cores) {
         yield { discoveryKey, core, session }
       }
@@ -510,34 +515,41 @@ module.exports = class Replicator extends ReadyResource {
       // exclude discovering & manual-pins
       .filter(s => !s.isDiscovering && !s.isActive)
 
-    function heuristicSort(a, b) {
-      const prio = b.priority - a.priority
-      return prio
+    const order = new Map()
+    const priorities = flat.map(i => i.priority).sort()
+    for (let i = 0; i < priorities.length; i++) {
+      order.set(priorities[i], i)
+    }
 
-      // TODO: use
-      /*
-      const bumpValue = session.topic.bump
-      const leastStarted = a._autostarts - b._autostarts
-      const leastTimeActive = a.timeActive - b.timeActive
-      const oldestSeeded = b._autoEndTime - a._autoEndTime
-      const bytesTransferred = ...
-      */
+    function score(session) {
+      let v = 0
+      v += order.get(session.priority) // primary
+
+      // secondary; rotate over time by last start
+      if (session._autostarted) {
+        const uptime = now - session._autoStartTime
+        v -=  (uptime / 60_000) * 0.5
+      }
+
+      return v
+    }
+
+    function heuristicSort(a, b) {
+      return score(b) - score(a)
     }
 
     flat.sort(heuristicSort)
 
-    // autostop
-
+    // autostop lower prio
     for (let i = this.slots; i < flat.length; i++) {
       flat[i]._autoStop()
     }
 
     let active = 0
     for (const session of flat) if(session.active) active++
-    if (active >= this.slots) return // proper slots, no-op
+    if (active >= this.slots) return // no-op
 
     // autostart empty slots
-
     const limit = Math.min(this.slots - active, flat.length)
     for (let i = 0; i < limit; i++) {
       flat[i]._autoStart(now)
@@ -620,7 +632,7 @@ class Connection {
     if (mux.isIdle()) return 0
 
     let opened = 0
-    for (const { core } of this.replicator.cores()) {
+    for (const { core } of this.replicator.cores({ active: true })) {
       if (core.closing) continue
       if (!mux.opened({ protocol: 'hypercore/alpha', id: core.discoveryKey })) continue
       opened++

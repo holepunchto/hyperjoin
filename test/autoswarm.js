@@ -3,7 +3,7 @@ const b4a = require('b4a')
 const { spawnSwarm } = require('./helpers')
 
 // hyperswarm mode (deprecated)
-test('autoswarm: disabled, all are active (sanity test)', async (t) => {
+test('autoswarm: all topics treated as pinned when autoswarm disabled (sanity test)', async (t) => {
   const swarm = await spawnSwarm(t)
 
   const p1 = await swarm.spawnPeer({ autoswarm: false })
@@ -24,7 +24,7 @@ test('autoswarm: disabled, all are active (sanity test)', async (t) => {
 
 // replicator mode
 
-test('autoswarm: enabled, two new instances do not swarm without intent (sanity test)', async (t) => {
+test('autoswarm: two new instances do not swarm without intent (sanity test)', async (t) => {
   const swarm = await spawnSwarm(t)
 
   const p1 = await swarm.spawnPeer()
@@ -111,7 +111,6 @@ test('autoswarm: can enable discovery swarming', async (t) => {
   const gcIdleTime = 100
 
   const p1 = await swarm.spawnPeer({
-    refreshInterval: 50, // TODO: not implemented
     gcIdleTime,
     updatedDiscoveryTimeout
   })
@@ -172,7 +171,7 @@ test('autoswarm: replicator activates sessions', async (t) => {
     .fill(null)
     .map((_, i) => b4a.alloc(32, i))
 
-  const p1 = await swarm.spawnPeer({ slots })
+  const p1 = await swarm.spawnPeer({ slots, gcIdleTime })
 
   let joins = []
   const nCores = 5
