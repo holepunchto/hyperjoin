@@ -510,11 +510,6 @@ module.exports = class Replicator extends ReadyResource {
       // exclude discovering & manual-pins
       .filter(s => !s.isDiscovering && !s.isActive)
 
-    let active = 0
-    for (const session of flat) if(session.active) active++
-
-    if (active >= this.slots) return // slots full
-
     function heuristicSort(a, b) {
       const prio = b.priority - a.priority
       return prio
@@ -530,6 +525,16 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     flat.sort(heuristicSort)
+
+    // autostop
+
+    for (let i = this.slots; i < flat.length; i++) {
+      flat[i]._autoStop()
+    }
+
+    let active = 0
+    for (const session of flat) if(session.active) active++
+    if (active >= this.slots) return // proper slots, no-op
 
     // autostart empty slots
 
