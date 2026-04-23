@@ -137,7 +137,7 @@ test('autoswarm: can enable discovery swarming', async (t) => {
   session2.setActive(true)
   await p2.replicator.refresh()
 
-  // discovery window is shortened on successfull replication
+  // discovery window is shortened on successful replication
 
   session1.bumpDiscovery()
   await p1.replicator.refresh()
