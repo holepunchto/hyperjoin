@@ -159,9 +159,7 @@ test('autoswarm: replicator activates sessions', async (t) => {
   const gcIdleTime = 100
   const slots = 4
 
-  const topics = new Array(10)
-    .fill(null)
-    .map((_, i) => b4a.alloc(32, i))
+  const topics = new Array(10).fill(null).map((_, i) => b4a.alloc(32, i))
 
   const p1 = await swarm.spawnPeer({ slots, gcIdleTime })
 

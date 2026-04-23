@@ -513,10 +513,10 @@ module.exports = class Replicator extends ReadyResource {
   _autoselect(now = Date.now()) {
     const flat = Array.from(this.sessions.values())
       // exclude discovering & manual pins
-      .filter(s => !s.isDiscovering && !s.pinned)
+      .filter((s) => !s.isDiscovering && !s.pinned)
 
     const order = new Map()
-    const priorities = flat.map(i => i.priority).sort()
+    const priorities = flat.map((i) => i.priority).sort()
     for (let i = 0; i < priorities.length; i++) {
       order.set(priorities[i], i)
     }
@@ -528,7 +528,7 @@ module.exports = class Replicator extends ReadyResource {
       // secondary; rotate over time by last start
       if (session._autostarted) {
         const uptime = now - session._autoStartTime
-        v -=  (uptime / 60_000) * 0.5
+        v -= (uptime / 60_000) * 0.5
       }
 
       return v
