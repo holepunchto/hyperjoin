@@ -59,7 +59,7 @@ Join topic, returns `ReplicatorSession`.
 
 `opts`:
 
-- `active` Same as `rs.setActive()`
+- `active` Same as `rs.pin()`
 - `discover` Same as `rs.discover()`
 
 ### `await rep.refresh()`
@@ -74,10 +74,10 @@ Wait until current discovery and dial work settles.
 
 Close the replicator and all joined sessions.
 
-### `rs.setActive(bool)`
+### `rs.pin()` / `rs.unpin()`
 
-Pin topic into `active` mode; bypasses auto-rotation and
-forces session to be active until manually turned off.
+Pin topic into active mode; bypasses auto-rotation and
+forces session to be active until unpinned.
 
 ### `rs.startDiscovery()`
 

@@ -512,8 +512,8 @@ module.exports = class Replicator extends ReadyResource {
 
   _autoselect(now = Date.now()) {
     const flat = Array.from(this.sessions.values())
-      // exclude discovering & manual-pins
-      .filter(s => !s.isDiscovering && !s.isActive)
+      // exclude discovering & manual pins
+      .filter(s => !s.isDiscovering && !s.pinned)
 
     const order = new Map()
     const priorities = flat.map(i => i.priority).sort()
@@ -538,18 +538,19 @@ module.exports = class Replicator extends ReadyResource {
       return score(b) - score(a)
     }
 
+    // rotate
     flat.sort(heuristicSort)
 
-    // autostop lower prio
+    // autostop
     for (let i = this.slots; i < flat.length; i++) {
-      flat[i]._autoStop()
+      flat[i]._autoStop(now)
     }
 
     let active = 0
-    for (const session of flat) if(session.active) active++
+    for (const session of flat) if (session.active) active++
     if (active >= this.slots) return // no-op
 
-    // autostart empty slots
+    // autostart
     const limit = Math.min(this.slots - active, flat.length)
     for (let i = 0; i < limit; i++) {
       flat[i]._autoStart(now)
