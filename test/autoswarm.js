@@ -163,7 +163,7 @@ test('autoswarm: replicator activates sessions', async (t) => {
 
   const p1 = await swarm.spawnPeer({ slots, gcIdleTime })
 
-  let joins = []
+  const joins = []
   const nCores = 5
   for (const topic of topics) {
     joins.push(p1.join(topic, nCores))
@@ -179,7 +179,7 @@ test('autoswarm: replicator activates sessions', async (t) => {
   await swarm.destroy()
 
   function listActive(peer) {
-    let active = []
+    const active = []
     for (const [key, session] of peer.replicator.sessions) {
       if (session.active) active.push(key)
     }
