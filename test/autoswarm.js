@@ -129,6 +129,7 @@ test('autoswarm: can enable discovery swarming', async (t) => {
   session1.once('idle', () => idle++)
 
   session1.startDiscovery()
+  t.is(session1.isDiscovering, true)
   await p1.replicator.refresh()
 
   t.is(session1.announce, false)
