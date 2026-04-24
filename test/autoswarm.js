@@ -125,7 +125,8 @@ test('autoswarm: can enable discovery swarming', async (t) => {
   t.is(p1.replicator.connectionCount, 0)
   t.is(p2.replicator.connectionCount, 0)
 
-  session1.startDiscovery()
+  session1.discover().then((version) => t.is(version, -1, 'stubbed version'))
+
   t.is(session1.isDiscovering, true)
   await p1.replicator.refresh()
 
@@ -137,7 +138,7 @@ test('autoswarm: can enable discovery swarming', async (t) => {
 
   // discovery window is shortened on successful replication
 
-  session1.bumpDiscovery()
+  session1.bump()
   await p1.replicator.refresh()
 
   t.is(p1.replicator.sessions.get(toHex(topic)), session1, 'still open')
@@ -146,7 +147,7 @@ test('autoswarm: can enable discovery swarming', async (t) => {
 
   // discovery should deactivate
 
-  const now = session1._discoveryStartTime + session1._discoveryTimeout + 1
+  const now = session1._startTime + session1._discoveryTimeout + 1
   await p1.replicator.refresh(now)
 
   t.is(session1.isDiscovering, false)

@@ -7,7 +7,7 @@ const PeerStation = require('./lib/station')
 const Session = require('./lib/session')
 const { getStreamError } = require('streamx')
 
-const GC_INTERVAL = 5000
+const AUTO_REFRESH_INTERVAL = 5000
 const MIN_PEERS = 20
 const MAX_PEERS = 40
 
@@ -39,7 +39,8 @@ module.exports = class Replicator extends ReadyResource {
       maxParallel,
       firewall = allowAll,
       suspended,
-      autoswarm = false, // TODO: default enabled
+      autoswarm = true,
+      manual = true,
 
       // Discovery
       defaultDiscoveryTimeout = DEFAULT_DISCOVERY_TIMEOUT,
@@ -127,9 +128,9 @@ module.exports = class Replicator extends ReadyResource {
     this.dht.on('network-update', this._handleNetworkUpdate.bind(this))
     this.on('update', this._handleUpdate.bind(this))
 
-    this._manual = opts.manual === true
-    this._gcInterval = null
-    if (!this._manual) this._startGC()
+    this._manual = !!manual
+    this._refreshInterval = null
+    if (!this._manual) this._startAutoRefresh()
   }
 
   get peerId() {
@@ -218,8 +219,7 @@ module.exports = class Replicator extends ReadyResource {
 
     this.suspended = true
     this._inflight.clear()
-    clearInterval(this._gcInterval)
-    this._gcInterval = null
+    this._stopAutoRefresh()
 
     await Promise.allSettled(suspending)
 
@@ -245,19 +245,23 @@ module.exports = class Replicator extends ReadyResource {
 
     await Promise.all(pending)
 
-    if (!this._manual) this._startGC()
+    if (!this._manual) this._startAutoRefresh()
   }
 
-  join(store, topic, { active = false, discover = false } = {}) {
+  join(store, topic, { priority = 0, active = false, discover = false } = {}) {
     const dk = toHex(topic)
     if (this.sessions.has(dk)) throw new Error('session exists')
 
     active ||= !this.autoswarm && !discover // TODO: deprecated
 
-    const session = new Session(this, store, topic, { active, discover })
+    const session = new Session(this, store, topic, { priority, active, discover })
     this.sessions.set(dk, session)
 
-    session.on('close', () => this.sessions.delete(dk))
+    session.on('close', () => {
+      this.sessions.delete(dk)
+      this.emit('remove', session)
+    })
+
     store.on('close', session.close.bind(session))
 
     session
@@ -426,6 +430,8 @@ module.exports = class Replicator extends ReadyResource {
 
   async _gc(now = Date.now()) {
     const evictions = []
+    let connectionsEvicted = 0
+    let sessionsEvicted = 0
 
     // peer-dedupe
 
@@ -444,14 +450,15 @@ module.exports = class Replicator extends ReadyResource {
       const target = (cmp > 0) ^ connection.initiator ? connection : dst.get(key)
 
       evictions.push(this._evictConnection(target, ERR_DUPLICATE))
+      connectionsEvicted++
     }
 
     // Evict idle sessions
 
     for (const session of this.sessions.values()) {
       if (!session._shouldEvict(now)) continue
-      const p = session.destroy().then(() => this.emit('evicted', session))
-      evictions.push(p)
+      evictions.push(session.destroy())
+      sessionsEvicted++
     }
 
     // Evict idle connections
@@ -461,6 +468,7 @@ module.exports = class Replicator extends ReadyResource {
         if (!connection.isIdle(now)) continue
 
         evictions.push(this._evictConnection(connection, ERR_IDLE))
+        connectionsEvicted++
 
         if (this.connectionCount <= this._minPeers) {
           break // target reached
@@ -473,11 +481,9 @@ module.exports = class Replicator extends ReadyResource {
     // TODO: Evict long-term idle (no bytes change)
 
     this.ps.collectGarbage()
-  }
 
-  _startGC() {
-    if (this._gcInterval) return
-    this._gcInterval = setInterval(() => this._gc().catch(safetyCatch), GC_INTERVAL)
+    if (sessionsEvicted) this.emit('evicted', sessionsEvicted)
+    if (connectionsEvicted) this.emit('dropped', connectionsEvicted)
   }
 
   _handleUpdate() {
@@ -487,11 +493,11 @@ module.exports = class Replicator extends ReadyResource {
   async refresh(now = Date.now()) {
     await this.flush() // TODO: blocks unnanounce
 
-    this._autoselect(now)
+    this._autoselect(now) // updates sessions
 
     const done = []
     for (const sess of this.sessions.values()) {
-      done.push(sess.refresh(now))
+      done.push(sess.refresh(now)) // applies state
     }
     await Promise.all(done)
 
@@ -511,12 +517,13 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   _autoselect(now = Date.now()) {
-    const flat = Array.from(this.sessions.values())
+    const pool = Array.from(this.sessions.values())
       // exclude discovering & manual pins
-      .filter((s) => !s.isDiscovering && !s.pinned)
+      .filter((session) => !session.isDiscovering && !session.isPinned)
 
+    // weight prio by lexical order
     const order = new Map()
-    const priorities = flat.map((i) => i.priority).sort()
+    const priorities = pool.map((i) => i.priority).sort()
     for (let i = 0; i < priorities.length; i++) {
       order.set(priorities[i], i)
     }
@@ -526,8 +533,8 @@ module.exports = class Replicator extends ReadyResource {
       v += order.get(session.priority) // primary
 
       // secondary; rotate over time by last start
-      if (session._autostarted) {
-        const uptime = now - session._autoStartTime
+      if (session.isAuto) {
+        const uptime = now - session._startTime
         v -= (uptime / 60_000) * 0.5
       }
 
@@ -539,21 +546,21 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     // rotate
-    flat.sort(heuristicSort)
+    pool.sort(heuristicSort)
 
     // autostop
-    for (let i = this.slots; i < flat.length; i++) {
-      flat[i]._autoStop(now)
+    for (let i = this.slots; i < pool.length; i++) {
+      pool[i]._autoStop(now)
     }
 
     let active = 0
-    for (const session of flat) if (session.active) active++
+    for (const session of pool) if (session.active) active++
     if (active >= this.slots) return // no-op
 
     // autostart
-    const limit = Math.min(this.slots - active, flat.length)
+    const limit = Math.min(this.slots - active, pool.length)
     for (let i = 0; i < limit; i++) {
-      flat[i]._autoStart(now)
+      pool[i]._autoStart(now)
     }
   }
 
@@ -572,11 +579,25 @@ module.exports = class Replicator extends ReadyResource {
     await this.refresh()
   }
 
+  _stopAutoRefresh() {
+    clearInterval(this._refreshInterval)
+    this._refreshInterval = null
+  }
+
+  _startAutoRefresh() {
+    if (this._refreshInterval) return
+    this._refreshInterval = setInterval(
+      () => this.refresh().catch(safetyCatch),
+      AUTO_REFRESH_INTERVAL
+    )
+    this._refreshInterval.unref()
+  }
+
   async _close() {
     this.destroyed = true
 
-    clearInterval(this._gcInterval)
-    this._gcInterval = null
+    this._stopAutoRefresh()
+
     const tasks = []
     for (const session of this.sessions.values()) {
       tasks.push(session.destroy())
