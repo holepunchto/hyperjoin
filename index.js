@@ -449,9 +449,9 @@ module.exports = class Replicator extends ReadyResource {
     // Evict idle sessions
 
     for (const session of this.sessions.values()) {
-      if (!session.isIdle) continue
-
-      evictions.push(session.destroy())
+      if (!session._shouldEvict(now)) continue
+      const p = session.destroy().then(() => this.emit('evicted', session))
+      evictions.push(p)
     }
 
     // Evict idle connections
