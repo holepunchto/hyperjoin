@@ -56,6 +56,7 @@ exports.spawnPeer = async function spawnPeer(t, opts = {}) {
   const store = new Corestore(await t.tmp(), storeOpts)
   const replicator = new Replicator(store, {
     manual: true,
+    autoswarm: false,
     ...opts
   })
 

@@ -11,7 +11,7 @@ const Replicator = require('replicator')
 
 const store = new Corestore('./storage')
 
-const rep = new Replicator(store)
+const rep = new Replicator(store, { slots: 8, maxPeers: 40 })
 await rep.ready()
 
 const session = store.session() // or namespace()
@@ -22,7 +22,9 @@ await core.ready()
 const topic = Buffer.alloc(32, 0x1)
 
 // ReplicatorSession
-const rs = rep.join(session, topic, { active: false, discover: false })
+const rs = rep.join(session, topic)
+
+await rep.refresh() // apply auto-rotation & launch topics
 
 await store.close() // leaves topic
 await rep.close()
@@ -36,72 +38,117 @@ Create a topic replicator for a root corestore.
 
 `opts`:
 
-- `autoswarm`: enable active/discovery session heuristics
-- `suspended`: start discovery/server in suspended mode
+General
+
+- `autoswarm`: enables active topic rotation (default `true`)
+- `suspended`: start suspended
 - `seed`: derive the replicator keypair from a seed
+- `maxPeers`: drop connections above
+- `minPeers`: minimum connections to keep
+- `slots`: auto-rotation slots
+- `gcIdleTime`: Evict idle sessions exceeding time
+- `defaultDiscoveryTimeout`: initial discovery lifetime
+- `updatedDiscoveryTimeout`: shortened discovery lifetime after `session.bump()`
+
+Transport
+
 - `keyPair`: provide an explicit keypair (default: store.createKepair)
 - `bootstrap`: DHT bootstrap nodes
+- `nodes`: explicit DHT nodes
 - `dht`: reuse an existing HyperDHT instance
 - `port`: bind the DHT socket to a fixed port
-- `minPeers`: lower GC connection watermark
-- `maxPeers`: upper GC connection watermark
-- `maxParallel`: max parallel outbound dials
-- `relayThrough`: relay selector for outbound connections
 - `firewall`: filter inbound and outbound peers
+- `relayThrough`: relay selector for outbound connections
+
+Dialer
+
+- `maxParallel`: max parallel outbound dials
+- `maxClientConnections`: max concurrent outbound connections
+- `maxServerConnections`: max concurrent inbound connections
+
+### Events
+
+#### `rep.on('activate', (session) => {})`
+
+Fired when a session becomes active.
+
+#### `rep.on('deactivate', (session) => {})`
+
+Fired when a session becomes inactive a.k.a idle.
+
+#### `rep.on('remove', (session) => {})`
+
+Fired when a session is removed from the replicator.
+
+#### `rep.on('evicted', (count) => {})`
+
+Fired after GC evicts idle sessions. `count` is the number removed.
+
+Can be used as signal to add more sessions through `rep.join()`
+and update all priorities:
+
+```
+for (const [topic, session] of rep.sessions) {
+  session.priority = appTimestampOf(topic)
+}
+```
+
+#### `rep.on('dropped', (count) => {})`
+
+Fired after GC drops connections. `count` is the number dropped.
 
 ### `await rep.ready()`
 
 Resolves after dht.server port is bound and store is ready.
 
-### `const rs = rep.join(storeSession, topic, { active, discover })`
+### `const rs = rep.join(storeSession, topic)`
 
 Join topic, returns `ReplicatorSession`.
 
-`opts`:
-
-- `active` Same as `rs.setActive()`
-- `discover` Same as `rs.discover()`
-
 ### `await rep.refresh()`
 
-TBD
+Invokes topic-rotation, applies state transitions, then finally runs garbage-collector.
+
+Replicator takes no actions unless refresh is called.
 
 ### `await rep.flush()`
 
 Wait until current discovery and dial work settles.
 
+### `await rep.suspend()` / `await rep.resume()`
+
+Suspend and resume discovery, server, and connection activity.
+
 ### `await rep.close()`
 
 Close the replicator and all joined sessions.
 
-### `rs.setActive(bool)`
+### ReplicatorSession
 
-Pin topic into `active` mode; bypasses auto-rotation and
-forces session to be active until manually turned off.
+### `rs.pin()` / `rs.unpin()`
 
-### `rs.startDiscovery()`
+Pin topic to announce itself on dht - bypasses `priority`, auto-rotation and
+forces the session to be active until manual call to `unpin()`.
 
-TBD
+### `rs.discover()`
 
-### `rs.bumpDiscovery()`
+Launch a dht lookup for the topic. (announce: false / client only)
 
-TBD
+The function returns a promise, that resolves when dht-query completes and returns
+maximum known bump value.
 
-### `rs.setPriority(number)`
+### `rs.bump(version = -1)`
 
-TBD
+Announce local version on topic.
+If a disovery is in progress, then it will be prolonged with a shorter disovery window.
 
-### `await rs.refresh()`
+### `rs.priority = number`
 
-Refresh this topic's discovery state now.
+Priority used by autoswarm auto-selection.
 
 ### `await rs.flush()`
 
 Wait until this topic's current dht query settles
-
-### `await rs.close()`
-
-Close this topic session.
 
 ## License
 

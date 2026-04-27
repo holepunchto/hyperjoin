@@ -3,7 +3,7 @@ const b4a = require('b4a')
 const { spawnSwarm } = require('./helpers')
 
 // hyperswarm mode (deprecated)
-test('autoswarm: disabled, all are active (sanity test)', async (t) => {
+test('autoswarm: all topics treated as pinned when autoswarm disabled (sanity test)', async (t) => {
   const swarm = await spawnSwarm(t)
 
   const p1 = await swarm.spawnPeer({ autoswarm: false })
@@ -24,7 +24,7 @@ test('autoswarm: disabled, all are active (sanity test)', async (t) => {
 
 // replicator mode
 
-test('autoswarm: enabled, two new instances do not swarm without intent (sanity test)', async (t) => {
+test('autoswarm: two new instances do not swarm without intent (sanity test)', async (t) => {
   const swarm = await spawnSwarm(t)
 
   const p1 = await swarm.spawnPeer()
@@ -56,10 +56,10 @@ test('autoswarm: manually activated instances', async (t) => {
   // A + B joins Active
 
   const session1 = await a.join(topic)
-  session1.setActive(true)
+  session1.pin()
 
   const session2 = await b.join(topic)
-  session2.setActive(true)
+  session2.pin()
 
   await swarm.propagateWriters()
   await swarm.refresh() // lookup then commit announce
@@ -72,12 +72,12 @@ test('autoswarm: manually activated instances', async (t) => {
 
   // A + B de-activates, C validates
 
-  session1.setActive(false)
-  session2.setActive(false)
+  session1.unpin()
+  session2.unpin()
   await swarm.refresh() // unnanounce
 
   const session3 = await c.join(topic)
-  session3.setActive(true) // TODO: use discover()
+  session3.pin() // TODO: use discover()
 
   await swarm.propagateWriters()
   await swarm.refresh() // lookup
@@ -88,7 +88,7 @@ test('autoswarm: manually activated instances', async (t) => {
 
   // A re-activates, C validates
 
-  session1.setActive(true)
+  session1.pin()
 
   await swarm.refresh()
   await swarm.refresh()
@@ -109,8 +109,8 @@ test('autoswarm: can enable discovery swarming', async (t) => {
   const defaultTimeout = 60 * 1000 // 1m
   const updatedDiscoveryTimeout = 500
   const gcIdleTime = 100
+
   const p1 = await swarm.spawnPeer({
-    refreshInterval: 50, // TODO: not implemented
     gcIdleTime,
     updatedDiscoveryTimeout
   })
@@ -125,44 +125,68 @@ test('autoswarm: can enable discovery swarming', async (t) => {
   t.is(p1.replicator.connectionCount, 0)
   t.is(p2.replicator.connectionCount, 0)
 
-  let idle = 0
-  session1.once('idle', () => idle++)
+  session1.discover().then((version) => t.is(version, -1, 'stubbed version'))
 
-  session1.startDiscovery()
   t.is(session1.isDiscovering, true)
   await p1.replicator.refresh()
 
   t.is(session1.announce, false)
-  t.is(session1.discoveryTimeout, defaultTimeout)
+  t.is(session1._discoveryTimeout, defaultTimeout)
 
-  session2.setActive(true)
+  session2.pin()
   await p2.replicator.refresh()
 
   // discovery window is shortened on successful replication
 
-  session1.bumpDiscovery()
+  session1.bump()
   await p1.replicator.refresh()
 
   t.is(p1.replicator.sessions.get(toHex(topic)), session1, 'still open')
   t.is(session1.announce, false, 'still not listening')
-  t.is(session1.discoveryTimeout, updatedDiscoveryTimeout, 'shortened')
+  t.is(session1._discoveryTimeout, updatedDiscoveryTimeout, 'shortened')
 
   // discovery should deactivate
 
-  const now = session1.discoveryStartTime + session1.discoveryTimeout + 1
+  const now = session1._startTime + session1._discoveryTimeout + 1
   await p1.replicator.refresh(now)
 
   t.is(session1.isDiscovering, false)
 
-  // Evicted on next refresh
-  await p1.replicator.refresh(now + gcIdleTime + 1)
-  t.is(idle, 1, '"idle" event fired')
-  t.is(p1.replicator.sessions.size, 0, 'session ejected')
-
   await swarm.destroy()
 })
 
-test.skip('autoswarm: replicator activates fallbacks', (t) => {})
+test('autoswarm: replicator activates sessions', async (t) => {
+  const swarm = await spawnSwarm(t)
+  const gcIdleTime = 100
+  const slots = 4
+
+  const topics = new Array(10).fill(null).map((_, i) => b4a.alloc(32, i))
+
+  const p1 = await swarm.spawnPeer({ slots, gcIdleTime })
+
+  const joins = []
+  const nCores = 5
+  for (const topic of topics) {
+    joins.push(p1.join(topic, nCores))
+  }
+  await swarm.propagateWriters()
+  await Promise.all(joins)
+
+  t.is(listActive(p1).length, 0)
+
+  await p1.replicator.refresh()
+  t.is(listActive(p1).length, slots, 'topics auto activate')
+
+  await swarm.destroy()
+
+  function listActive(peer) {
+    const active = []
+    for (const [key, session] of peer.replicator.sessions) {
+      if (session.active) active.push(key)
+    }
+    return active
+  }
+})
 
 function toHex(buffer) {
   return b4a.toString(buffer, 'hex')

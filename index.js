@@ -7,15 +7,17 @@ const PeerStation = require('./lib/station')
 const Session = require('./lib/session')
 const { getStreamError } = require('streamx')
 
-const GC_INTERVAL = 5000
+const AUTO_REFRESH_INTERVAL = 5000
 const MIN_PEERS = 20
 const MAX_PEERS = 40
 
+const DEFAULT_AUTO_SLOTS = 8
 const DEFAULT_SWARM_GC_IDLE_TIME = 30 * 1000
 
 const DEFAULT_DISCOVERY_TIMEOUT = 60 * 1000
 const UPDATED_DISCOVERY_TIMEOUT = 10 * 1000
 const START_DISCOVERY_SWARMING_DELAY = 5 * 1000 // 5s
+const START_AUTO_SWARMING_DELAY = 5 * 1000 // 5s
 
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
@@ -37,7 +39,8 @@ module.exports = class Replicator extends ReadyResource {
       maxParallel,
       firewall = allowAll,
       suspended,
-      autoswarm = false, // TODO: default enabled
+      autoswarm = true,
+      manual = true,
 
       // Discovery
       defaultDiscoveryTimeout = DEFAULT_DISCOVERY_TIMEOUT,
@@ -45,7 +48,11 @@ module.exports = class Replicator extends ReadyResource {
       startDiscoverySwarmingDelay = START_DISCOVERY_SWARMING_DELAY,
 
       // Idle
-      gcIdleTime = DEFAULT_SWARM_GC_IDLE_TIME
+      gcIdleTime = DEFAULT_SWARM_GC_IDLE_TIME,
+
+      // autoswarm
+      slots = DEFAULT_AUTO_SLOTS,
+      startAutoSwarmingDelay = START_AUTO_SWARMING_DELAY
     } = opts
 
     if (seed) this.keyPair = DHT.keyPair(seed)
@@ -95,6 +102,8 @@ module.exports = class Replicator extends ReadyResource {
 
     this.autoswarm = autoswarm
     this._gcIdleTime = gcIdleTime
+    this.slots = slots
+    this._startAutoSwarmingDelay = startAutoSwarmingDelay
 
     this._defaultDiscoveryTimeout = defaultDiscoveryTimeout
     this._updatedDiscoveryTimeout = updatedDiscoveryTimeout
@@ -119,9 +128,9 @@ module.exports = class Replicator extends ReadyResource {
     this.dht.on('network-update', this._handleNetworkUpdate.bind(this))
     this.on('update', this._handleUpdate.bind(this))
 
-    this._manual = opts.manual === true
-    this._gcInterval = null
-    if (!this._manual) this._startGC()
+    this._manual = !!manual
+    this._refreshInterval = null
+    if (!this._manual) this._startAutoRefresh()
   }
 
   get peerId() {
@@ -164,8 +173,12 @@ module.exports = class Replicator extends ReadyResource {
     await this.server.listen(this.keyPair)
   }
 
-  *cores() {
+  *cores({ active = false } = {}) {
     for (const session of this.sessions.values()) {
+      if (active && !session.active && !session.isDiscovering) {
+        continue
+      }
+
       for (const [discoveryKey, core] of session.cores) {
         yield { discoveryKey, core, session }
       }
@@ -206,8 +219,7 @@ module.exports = class Replicator extends ReadyResource {
 
     this.suspended = true
     this._inflight.clear()
-    clearInterval(this._gcInterval)
-    this._gcInterval = null
+    this._stopAutoRefresh()
 
     await Promise.allSettled(suspending)
 
@@ -233,19 +245,23 @@ module.exports = class Replicator extends ReadyResource {
 
     await Promise.all(pending)
 
-    if (!this._manual) this._startGC()
+    if (!this._manual) this._startAutoRefresh()
   }
 
-  join(store, topic, { active = false, discover = false } = {}) {
+  join(store, topic, { priority = 0, active = false, discover = false } = {}) {
     const dk = toHex(topic)
     if (this.sessions.has(dk)) throw new Error('session exists')
 
     active ||= !this.autoswarm && !discover // TODO: deprecated
 
-    const session = new Session(this, store, topic, { active, discover })
+    const session = new Session(this, store, topic, { priority, active, discover })
     this.sessions.set(dk, session)
 
-    session.on('close', () => this.sessions.delete(dk))
+    session.on('close', () => {
+      this.sessions.delete(dk)
+      this.emit('remove', session)
+    })
+
     store.on('close', session.close.bind(session))
 
     session
@@ -414,6 +430,8 @@ module.exports = class Replicator extends ReadyResource {
 
   async _gc(now = Date.now()) {
     const evictions = []
+    let connectionsEvicted = 0
+    let sessionsEvicted = 0
 
     // peer-dedupe
 
@@ -432,14 +450,15 @@ module.exports = class Replicator extends ReadyResource {
       const target = (cmp > 0) ^ connection.initiator ? connection : dst.get(key)
 
       evictions.push(this._evictConnection(target, ERR_DUPLICATE))
+      connectionsEvicted++
     }
 
     // Evict idle sessions
 
     for (const session of this.sessions.values()) {
-      if (!session.isIdle) continue
-
+      if (!session._shouldEvict(now)) continue
       evictions.push(session.destroy())
+      sessionsEvicted++
     }
 
     // Evict idle connections
@@ -449,6 +468,7 @@ module.exports = class Replicator extends ReadyResource {
         if (!connection.isIdle(now)) continue
 
         evictions.push(this._evictConnection(connection, ERR_IDLE))
+        connectionsEvicted++
 
         if (this.connectionCount <= this._minPeers) {
           break // target reached
@@ -461,11 +481,9 @@ module.exports = class Replicator extends ReadyResource {
     // TODO: Evict long-term idle (no bytes change)
 
     this.ps.collectGarbage()
-  }
 
-  _startGC() {
-    if (this._gcInterval) return
-    this._gcInterval = setInterval(() => this._gc().catch(safetyCatch), GC_INTERVAL)
+    if (sessionsEvicted) this.emit('evicted', sessionsEvicted)
+    if (connectionsEvicted) this.emit('dropped', connectionsEvicted)
   }
 
   _handleUpdate() {
@@ -475,9 +493,11 @@ module.exports = class Replicator extends ReadyResource {
   async refresh(now = Date.now()) {
     await this.flush() // TODO: blocks unnanounce
 
+    this._autoselect(now) // updates sessions
+
     const done = []
     for (const sess of this.sessions.values()) {
-      done.push(sess.refresh(now))
+      done.push(sess.refresh(now)) // applies state
     }
     await Promise.all(done)
 
@@ -496,6 +516,54 @@ module.exports = class Replicator extends ReadyResource {
     await this.ps.flush()
   }
 
+  _autoselect(now = Date.now()) {
+    const pool = Array.from(this.sessions.values())
+      // exclude discovering & manual pins
+      .filter((session) => !session.isDiscovering && !session.isPinned)
+
+    // weight prio by lexical order
+    const order = new Map()
+    const priorities = pool.map((i) => i.priority).sort()
+    for (let i = 0; i < priorities.length; i++) {
+      order.set(priorities[i], i)
+    }
+
+    function score(session) {
+      let v = 0
+      v += order.get(session.priority) // primary
+
+      // secondary; rotate over time by last start
+      if (session.isAuto) {
+        const uptime = now - session._startTime
+        v -= (uptime / 60_000) * 0.5
+      }
+
+      return v
+    }
+
+    function heuristicSort(a, b) {
+      return score(b) - score(a)
+    }
+
+    // rotate
+    pool.sort(heuristicSort)
+
+    // autostop
+    for (let i = this.slots; i < pool.length; i++) {
+      pool[i]._autoStop(now)
+    }
+
+    let active = 0
+    for (const session of pool) if (session.active) active++
+    if (active >= this.slots) return // no-op
+
+    // autostart
+    const limit = Math.min(this.slots - active, pool.length)
+    for (let i = 0; i < limit; i++) {
+      pool[i]._autoStart(now)
+    }
+  }
+
   async _handleNetworkUpdate() {
     if (this.dht.online === false) return
     await this._handleNetworkChange()
@@ -511,11 +579,25 @@ module.exports = class Replicator extends ReadyResource {
     await this.refresh()
   }
 
+  _stopAutoRefresh() {
+    clearInterval(this._refreshInterval)
+    this._refreshInterval = null
+  }
+
+  _startAutoRefresh() {
+    if (this._refreshInterval) return
+    this._refreshInterval = setInterval(
+      () => this.refresh().catch(safetyCatch),
+      AUTO_REFRESH_INTERVAL
+    )
+    this._refreshInterval.unref()
+  }
+
   async _close() {
     this.destroyed = true
 
-    clearInterval(this._gcInterval)
-    this._gcInterval = null
+    this._stopAutoRefresh()
+
     const tasks = []
     for (const session of this.sessions.values()) {
       tasks.push(session.destroy())
@@ -572,7 +654,7 @@ class Connection {
     if (mux.isIdle()) return 0
 
     let opened = 0
-    for (const { core } of this.replicator.cores()) {
+    for (const { core } of this.replicator.cores({ active: true })) {
       if (core.closing) continue
       if (!mux.opened({ protocol: 'hypercore/alpha', id: core.discoveryKey })) continue
       opened++
