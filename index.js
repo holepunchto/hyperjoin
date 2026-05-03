@@ -3,7 +3,7 @@ const DHT = require('hyperdht')
 const safetyCatch = require('safety-catch')
 const Hypercore = require('hypercore')
 const b4a = require('b4a')
-const PeerStation = require('./lib/station')
+const Dialer = require('./lib/dialer')
 const Session = require('./lib/session')
 const { getStreamError } = require('streamx')
 
@@ -68,7 +68,7 @@ module.exports = class Replicator extends ReadyResource {
         port: opts.port
       })
 
-    this.ps = new PeerStation(this, {
+    this.dialer = new Dialer(this, {
       firewall,
       backoffs: opts.backoffs,
       jitter: opts.jitter,
@@ -147,10 +147,10 @@ module.exports = class Replicator extends ReadyResource {
 
   // used by backports testsuite
   get _firewall() {
-    return this.ps._firewall
+    return this.dialer._firewall
   }
   set _firewall(callback) {
-    this.ps._firewall = callback
+    this.dialer._firewall = callback
   }
 
   get connections() {
@@ -158,7 +158,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   get peers() {
-    return this.ps.peers
+    return this.dialer.peers
   }
 
   *_connections() {
@@ -215,7 +215,7 @@ module.exports = class Replicator extends ReadyResource {
       pending.push(this._evictConnection(connection, ERR_SUSPEND))
     }
 
-    this.ps.suspend({ log })
+    this.dialer.suspend({ log })
 
     this.suspended = true
     this._inflight.clear()
@@ -233,7 +233,7 @@ module.exports = class Replicator extends ReadyResource {
 
     await this.dht.resume({ log })
     await this.server.resume({ log })
-    this.ps.resume({ log })
+    this.dialer.resume({ log })
 
     this.suspended = false
 
@@ -362,7 +362,7 @@ module.exports = class Replicator extends ReadyResource {
   _handleFirewall(remotePublicKey, payload) {
     if (b4a.equals(remotePublicKey, this.keyPair.publicKey)) return true
 
-    return this.ps.handleFirewall(remotePublicKey, payload)
+    return this.dialer.handleFirewall(remotePublicKey, payload)
   }
 
   async _connect(peer, queued, topic) {
@@ -375,7 +375,7 @@ module.exports = class Replicator extends ReadyResource {
     if (this.inbound.has(hex)) return
     if (this._inflight.has(hex)) return
 
-    const peerInfo = this.ps.lookup(peer.publicKey)
+    const peerInfo = this.dialer.lookup(peer.publicKey)
 
     // TODO: Support async firewalling at some point.
     if (this._handleFirewall(peerInfo.publicKey, null)) {
@@ -419,7 +419,7 @@ module.exports = class Replicator extends ReadyResource {
     this._inflight.delete(hex)
 
     if (!opened) {
-      this.ps.connectFailed(peer.publicKey, error)
+      this.dialer.connectFailed(peer.publicKey, error)
       this.emit('update')
       return
     }
@@ -480,7 +480,7 @@ module.exports = class Replicator extends ReadyResource {
 
     // TODO: Evict long-term idle (no bytes change)
 
-    this.ps.collectGarbage()
+    this.dialer.collectGarbage()
 
     if (sessionsEvicted) this.emit('evicted', sessionsEvicted)
     if (connectionsEvicted) this.emit('dropped', connectionsEvicted)
@@ -513,7 +513,7 @@ module.exports = class Replicator extends ReadyResource {
     await Promise.all(pending)
 
     // pending connects
-    await this.ps.flush()
+    await this.dialer.flush()
   }
 
   _autoselect(now = Date.now()) {
@@ -612,7 +612,7 @@ module.exports = class Replicator extends ReadyResource {
     this.outbound.clear()
 
     this._inflight.clear()
-    this.ps.destroy()
+    this.dialer.destroy()
 
     await Promise.all(tasks)
     await this.server.close()
@@ -639,7 +639,7 @@ class Connection {
   }
 
   get info() {
-    return this.replicator.ps.lookup(this.peerId)
+    return this.replicator.dialer.lookup(this.peerId)
   }
 
   isIdle(now = Date.now()) {
@@ -677,7 +677,7 @@ class Connection {
       rep.stats.connects.server.closed++
     }
 
-    this.replicator.ps.disconnected(this.peerId, err)
+    this.replicator.dialer.disconnected(this.peerId, err)
 
     rep.emit('disconnected', this)
     rep.emit('update')

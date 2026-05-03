@@ -687,7 +687,7 @@ test('closing all discovery sessions clears session-owned peer state', async (t)
   await Promise.all([client1.ready(), client2.ready(), remote1.get(0), remote2.get(0)])
 
   t.is(p1.replicator.sessions.size, 2)
-  t.is(p1.replicator.ps.peers.size, 1)
+  t.is(p1.replicator.dialer.peers.size, 1)
 
   const closed1 = onceEvent(session1, 'close')
   const closed2 = onceEvent(session2, 'close')
@@ -698,7 +698,7 @@ test('closing all discovery sessions clears session-owned peer state', async (t)
   await disconnected
 
   t.is(p1.replicator.sessions.size, 0)
-  t.is(p1.replicator.ps.peers.size, 0)
+  t.is(p1.replicator.dialer.peers.size, 0)
 
   await p2.destroy()
   await p1.destroy()
@@ -736,12 +736,12 @@ test('peer-discovery object deleted when corresponding connection closes (server
   await connected
   await otherConnected
 
-  t.is(p1.replicator.ps.peers.size, 1)
+  t.is(p1.replicator.dialer.peers.size, 1)
   await p2.destroy()
 
   await connClosed
 
-  t.is(p1.replicator.ps.peers.size, 0, 'No peerInfo memory leak')
+  t.is(p1.replicator.dialer.peers.size, 0, 'No peerInfo memory leak')
 
   await p1.destroy()
   await testnet.destroy()
@@ -794,12 +794,12 @@ test('topic and peer get unslabbed in PeerInfo', async (t) => {
 
   p2.replicator.on('connected', (connection) => {
     t.is(
-      [...p2.replicator.ps.peers.values()][0].publicKey.buffer.byteLength,
+      [...p2.replicator.dialer.peers.values()][0].publicKey.buffer.byteLength,
       32,
       'unslabbed publicKey in peerInfo'
     )
     t.is(
-      [...p2.replicator.ps.peers.values()][0].topics[0].buffer.byteLength,
+      [...p2.replicator.dialer.peers.values()][0].topics[0].buffer.byteLength,
       32,
       'unslabbed topic in peerInfo'
     )
@@ -810,7 +810,7 @@ test('topic and peer get unslabbed in PeerInfo', async (t) => {
 
   p1.replicator.on('connected', (connection) => {
     t.is(
-      [...p1.replicator.ps.peers.values()][0].publicKey.buffer.byteLength,
+      [...p1.replicator.dialer.peers.values()][0].publicKey.buffer.byteLength,
       32,
       'unslabbed publicKey in peerInfo'
     )
