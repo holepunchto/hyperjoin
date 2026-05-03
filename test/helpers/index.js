@@ -86,6 +86,7 @@ class TestSwarm extends ReadyResource {
     await this.testnet.destroy()
   }
 
+  // lunte-disable-next-line require-await
   async destroy() {
     return this.close()
   }

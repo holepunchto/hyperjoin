@@ -16,8 +16,8 @@ const DEFAULT_SWARM_GC_IDLE_TIME = 30 * 1000
 
 const DEFAULT_DISCOVERY_TIMEOUT = 60 * 1000
 const UPDATED_DISCOVERY_TIMEOUT = 10 * 1000
-const START_DISCOVERY_SWARMING_DELAY = 5 * 1000 // 5s
-const START_AUTO_SWARMING_DELAY = 5 * 1000 // 5s
+const DISCOVERY_STARTUP_DELAY = 5 * 1000 // 5s
+const AUTO_STARTUP_DELAY = 5 * 1000 // 5s
 
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
@@ -45,14 +45,14 @@ module.exports = class Replicator extends ReadyResource {
       // Discovery
       defaultDiscoveryTimeout = DEFAULT_DISCOVERY_TIMEOUT,
       updatedDiscoveryTimeout = UPDATED_DISCOVERY_TIMEOUT,
-      startDiscoverySwarmingDelay = START_DISCOVERY_SWARMING_DELAY,
+      discoveryStartupDelay = DISCOVERY_STARTUP_DELAY,
 
       // Idle
       gcIdleTime = DEFAULT_SWARM_GC_IDLE_TIME,
 
       // autoswarm
       slots = DEFAULT_AUTO_SLOTS,
-      startAutoSwarmingDelay = START_AUTO_SWARMING_DELAY
+      autoStartupDelay = AUTO_STARTUP_DELAY
     } = opts
 
     if (seed) this.keyPair = DHT.keyPair(seed)
@@ -103,11 +103,11 @@ module.exports = class Replicator extends ReadyResource {
     this.autoswarm = autoswarm
     this._gcIdleTime = gcIdleTime
     this.slots = slots
-    this._startAutoSwarmingDelay = startAutoSwarmingDelay
+    this._autoStartupDelay = autoStartupDelay
 
     this._defaultDiscoveryTimeout = defaultDiscoveryTimeout
     this._updatedDiscoveryTimeout = updatedDiscoveryTimeout
-    this._startDiscoverySwarmingDelay = startDiscoverySwarmingDelay
+    this._discoveryStartupDelay = discoveryStartupDelay
 
     this.stats = {
       updates: 0,
@@ -215,7 +215,7 @@ module.exports = class Replicator extends ReadyResource {
       pending.push(this._evictConnection(connection, ERR_SUSPEND))
     }
 
-    await this.ps.suspend({ log })
+    this.ps.suspend({ log })
 
     this.suspended = true
     this._inflight.clear()
@@ -233,7 +233,7 @@ module.exports = class Replicator extends ReadyResource {
 
     await this.dht.resume({ log })
     await this.server.resume({ log })
-    await this.ps.resume({ log })
+    this.ps.resume({ log })
 
     this.suspended = false
 
