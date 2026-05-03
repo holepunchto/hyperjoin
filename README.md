@@ -132,10 +132,7 @@ forces the session to be active until manual call to `unpin()`.
 
 ### `rs.discover()`
 
-Launch a dht lookup for the topic. (announce: false / client only)
-
-The function returns a promise, that resolves when dht-query completes and returns
-maximum known bump value.
+Launch a dht lookup for the topic to discover peers and update version `seen`. (announce: false / client only)
 
 ### `rs.bump(version = -1)`
 

@@ -112,29 +112,35 @@ test('autoswarm: can enable discovery swarming', async (t) => {
 
   const p1 = await swarm.spawnPeer({
     gcIdleTime,
-    updatedDiscoveryTimeout
+    updatedDiscoveryTimeout,
+    discoveryStartupDelay: 0
   })
   const p2 = await swarm.spawnPeer()
 
   const topic = b4a.alloc(32, 0x1)
   const session1 = await p1.join(topic)
   const session2 = await p2.join(topic)
-
   await swarm.propagateWriters()
+
+  session2.bump(99)
+  session2.pin()
+  await p2.replicator.refresh()
+  await p2.replicator.refresh()
 
   t.is(p1.replicator.connectionCount, 0)
   t.is(p2.replicator.connectionCount, 0)
 
-  session1.discover().then((version) => t.is(version, -1, 'stubbed version'))
+  const evSeen = new Promise((resolve) => session1.once('bump', resolve))
+  session1.discover()
 
   t.is(session1.isDiscovering, true)
   await p1.replicator.refresh()
 
+  t.is(session1.seen, 99, 'prop seen')
+  t.is(await evSeen, 99, 'bump event')
+
   t.is(session1.announce, false)
   t.is(session1._discoveryTimeout, defaultTimeout)
-
-  session2.pin()
-  await p2.replicator.refresh()
 
   // discovery window is shortened on successful replication
 
