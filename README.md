@@ -49,6 +49,8 @@ General
 - `gcIdleTime`: Evict idle sessions exceeding time
 - `defaultDiscoveryTimeout`: initial discovery lifetime
 - `updatedDiscoveryTimeout`: shortened discovery lifetime after `session.bump()`
+- `manual`: don't launch internal `refresh()` interval.
+- `gcDisabled`: prevent garbage collection on `refresh()`
 
 Transport
 
