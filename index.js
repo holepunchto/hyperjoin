@@ -41,6 +41,7 @@ module.exports = class Replicator extends ReadyResource {
       suspended,
       autoswarm = true,
       manual = true,
+      gcDisabled = false,
 
       // Discovery
       defaultDiscoveryTimeout = DEFAULT_DISCOVERY_TIMEOUT,
@@ -128,6 +129,7 @@ module.exports = class Replicator extends ReadyResource {
     this.dht.on('network-update', this._handleNetworkUpdate.bind(this))
     this.on('update', this._handleUpdate.bind(this))
 
+    this._gcDisabled = gcDisabled
     this._manual = !!manual
     this._refreshInterval = null
     if (!this._manual) this._startAutoRefresh()
@@ -429,6 +431,8 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _gc(now = Date.now()) {
+    if (this._gcDisabled) return
+
     const evictions = []
     let connectionsEvicted = 0
     let sessionsEvicted = 0
