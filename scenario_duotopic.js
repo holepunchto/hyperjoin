@@ -5,7 +5,6 @@ const createTestnet = require('hyperdht/testnet')
 const TMP = require('test-tmp')
 const Corestore = require('corestore')
 const Autobase = require('autobase')
-// const attachMembershipRPC = require('./rpc')
 
 const GLOBAL_TOPIC = Buffer.alloc(32).fill(0xa)
 
@@ -31,6 +30,12 @@ async function main() {
     }
   }
   await Promise.all(peers.map(p => p.ready()))
+
+  // yolo propagate
+  const allWriters = peers.slice(1).map(p => p.counter.writerKey)
+  for (const key of allWriters) {
+    await peers[0].counter.addWriter(key)
+  }
 
   // run scenario
   await Promise.all(peers.map(p => p.run()))
@@ -66,6 +71,11 @@ class Peer extends ReadyResource {
     })
   }
 
+  log(event, payload = {}) {
+    const writer = toHex(this.counter.writerKey).slice(0, 4)
+    console.log(JSON.stringify({ event, id: this.id, group: this.group, payload, now: Date.now(), writer }))
+  }
+
   async _open() {
     // initialize namespace & writer
     await this.counter.ready()
@@ -75,21 +85,25 @@ class Peer extends ReadyResource {
 
     if (this.group !== null) {
       const topic = Buffer.alloc(32).fill(this.group)
-      this.replicator.join(this.store, topic)
+      const groupSession = this.replicator.join(this.store, topic)
+      groupSession.pin()
     }
 
-    console.log(this.id, 'opened')
+    this.log('opened')
   }
 
   async run() {
+    await this.replicator.refresh()
     await new Promise(resolve => setTimeout(resolve, 3000))
-    console.log(this.id, 'run complete')
+    await this.replicator.refresh()
+    this.log('complete')
   }
 
   async _close() {
     await this.root.close()
     await this.replicator.destroy()
     await this.dht.destroy()
+    this.log('closed')
   }
 
   destroy() {
@@ -107,12 +121,13 @@ class CounterCore {
     })
 
     function open(store) {
-      return store.get('counter-view', { valueEncoding: 'json' })
+      return store.get('value-view', { valueEncoding: 'json' })
     }
 
     async function apply(nodes, view, host) {
       for (const node of nodes) {
         const { type } = node.value
+
         switch (type) {
           case 'value':
             await view.append(node.value.value)
