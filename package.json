@@ -24,6 +24,7 @@
     "lib"
   ],
   "devDependencies": {
+    "autobase": "^7.27.3",
     "brittle": "^3.19.1",
     "corestore": "^7.9.2",
     "hyperdht": "^6.31.0",
