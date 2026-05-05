@@ -130,6 +130,9 @@ test('autoswarm: can enable discovery swarming', async (t) => {
   t.is(p1.replicator.connectionCount, 0)
   t.is(p2.replicator.connectionCount, 0)
 
+  let nEvDiscovered = 0
+  session1.on('discovered', () => nEvDiscovered++)
+
   const evSeen = new Promise((resolve) => session1.once('bump', resolve))
   session1.discover()
 
@@ -157,6 +160,7 @@ test('autoswarm: can enable discovery swarming', async (t) => {
   await p1.replicator.refresh(now)
 
   t.is(session1.isDiscovering, false)
+  t.is(nEvDiscovered, 1)
 
   await swarm.destroy()
 })

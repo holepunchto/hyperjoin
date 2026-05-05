@@ -127,6 +127,34 @@ Close the replicator and all joined sessions.
 
 ### ReplicatorSession
 
+#### `rs.on('state', (next, previous) => {})`
+
+Fired when a session changes state.
+
+States:
+
+- `inactive`
+- `pinned`
+- `autostarted`
+- `discovering`
+- `destroyed`
+
+#### `rs.on('activate', (session) => {})`
+
+Fired when the session becomes active.
+
+#### `rs.on('deactivate', (session) => {})`
+
+Fired when the session becomes inactive a.k.a idle.
+
+#### `rs.on('bump', (version) => {})`
+
+Fired when a remote discovery bump is observed.
+
+#### `rs.on('discovered', () => {})`
+
+Fired when the session exits discovery mode.
+
 ### `rs.pin()` / `rs.unpin()`
 
 Pin topic to announce itself on dht - bypasses `priority`, auto-rotation and
