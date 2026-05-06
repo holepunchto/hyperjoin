@@ -69,11 +69,20 @@ class Peer extends ReadyResource {
       dht: this.dht,
       manual: false
     })
+
+    this.replicator.on('connected', () => this.log('connected'))
+    this.replicator.on('disconnected', () => this.log('disconnected'))
+    this.replicator.on('activate', (session) => this.log('activate', { state: session.state, topic: toHex(session.topic).slice(0, 4) }))
+    this.replicator.on('deactivate', (session) => this.log('deactivate', { state: session.state, topic: toHex(session.topic).slice(0, 4) }))
   }
 
   log(event, payload = {}) {
-    const writer = toHex(this.counter.writerKey).slice(0, 4)
-    console.log(JSON.stringify({ event, id: this.id, group: this.group, payload, now: Date.now(), writer }))
+    if (true) { // simple
+      console.log(event, this.id, this.group)
+    } else {
+      const writer = toHex(this.counter.writerKey).slice(0, 4)
+      console.log(JSON.stringify({ event, id: this.id, group: this.group, ...payload, now: Date.now(), writer }))
+    }
   }
 
   async _open() {
