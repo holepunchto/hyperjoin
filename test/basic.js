@@ -108,5 +108,21 @@ test('GC connections with no active mux sessions', async (t) => {
   await testnet.destroy()
 })
 
+test('root close closes replicator', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+  const store = new Corestore(await t.tmp())
+  const replicator = new Replicator(store, { bootstrap, manual: true })
+  await replicator.ready()
+
+  const closed = onceEvent(replicator, 'close')
+  await store.close()
+  await closed
+
+  t.is(replicator.destroyed, true)
+
+  await testnet.destroy()
+})
+
 test.skip('Sessions are garbage collected', () => {})
 test.skip('sessions are garbage collected & reactivated', () => {})

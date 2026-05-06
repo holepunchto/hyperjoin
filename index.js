@@ -125,9 +125,11 @@ module.exports = class Replicator extends ReadyResource {
         }
       }
     }
+
     this.dht.on('network-change', this._handleNetworkChange.bind(this))
     this.dht.on('network-update', this._handleNetworkUpdate.bind(this))
     this.on('update', this._handleUpdate.bind(this))
+    this.root.once('close', this._onrootclose.bind(this))
 
     this._gcDisabled = gcDisabled
     this._manual = !!manual
@@ -275,8 +277,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   _onincoming(conn) {
-    if (this.destroyed || this.suspended) {
-      // OLD-TODO: Investigate why a final server connection can be received after close
+    if (this._isTearingdown) {
       conn.on('error', noop)
       return conn.destroy(ERR_DESTROYED)
     }
@@ -367,8 +368,17 @@ module.exports = class Replicator extends ReadyResource {
     return this.dialer.handleFirewall(remotePublicKey, payload)
   }
 
+  get _isTearingdown() {
+    return (
+      this.destroyed || // replicator begin-teardown
+      this.suspended || // replicator
+      this.closed || // ready-resource fully torn down
+      this.closing
+    ) // ready-resource synonymous w/ destroyed
+  }
+
   async _connect(peer, queued, topic) {
-    if (this.suspended) return
+    if (this._isTearingdown) return
 
     const hex = toHex(peer.publicKey)
     if (b4a.equals(peer.publicKey, this.peerId)) return
@@ -419,6 +429,12 @@ module.exports = class Replicator extends ReadyResource {
     })
 
     this._inflight.delete(hex)
+
+    // opened after teardown
+    if (this._isTearingdown) {
+      stream.destroy(new Error(this.suspended ? ERR_SUSPEND : ERR_DESTROYED))
+      return
+    }
 
     if (!opened) {
       this.dialer.connectFailed(peer.publicKey, error)
@@ -492,6 +508,11 @@ module.exports = class Replicator extends ReadyResource {
 
   _handleUpdate() {
     this.stats.updates++
+  }
+
+  _onrootclose() {
+    if (this.destroyed || this.closing) return
+    this.destroy().catch((err) => this.emit('error', err))
   }
 
   async refresh(now = Date.now()) {
@@ -584,6 +605,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   _stopAutoRefresh() {
+    if (!this._refreshInterval) return
     clearInterval(this._refreshInterval)
     this._refreshInterval = null
   }
@@ -600,6 +622,7 @@ module.exports = class Replicator extends ReadyResource {
   async _close() {
     this.destroyed = true
 
+    this.root.removeListener('close', this._onrootclose)
     this._stopAutoRefresh()
 
     const tasks = []
