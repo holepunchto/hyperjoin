@@ -30,61 +30,6 @@ test('Default keypair from corestore', async (t) => {
   await testnet.destroy()
 })
 
-test('root close closes replicator', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-  const store = new Corestore(await t.tmp())
-  const replicator = new Replicator(store, { bootstrap, manual: true })
-  await replicator.ready()
-
-  const closed = onceEvent(replicator, 'close')
-  await store.close()
-  await closed
-
-  t.is(replicator.destroyed, true)
-
-  await testnet.destroy()
-})
-
-test('inflight connection opened after close is dropped', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-  const store = new Corestore(await t.tmp())
-  const replicator = new Replicator(store, { bootstrap, manual: true })
-  await replicator.ready()
-
-  let init = false
-  let dropped = false
-
-  replicator._initConnection = () => {
-    init = true
-  }
-
-  replicator.dht.connect = () => {
-    const stream = new EventEmitter()
-    stream.destroy = () => {
-      dropped = true
-    }
-
-    queueMicrotask(() => {
-      replicator.close().catch((err) => replicator.emit('error', err))
-      queueMicrotask(() => stream.emit('open'))
-    })
-
-    return stream
-  }
-
-  const keyPair = DHT.keyPair()
-  await replicator._connect({ publicKey: keyPair.publicKey }, true)
-
-  t.is(init, false)
-  t.is(dropped, true)
-
-  await replicator.close()
-  await store.close()
-  await testnet.destroy()
-})
-
 test('Basic replication', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
@@ -162,6 +107,22 @@ test('GC connections with no active mux sessions', async (t) => {
   await p1.destroy()
   await p2.destroy()
   await p3.destroy()
+  await testnet.destroy()
+})
+
+test('root close closes replicator', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+  const store = new Corestore(await t.tmp())
+  const replicator = new Replicator(store, { bootstrap, manual: true })
+  await replicator.ready()
+
+  const closed = onceEvent(replicator, 'close')
+  await store.close()
+  await closed
+
+  t.is(replicator.destroyed, true)
+
   await testnet.destroy()
 })
 

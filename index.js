@@ -93,8 +93,6 @@ module.exports = class Replicator extends ReadyResource {
     this.destroyed = false
     this.suspended = suspended
 
-    this._onrootclose = this._onrootclose.bind(this)
-
     this.sessions = new Map() // hex(discoveryKey) -> Session
     this.inbound = new Map() // hex(peerId) -> Connection
     this.outbound = new Map() // hex(peerId) -> Connection
@@ -127,10 +125,11 @@ module.exports = class Replicator extends ReadyResource {
         }
       }
     }
+
     this.dht.on('network-change', this._handleNetworkChange.bind(this))
     this.dht.on('network-update', this._handleNetworkUpdate.bind(this))
     this.on('update', this._handleUpdate.bind(this))
-    this.root.once('close', this._onrootclose)
+    this.root.once('close', this._onrootclose.bind(this))
 
     this._gcDisabled = gcDisabled
     this._manual = !!manual
@@ -278,8 +277,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   _onincoming(conn) {
-    if (this.destroyed || this.suspended) {
-      // OLD-TODO: Investigate why a final server connection can be received after close
+    if (this._isTearingdown) {
       conn.on('error', noop)
       return conn.destroy(ERR_DESTROYED)
     }
@@ -370,8 +368,17 @@ module.exports = class Replicator extends ReadyResource {
     return this.dialer.handleFirewall(remotePublicKey, payload)
   }
 
+  get _isTearingdown() {
+    return (
+      this.destroyed || // replicator begin-teardown
+      this.suspended || // replicator
+      this.closed || // ready-resource fully torn down
+      this.closing
+    ) // ready-resource synonymous w/ destroyed
+  }
+
   async _connect(peer, queued, topic) {
-    if (this.destroyed || this.closing || this.suspended) return
+    if (this._isTearingdown) return
 
     const hex = toHex(peer.publicKey)
     if (b4a.equals(peer.publicKey, this.peerId)) return
@@ -423,7 +430,8 @@ module.exports = class Replicator extends ReadyResource {
 
     this._inflight.delete(hex)
 
-    if (this.destroyed || this.closing || this.suspended) {
+    // opened after teardown
+    if (this._isTearingdown) {
       stream.destroy(new Error(this.suspended ? ERR_SUSPEND : ERR_DESTROYED))
       return
     }
@@ -597,6 +605,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   _stopAutoRefresh() {
+    if (!this._refreshInterval) return
     clearInterval(this._refreshInterval)
     this._refreshInterval = null
   }
