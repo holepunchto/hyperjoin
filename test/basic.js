@@ -1,9 +1,7 @@
 const { test } = require('brittle')
 const Corestore = require('corestore')
 const b4a = require('b4a')
-const DHT = require('hyperdht')
 const createTestnet = require('hyperdht/testnet')
-const { EventEmitter } = require('events')
 const Replicator = require('..')
 const {
   joinRemote,
