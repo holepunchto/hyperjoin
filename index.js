@@ -177,18 +177,6 @@ module.exports = class Replicator extends ReadyResource {
     await this.server.listen(this.keyPair)
   }
 
-  *cores({ active = false } = {}) {
-    for (const session of this.sessions.values()) {
-      if (active && !session.active && !session.isDiscovering) {
-        continue
-      }
-
-      for (const [discoveryKey, core] of session.cores) {
-        yield { discoveryKey, core, session }
-      }
-    }
-  }
-
   getConnection(peerId) {
     if (typeof peerId !== 'string') peerId = toHex(peerId)
 
@@ -678,13 +666,20 @@ class Connection {
   _protomuxSessions() {
     const mux = this.protomux
 
-    if (mux.isIdle()) return 0
-
     let opened = 0
-    for (const { core } of this.replicator.cores({ active: true })) {
-      if (core.closing) continue
-      if (!mux.opened({ protocol: 'hypercore/alpha', id: core.discoveryKey })) continue
-      opened++
+
+    for (const ch of mux) {
+      if (ch.protocol !== 'hypercore/alpha') continue
+      const dkeystr = toHex(ch.id)
+
+      for (const session of this.replicator.sessions.values()) {
+        if (!session.active) continue
+
+        if (session.cores.has(dkeystr)) {
+          opened++
+          break
+        }
+      }
     }
 
     return opened
