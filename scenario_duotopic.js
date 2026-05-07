@@ -5,6 +5,10 @@ const createTestnet = require('hyperdht/testnet')
 const TMP = require('test-tmp')
 const Corestore = require('corestore')
 const Autobase = require('autobase')
+const ScopeLock = require('scope-lock')
+
+const N_GROUPS = 5
+const N_PEERS = 3
 
 const GLOBAL_TOPIC = Buffer.alloc(32).fill(0xa)
 
@@ -17,8 +21,8 @@ async function main() {
 
   let baseKey = null
 
-  for (let group = 0; group < 5; group++) {
-    for (let i = 0; i < 3 /* peers per group */; i++) {
+  for (let group = 0; group < N_GROUPS; group++) {
+    for (let i = 0; i < N_PEERS /* per group */; i++) {
       const peer = new Peer(path, bootstrap, baseKey, group)
 
       if (!baseKey) {
@@ -29,19 +33,19 @@ async function main() {
       peers.push(peer)
     }
   }
-  await Promise.all(peers.map(p => p.ready()))
+  await Promise.all(peers.map((p) => p.ready()))
 
   // yolo propagate
-  const allWriters = peers.slice(1).map(p => p.counter.writerKey)
+  const allWriters = peers.slice(1).map((p) => p.counter.writerKey)
   for (const key of allWriters) {
     await peers[0].counter.addWriter(key)
   }
 
   // run scenario
-  await Promise.all(peers.map(p => p.run()))
+  await Promise.all(peers.map((p) => p.run()))
 
   // teardown
-  await Promise.all(peers.map(p => p.destroy()))
+  await Promise.all(peers.map((p) => p.destroy()))
   await testnet.destroy()
   await rmdir()
   console.log('teardown complete')
@@ -54,6 +58,7 @@ let _peerctr = 0
 class Peer extends ReadyResource {
   constructor(prefix, bootstrap, remoteKey = null, group = null) {
     super()
+    this._detailed = true
     this.id = _peerctr++
     this.group = group
 
@@ -61,27 +66,68 @@ class Peer extends ReadyResource {
     this.root = new Corestore(path)
 
     this.store = this.root.session()
-    this.counter = new CounterCore(this.store, remoteKey)
+    this.counter = new CounterCore(this.store, remoteKey, (value) => {
+      this.log('update', { value })
+    })
 
     this.dht = new DHT({ bootstrap })
 
     this.replicator = new Replicator(this.root, {
       dht: this.dht,
-      manual: false
+      interval: 1000,
+      slots: 1,
+      minPeers: 2,
+      maxPeers: 4,
+      maxClientConnections: 0,
+      maxServerConnections: 0,
+      defaultDiscoveryTimeout: 15 * 1000,
+      updatedDiscoveryTimeout: 3 * 1000,
+      //  gcIdleTime: 10 * 1000
+      discoveryStartupDelay: 0,
+      autoStartupDelay: 1000
     })
 
-    this.replicator.on('connected', () => this.log('connected'))
-    this.replicator.on('disconnected', () => this.log('disconnected'))
-    this.replicator.on('activate', (session) => this.log('activate', { state: session.state, topic: toHex(session.topic).slice(0, 4) }))
-    this.replicator.on('deactivate', (session) => this.log('deactivate', { state: session.state, topic: toHex(session.topic).slice(0, 4) }))
+    this.replicator.on('connected', (connection) =>
+      this.log('connected', { remotePeerId: toHex(connection.peerId) })
+    )
+    this.replicator.on('disconnected', (connection) =>
+      this.log('disconnected', { remotePeerId: toHex(connection.peerId) })
+    )
+    this.replicator.on('activate', (session) => this.log('activate', this._sessionPayload(session)))
+    this.replicator.on('deactivate', (session) =>
+      this.log('deactivate', this._sessionPayload(session))
+    )
   }
 
   log(event, payload = {}) {
-    if (true) { // simple
-      console.log(event, this.id, this.group)
+    if (!this._detailed) {
+      // readable
+      console.log('id', this.id, 'group', this.group, 'event', event, 'ctrstate', this.counter.last)
     } else {
+      // renderable
       const writer = toHex(this.counter.writerKey).slice(0, 4)
-      console.log(JSON.stringify({ event, id: this.id, group: this.group, ...payload, now: Date.now(), writer }))
+      const peerId = this.replicator.peerId ? toHex(this.replicator.peerId) : null
+      console.log(
+        JSON.stringify({
+          event,
+          id: this.id,
+          group: this.group,
+          peerId,
+          ...payload,
+          now: Date.now(),
+          writer
+        })
+      )
+    }
+  }
+
+  // TODO: unglop, use session.on('state') instead of replicator.on('activate|deactivate')
+  _sessionPayload(session, payload = {}) {
+    return {
+      topic: toHex(session.topic).slice(0, 4),
+      state: session.state,
+      seen: session.seen,
+      ...payload
     }
   }
 
@@ -89,23 +135,60 @@ class Peer extends ReadyResource {
     // initialize namespace & writer
     await this.counter.ready()
 
-    // dual topic
-    this.replicator.join(this.store, GLOBAL_TOPIC)
+    /** dual topic
+     * Each peer pin own group.
+     * When new update detect on grouptopic
+     * Then seed global topic.
+     */
 
+    // pinned group (ex. own devices)
     if (this.group !== null) {
       const topic = Buffer.alloc(32).fill(this.group)
-      const groupSession = this.replicator.join(this.store, topic)
-      groupSession.pin()
+      this._groupSess = this.replicator.join(this.store, topic)
+      this._groupSess.pin()
+      this._groupSess.on('bump', (value) => {
+        this.log('group-bump', this._sessionPayload(this._groupSess, { value }))
+
+        // TODO:
+        // if (this._globSess.seen < value) this._seedGlobal()
+      })
     }
+
+    // automatic global
+    this._globSess = this.replicator.join(this.store, GLOBAL_TOPIC)
+    this._globSess.on('bump', (value) =>
+      this.log('global-bump', this._sessionPayload(this._globSess, { value }))
+    )
+
+    // this._globSess.discover()
 
     this.log('opened')
   }
 
   async run() {
-    await this.replicator.refresh()
-    await new Promise(resolve => setTimeout(resolve, 3000))
-    await this.replicator.refresh()
+    while ((await this.counter.value()) < 5) {
+      const chosen = !(this.id % 5)
+
+      if (chosen && this.counter.writable) {
+        await this.counter.bump()
+        this.log('written')
+      }
+
+      await this.replicator.refresh()
+
+      const delay = 5000 + Math.random() * 15000
+      await new Promise((resolve) => setTimeout(resolve, delay))
+    }
+
     this.log('complete')
+  }
+
+  _onremoteupdate(value) {
+    this.log('update', { value })
+
+    for (const session of this.replicator.sessions.values()) {
+      session.bump(value)
+    }
   }
 
   async _close() {
@@ -121,7 +204,9 @@ class Peer extends ReadyResource {
 }
 
 class CounterCore {
-  constructor(store, key = null) {
+  constructor(store, key = null, onvalue) {
+    this._onvalue = onvalue
+    this.last = -1
     this.store = store
     this.base = new Autobase(store, key, {
       open,
@@ -142,11 +227,14 @@ class CounterCore {
             await view.append(node.value.value)
             break
           case 'writer':
-            await host.addWriter(fromHex(node.value.key),  { isIndexer: false })
+            await host.addWriter(fromHex(node.value.key), { isIndexer: false })
             break
         }
       }
     }
+
+    this._lock = new ScopeLock({ debounce: true })
+    this.base.on('update', this._onupdate.bind(this))
   }
 
   async bump(value = null) {
@@ -156,6 +244,7 @@ class CounterCore {
     }
     await this.base.append({ type: 'value', value })
     await this.base.update()
+    this.last = value
     return value
   }
 
@@ -168,7 +257,6 @@ class CounterCore {
     await this.base.update()
   }
 
-  // TODO: autogerenated glop
   async value() {
     if (!this.base.view || this.base.view.length === 0) {
       return -1
@@ -201,6 +289,16 @@ class CounterCore {
     })
   }
 
+  async _onupdate() {
+    const locked = await this._lock.lock()
+    if (!locked) return
+
+    this.last = await this.value()
+    this._lock.unlock()
+
+    this._onvalue(this.last)
+  }
+
   get key() {
     return this.base.key
   }
@@ -231,7 +329,7 @@ function toHex(b) {
   return b.toString('hex')
 }
 
-function fromHex(str){
+function fromHex(str) {
   if (typeof str !== 'string') throw new Error('string')
   return Buffer.from(str, 'hex')
 }

@@ -41,6 +41,7 @@ module.exports = class Replicator extends ReadyResource {
       suspended,
       autoswarm = true,
       manual = true,
+      interval = AUTO_REFRESH_INTERVAL,
       gcDisabled = false,
 
       // Discovery
@@ -102,6 +103,7 @@ module.exports = class Replicator extends ReadyResource {
     this._maxPeers = maxPeers
 
     this.autoswarm = autoswarm
+    this._autoRefreshInterval = interval
     this._gcIdleTime = gcIdleTime
     this.slots = slots
     this._autoStartupDelay = autoStartupDelay
@@ -603,7 +605,7 @@ module.exports = class Replicator extends ReadyResource {
     if (this._refreshInterval) return
     this._refreshInterval = setInterval(
       () => this.refresh().catch(safetyCatch),
-      AUTO_REFRESH_INTERVAL
+      this._autoRefreshInterval
     )
     this._refreshInterval.unref()
   }
