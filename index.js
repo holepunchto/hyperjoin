@@ -420,7 +420,8 @@ module.exports = class Replicator extends ReadyResource {
 
     // opened after teardown
     if (this._isTearingdown) {
-      stream.destroy(new Error(this.suspended ? ERR_SUSPEND : ERR_DESTROYED))
+      stream.once('error', noop)
+      stream.destroy(new Error(ERR_DESTROYED))
       return
     }
 
