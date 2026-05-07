@@ -34,8 +34,6 @@ module.exports = class Replicator extends ReadyResource {
       relayThrough,
       minPeers = MIN_PEERS,
       maxPeers = MAX_PEERS,
-      maxClientConnections,
-      maxServerConnections,
       maxParallel,
       firewall = allowAll,
       suspended,
@@ -74,9 +72,7 @@ module.exports = class Replicator extends ReadyResource {
       backoffs: opts.backoffs,
       jitter: opts.jitter,
       suspended,
-      maxParallel,
-      maxClientConnections,
-      maxServerConnections
+      maxParallel
     })
 
     this.relayThrough = relayThrough && toRelaySelector(relayThrough)
