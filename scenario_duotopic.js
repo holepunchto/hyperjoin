@@ -11,6 +11,8 @@ const N_GROUPS = 5
 const N_PEERS = 3
 
 const GLOBAL_TOPIC = Buffer.alloc(32).fill(0xa)
+const peerids = new Map() // 'hex' -> number
+
 
 async function main() {
   const testnet = await createTestnet()
@@ -34,6 +36,10 @@ async function main() {
     }
   }
   await Promise.all(peers.map((p) => p.ready()))
+
+  for (const peer of peers) {
+    peerids.set(toHex(peer.replicator.peerId), peer.id)
+  }
 
   // yolo propagate
   const allWriters = peers.slice(1).map((p) => p.counter.writerKey)
@@ -66,9 +72,7 @@ class Peer extends ReadyResource {
     this.root = new Corestore(path)
 
     this.store = this.root.session()
-    this.counter = new CounterCore(this.store, remoteKey, (value) => {
-      this.log('update', { value })
-    })
+    this.counter = new CounterCore(this.store, remoteKey, this._onremoteupdate.bind(this))
 
     this.dht = new DHT({ bootstrap })
 
@@ -78,25 +82,27 @@ class Peer extends ReadyResource {
       slots: 1,
       minPeers: 2,
       maxPeers: 4,
-      maxClientConnections: 0,
-      maxServerConnections: 0,
+      maxClientConnections: 2,
+      maxServerConnections: 2,
+      gcIdleTime: 5 * 1000
+      /*
       defaultDiscoveryTimeout: 15 * 1000,
       updatedDiscoveryTimeout: 3 * 1000,
-      //  gcIdleTime: 10 * 1000
       discoveryStartupDelay: 0,
       autoStartupDelay: 1000
+      */
     })
 
+    const lookupId = (pubkey) => peerids.get(toHex(pubkey))
+
     this.replicator.on('connected', (connection) =>
-      this.log('connected', { remotePeerId: toHex(connection.peerId) })
+      this.log('connected', { remote: lookupId(connection.peerId) })
     )
     this.replicator.on('disconnected', (connection) =>
-      this.log('disconnected', { remotePeerId: toHex(connection.peerId) })
+      this.log('disconnected', { remote: lookupId(connection.peerId) })
     )
-    this.replicator.on('activate', (session) => this.log('activate', this._sessionPayload(session)))
-    this.replicator.on('deactivate', (session) =>
-      this.log('deactivate', this._sessionPayload(session))
-    )
+
+    this.replicator.on('session-state', this._logSessionUpdate.bind(this))
   }
 
   log(event, payload = {}) {
@@ -106,13 +112,11 @@ class Peer extends ReadyResource {
     } else {
       // renderable
       const writer = toHex(this.counter.writerKey).slice(0, 4)
-      const peerId = this.replicator.peerId ? toHex(this.replicator.peerId) : null
       console.log(
         JSON.stringify({
           event,
           id: this.id,
           group: this.group,
-          peerId,
           ...payload,
           now: Date.now(),
           writer
@@ -121,21 +125,20 @@ class Peer extends ReadyResource {
     }
   }
 
-  // TODO: unglop, use session.on('state') instead of replicator.on('activate|deactivate')
-  _sessionPayload(session, payload = {}) {
-    return {
+  _logSessionUpdate(session) {
+    this.log('session-updated', {
       topic: toHex(session.topic).slice(0, 4),
       state: session.state,
-      seen: session.seen,
-      ...payload
-    }
+      seen: session.seen
+    })
   }
 
   async _open() {
     // initialize namespace & writer
     await this.counter.ready()
+    await this.replicator.ready()
 
-    /** dual topic
+    /** one store, two topics
      * Each peer pin own group.
      * When new update detect on grouptopic
      * Then seed global topic.
@@ -146,9 +149,8 @@ class Peer extends ReadyResource {
       const topic = Buffer.alloc(32).fill(this.group)
       this._groupSess = this.replicator.join(this.store, topic)
       this._groupSess.pin()
-      this._groupSess.on('bump', (value) => {
-        this.log('group-bump', this._sessionPayload(this._groupSess, { value }))
-
+      this._groupSess.on('bump', () => {
+        this._logSessionUpdate(this._groupSess)
         // TODO:
         // if (this._globSess.seen < value) this._seedGlobal()
       })
@@ -156,8 +158,8 @@ class Peer extends ReadyResource {
 
     // automatic global
     this._globSess = this.replicator.join(this.store, GLOBAL_TOPIC)
-    this._globSess.on('bump', (value) =>
-      this.log('global-bump', this._sessionPayload(this._globSess, { value }))
+    this._globSess.on('bump', () =>
+      this._logSessionUpdate(this._globSess)
     )
 
     // this._globSess.discover()

@@ -258,16 +258,6 @@
         border-color: var(--warm);
       }
 
-      .peer.global-bump {
-        border-color: var(--hot);
-        box-shadow: inset 0 0 0 1px rgba(255, 93, 115, 0.42);
-      }
-
-      .peer.group-bump {
-        border-color: var(--pin);
-        box-shadow: inset 0 0 0 1px rgba(143, 211, 255, 0.42);
-      }
-
       .peer.complete {
         border-color: var(--good);
       }
@@ -310,12 +300,6 @@
         line-height: 1;
       }
 
-      .chips {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-      }
-
       .chip {
         border-radius: 999px;
         padding: 4px 8px;
@@ -337,16 +321,6 @@
       .chip.inactive {
         background: #293141;
         color: #c1cad8;
-      }
-
-      .chip.global-bump {
-        color: #19070b;
-        background: var(--hot);
-      }
-
-      .chip.group-bump {
-        color: #061018;
-        background: var(--pin);
       }
 
       .sessions {
@@ -492,9 +466,8 @@
         <div>
           <h1>Duo Scenario Replay</h1>
           <p class="sub">
-            Drop an NDJSON log from <code>scenario_duotopic.js</code>. The replay shows group-local
-            pinned sessions, global autostart sessions, counter writes, updates, and connection
-            churn over scenario time.
+            Drop an NDJSON log from <code>scenario_duotopic.js</code>. The replay shows
+            session-updated state, counter writes, updates, and connection churn over scenario time.
           </p>
         </div>
         <div class="meter" id="fileStatus">No log loaded</div>
@@ -532,8 +505,8 @@
         <aside class="panel side">
           <div class="stats" id="stats"></div>
           <div class="legend">
-            Peer cells are grouped by `group`. New logs with `remotePeerId` render live connection
-            lines; older logs still render per-peer connection pressure.
+            Peer cells are grouped by `group`. Connection events use numeric `remote` peer ids to
+            render live edges.
           </div>
           <div class="events" id="events"></div>
         </aside>
@@ -557,7 +530,6 @@
 
       let log = []
       let peers = new Map()
-      let peerByPeerId = new Map()
       let groups = new Map()
       let activeEdges = new Map()
       let cursor = 0
@@ -640,14 +612,12 @@
 
       function initializeState() {
         peers = new Map()
-        peerByPeerId = new Map()
         groups = new Map()
 
         for (const event of log) {
           const peer = ensurePeer(event)
           if (!groups.has(peer.group)) groups.set(peer.group, new Set())
           groups.get(peer.group).add(peer.id)
-          if (peer.peerId) peerByPeerId.set(peer.peerId, peer)
         }
       }
 
@@ -716,7 +686,6 @@
         const peer = ensurePeer(event)
 
         peer.last = event.event
-        peer.peerId = event.peerId || peer.peerId
 
         updateSession(peer, event)
 
@@ -750,10 +719,10 @@
       }
 
       function updateEdge(event, delta) {
-        if (!event.peerId || !event.remotePeerId) return
+        if (event.remote === undefined) return
 
-        const local = peerByPeerId.get(event.peerId)
-        const remote = peerByPeerId.get(event.remotePeerId)
+        const local = peers.get(event.id)
+        const remote = peers.get(event.remote)
         if (!local || !remote || local.id === remote.id) return
 
         const [a, b] = local.id < remote.id ? [local, remote] : [remote, local]
@@ -780,18 +749,11 @@
 
       function ensurePeer(event) {
         let peer = peers.get(event.id)
-        if (peer) {
-          if (event.peerId && !peer.peerId) {
-            peer.peerId = event.peerId
-            peerByPeerId.set(peer.peerId, peer)
-          }
-          return peer
-        }
+        if (peer) return peer
 
         peer = {
           id: event.id,
           group: event.group,
-          peerId: event.peerId || null,
           conn: 0,
           writes: 0,
           counter: event.event === 'update' && event.value !== undefined ? event.value : null,
@@ -801,7 +763,6 @@
           complete: false
         }
         peers.set(peer.id, peer)
-        if (peer.peerId) peerByPeerId.set(peer.peerId, peer)
         updateSession(peer, event)
         return peer
       }
@@ -855,7 +816,7 @@
       }
 
       function renderPeerInto(card, peer) {
-        card.className = `peer ${peer.closed ? 'closed' : ''} ${peer.complete ? 'complete' : ''} ${peer.last === 'written' ? 'written' : ''} ${peer.last === 'global-bump' ? 'global-bump' : ''} ${peer.last === 'group-bump' ? 'group-bump' : ''}`
+        card.className = `peer ${peer.closed ? 'closed' : ''} ${peer.complete ? 'complete' : ''} ${peer.last === 'written' ? 'written' : ''}`
         card.style.setProperty('--accent', colors[peer.group % colors.length])
         card.innerHTML = `
         <div class="peer-top">
@@ -914,16 +875,14 @@
         const counts = countEvents(log.slice(0, cursor))
         const active = [...peers.values()].filter((peer) => !peer.closed).length
         const connected = [...peers.values()].reduce((sum, peer) => sum + peer.conn, 0)
-        const bumps = (counts['global-bump'] || 0) + (counts['group-bump'] || 0)
 
         stats.innerHTML = `
         <div class="bigstat"><b>${cursor}/${log.length}</b><span>events</span></div>
         <div class="bigstat"><b>${active}</b><span>open peers</span></div>
         <div class="bigstat"><b>${connected}</b><span>conn pressure</span></div>
         <div class="bigstat"><b>${counts.written || 0}</b><span>writes</span></div>
-        <div class="bigstat"><b>${counts['global-bump'] || 0}</b><span>global bumps</span></div>
-        <div class="bigstat"><b>${counts['group-bump'] || 0}</b><span>group bumps</span></div>
-        <div class="bigstat"><b>${bumps}</b><span>total bumps</span></div>
+        <div class="bigstat"><b>${counts.update || 0}</b><span>updates</span></div>
+        <div class="bigstat"><b>${counts['session-updated'] || 0}</b><span>sessions</span></div>
         <div class="bigstat"><b>${activeEdges.size}</b><span>edges</span></div>
       `
 
@@ -939,9 +898,8 @@
         <div class="bigstat"><b>0</b><span>open peers</span></div>
         <div class="bigstat"><b>0</b><span>conn pressure</span></div>
         <div class="bigstat"><b>0</b><span>writes</span></div>
-        <div class="bigstat"><b>0</b><span>global bumps</span></div>
-        <div class="bigstat"><b>0</b><span>group bumps</span></div>
-        <div class="bigstat"><b>0</b><span>total bumps</span></div>
+        <div class="bigstat"><b>0</b><span>updates</span></div>
+        <div class="bigstat"><b>0</b><span>sessions</span></div>
         <div class="bigstat"><b>0</b><span>edges</span></div>
       `
       }
@@ -951,7 +909,7 @@
         row.className = 'event-row'
         row.innerHTML = `
         <span class="time">+${event.now - minTime}ms</span>
-        <span><strong>${escapeHtml(event.event)}</strong> peer ${event.id} group ${event.group}${event.remotePeerId ? ` to ${escapeHtml(event.remotePeerId.slice(0, 6))}` : ''}${event.topic ? ` topic ${escapeHtml(event.topic)}` : ''}${event.state ? ` ${escapeHtml(event.state)}` : ''}${event.value !== undefined ? ` value ${escapeHtml(event.value)}` : ''}</span>
+        <span><strong>${escapeHtml(event.event)}</strong> peer ${event.id} group ${event.group}${event.remote !== undefined ? ` to peer ${escapeHtml(event.remote)}` : ''}${event.topic ? ` topic ${escapeHtml(event.topic)}` : ''}${event.state ? ` ${escapeHtml(event.state)}` : ''}${event.seen !== undefined ? ` seen ${escapeHtml(event.seen)}` : ''}${event.value !== undefined ? ` value ${escapeHtml(event.value)}` : ''}</span>
       `
         eventsEl.prepend(row)
 

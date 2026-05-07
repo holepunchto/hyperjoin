@@ -140,7 +140,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   get peerId() {
-    return this.keyPair && this.keyPair.publicKey
+    return this.server.publicKey
   }
 
   get connectionCount() {
