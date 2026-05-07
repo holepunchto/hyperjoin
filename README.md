@@ -40,7 +40,7 @@ Create a topic replicator for a root corestore.
 
 General
 
-- `autoswarm`: enables active topic rotation (default `true`)
+- `autoswarm`: enables active topic rotation (default: `true`)
 - `suspended`: start suspended
 - `seed`: derive the replicator keypair from a seed
 - `maxPeers`: drop connections above
@@ -49,12 +49,13 @@ General
 - `gcIdleTime`: Evict idle sessions exceeding time
 - `defaultDiscoveryTimeout`: initial discovery lifetime
 - `updatedDiscoveryTimeout`: shortened discovery lifetime after `session.bump()`
-- `manual`: don't launch internal `refresh()` interval.
+- `manual`: don't launch internal `refresh()` interval (default: `false`)
+- `interval`: Auto-refresh interval (default: `5000`)
 - `gcDisabled`: prevent garbage collection on `refresh()`
 
 Transport
 
-- `keyPair`: provide an explicit keypair (default: store.createKepair)
+- `keyPair`: provide an explicit keypair (default: store.createKeypair)
 - `bootstrap`: DHT bootstrap nodes
 - `nodes`: explicit DHT nodes
 - `dht`: reuse an existing HyperDHT instance
