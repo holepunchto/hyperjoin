@@ -108,7 +108,7 @@ class Peer extends ReadyResource {
   log(event, payload = {}) {
     if (!this._detailed) {
       // readable
-      console.log('id', this.id, 'group', this.group, 'event', event, 'ctrstate', this.counter.last)
+      console.log('id', this.id, 'group', this.group, 'event', event, 'view', this.counter.last)
     } else {
       // renderable
       const writer = toHex(this.counter.writerKey).slice(0, 4)
@@ -119,7 +119,11 @@ class Peer extends ReadyResource {
           group: this.group,
           ...payload,
           now: Date.now(),
-          writer
+          writer,
+          inbound: this.replicator.inbound.size,
+          outbound: this.replicator.outbound.size,
+          inflight: this.replicator._inflight.size,
+          connections: this.replicator.connectionCount
         })
       )
     }
