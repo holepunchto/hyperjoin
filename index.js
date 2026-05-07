@@ -23,6 +23,7 @@ const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
 const ERR_DESTROYED = 'ReplicatorDestroyed'
 const ERR_SUSPEND = 'SuspendDrop'
+const ERR_MAXPEERS = 'MaxPeersCap'
 
 module.exports = class Replicator extends ReadyResource {
   constructor(rootStore, opts = {}) {
@@ -34,8 +35,6 @@ module.exports = class Replicator extends ReadyResource {
       relayThrough,
       minPeers = MIN_PEERS,
       maxPeers = MAX_PEERS,
-      maxClientConnections,
-      maxServerConnections,
       maxParallel,
       firewall = allowAll,
       suspended,
@@ -75,9 +74,7 @@ module.exports = class Replicator extends ReadyResource {
       backoffs: opts.backoffs,
       jitter: opts.jitter,
       suspended,
-      maxParallel,
-      maxClientConnections,
-      maxServerConnections
+      maxParallel
     })
 
     this.relayThrough = relayThrough && toRelaySelector(relayThrough)
@@ -295,6 +292,12 @@ module.exports = class Replicator extends ReadyResource {
       return
     }
 
+    // Hard limit max-drop
+    if (this.connectionCount >= this._maxPeers + 5) {
+      conn.on('error', noop)
+      return conn.destroy(ERR_MAXPEERS)
+    }
+
     // When reaching here, the connection will always be 'opened' next tick
 
     this._initConnection(false, peerId, conn)
@@ -475,14 +478,34 @@ module.exports = class Replicator extends ReadyResource {
     // Evict idle connections
 
     if (this.connectionCount > this._maxPeers) {
+      const nEvict = this.connectionCount - this._maxPeers
+
       for (const connection of this.connections) {
         if (!connection.isIdle(now)) continue
 
+        connection._evicted = true
         evictions.push(this._evictConnection(connection, ERR_IDLE))
         connectionsEvicted++
 
         if (this.connectionCount <= this._minPeers) {
           break // target reached
+        }
+      }
+
+      // TODO: avoid dropping if:
+      // - belongs to pinned topic
+      // - stable & good throughput
+      const nHeuristicEvict = nEvict - connectionsEvicted
+      if (nHeuristicEvict > 0) {
+        // Evict by last activity
+        const connections = Array.from(this.connections)
+          .filter((c) => !c._evicted)
+          .sort((a, b) => a.lastActivity - b.lastActivity)
+
+        for (let i = 0; i < nHeuristicEvict; i++) {
+          connections[i]._evicted = true
+          const p = this._evictConnection(connections[i], ERR_MAXPEERS)
+          evictions.push(p)
         }
       }
     }
@@ -512,9 +535,15 @@ module.exports = class Replicator extends ReadyResource {
     this._autoselect(now) // updates sessions
 
     const done = []
+
     for (const sess of this.sessions.values()) {
       done.push(sess.refresh(now)) // applies state
     }
+
+    for (const conn of this.connections) {
+      conn.refresh(now)
+    }
+
     await Promise.all(done)
 
     await this._gc(now)
@@ -650,6 +679,12 @@ class Connection {
     this.peerId = peerId
     this._onclose = this._onclose.bind(this)
     stream.on('close', this._onclose)
+
+    this._evicted = false
+    this.bytesRead = -1
+    this.bytesWritten = -1
+    this.lastActivity = -1
+    this.refresh()
   }
 
   get protomux() {
@@ -706,6 +741,19 @@ class Connection {
 
     rep.emit('disconnected', this)
     rep.emit('update')
+  }
+
+  refresh(now = Date.now()) {
+    if (
+      this.bytesRead === this.stream.rawBytesRead &&
+      this.bytesWritten === this.stream.rawBytesWritten
+    ) {
+      return
+    }
+
+    this.bytesRead = this.stream.rawBytesRead
+    this.bytesWritten = this.stream.rawBytesWritten
+    this.lastActivity = now
   }
 
   destroy(err) {
