@@ -744,9 +744,10 @@ class Connection {
   refresh(now = Date.now()) {
     if (
       this.bytesRead === this.stream.rawBytesRead &&
-      this.bytesWritten == this.stream.rawBytesWritten
-    )
+      this.bytesWritten === this.stream.rawBytesWritten
+    ) {
       return
+    }
 
     this.bytesRead = this.stream.rawBytesRead
     this.bytesWritten = this.stream.rawBytesWritten
