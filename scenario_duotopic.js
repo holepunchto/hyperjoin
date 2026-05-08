@@ -11,7 +11,7 @@ const randomBytes = require(globalThis.Bare ? 'bare-crypto' : 'node:crypto').ran
 
 const LOG_HUMAN = false
 
-const N_GROUPS = 6
+const N_GROUPS = 4
 const N_PEERS = 3
 const TARGET_VALUE = 50
 
@@ -84,14 +84,14 @@ class Peer extends ReadyResource {
     this.replicator = new Replicator(this.root, {
       dht: this.dht,
       manual: true,
-      slots: 1,
+      slots: 1, // force competition between global and dummy
       minPeers: 0,
-      maxPeers: 3,
+      maxPeers: 2,
       gcIdleTime: 5 * 1000,
-      minActiveTime: 5 * 1000
+      minActiveTime: 5 * 1000,
+      defaultDiscoveryTimeout: 5 * 1000,
+      updatedDiscoveryTimeout: 3 * 1000
       /*
-      defaultDiscoveryTimeout: 15 * 1000,
-      updatedDiscoveryTimeout: 3 * 1000,
       discoveryStartupDelay: 0,
       autoStartupDelay: 1000
       */
@@ -201,7 +201,7 @@ class Peer extends ReadyResource {
       this._globSess = null
 
       // rejoin in discovery mode
-      setTimeout(() => this._joinGlobal(true), 1000 + Math.random() * 3000)
+      setTimeout(() => this._joinGlobal(true), 3000 + Math.random() * 3000)
     })
 
     if (discovery) {
@@ -229,7 +229,7 @@ class Peer extends ReadyResource {
 
       await this.replicator.refresh()
 
-      const delay = 5000 + Math.random() * 15000
+      const delay = 7000 + Math.random() * 15000
       await new Promise((resolve) => setTimeout(resolve, delay))
     }
 
