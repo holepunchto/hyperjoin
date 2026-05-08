@@ -13,6 +13,7 @@ const LOG_HUMAN = false
 
 const N_GROUPS = 6
 const N_PEERS = 3
+const TARGET_VALUE = 50
 
 const GLOBAL_TOPIC = Buffer.alloc(32).fill(0)
 GLOBAL_TOPIC.set(Buffer.from('common topic'))
@@ -84,10 +85,10 @@ class Peer extends ReadyResource {
       dht: this.dht,
       manual: true,
       slots: 1,
-      minPeers: 1,
+      minPeers: 0,
       maxPeers: 3,
       gcIdleTime: 5 * 1000,
-      minActiveTime: 3 * 1000
+      minActiveTime: 5 * 1000
       /*
       defaultDiscoveryTimeout: 15 * 1000,
       updatedDiscoveryTimeout: 3 * 1000,
@@ -190,14 +191,22 @@ class Peer extends ReadyResource {
     this.log('opened')
   }
 
-  _joinGlobal() {
+  _joinGlobal(discovery = false) {
     if (this._globSess) return // exists
 
     this._globSess = this.replicator.join(this.store, GLOBAL_TOPIC)
     this._globSess.on('bump', () => this._logSessionUpdate(this._globSess))
     // on evict
-    this._globSess.on('close', () => this._globSess = null)
-    // this._globSess.discover()
+    this._globSess.on('close', () => {
+      this._globSess = null
+
+      // rejoin in discovery mode
+      setTimeout(() => this._joinGlobal(true), 1000 + Math.random() * 3000)
+    })
+
+    if (discovery) {
+      this._globSess.discover()
+    }
   }
 
   _joinDummy() {
@@ -210,7 +219,7 @@ class Peer extends ReadyResource {
   }
 
   async run() {
-    while ((await this.counter.value()) < 5) {
+    while ((await this.counter.value()) < TARGET_VALUE) {
       const chosen = !(this.id % 5)
 
       if (chosen && this.counter.writable) {
