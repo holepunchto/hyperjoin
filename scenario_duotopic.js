@@ -80,7 +80,7 @@ class Peer extends ReadyResource {
 
     this.replicator = new Replicator(this.root, {
       dht: this.dht,
-      interval: 1000,
+      manual: true,
       slots: 1,
       minPeers: 1,
       maxPeers: 4,
@@ -103,6 +103,13 @@ class Peer extends ReadyResource {
     )
 
     this.replicator.on('session-state', this._logSessionUpdate.bind(this))
+
+    // manual refresh/gc
+    this._refresher = setInterval(async () => {
+      await this.replicator.refresh()
+      this.log('auto-refresh')
+    }, 1000)
+    this._refresher.unref()
   }
 
   log(event, payload = {}) {
