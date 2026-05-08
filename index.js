@@ -593,7 +593,7 @@ module.exports = class Replicator extends ReadyResource {
     for (const session of this.sessions.values()) {
       if (session.isDiscovering) continue
       if (session.isPinned) continue
-      if (sess.closing || sess.closed) continue
+      if (session.closing || session.closed) continue
 
       // don't deactivate pending nor newly-started topics
       if (session.isAuto) {
