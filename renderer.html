@@ -3,24 +3,20 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Duo Scenario Replay</title>
+    <title>Duo Canvas Replay</title>
     <style>
       :root {
         color-scheme: dark;
-        --bg: #080a0d;
-        --panel: #111720;
-        --panel-2: #0d1219;
-        --line: #243142;
-        --text: #e6edf3;
-        --muted: #8190a6;
-        --cold: #69a7ff;
-        --warm: #f5b350;
-        --hot: #ff5d73;
-        --good: #68d391;
-        --pin: #8fd3ff;
-        --auto: #c6f56f;
-        --inactive: #8892a6;
-        --shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+        --bg: #07090c;
+        --panel: #10151c;
+        --line: #253141;
+        --text: #e7edf4;
+        --muted: #7d8ba0;
+        --hot: #ff6174;
+        --cold: #78b7ff;
+        --good: #7de08a;
+        --warm: #f0bb58;
+        --sync: #d477ff;
       }
 
       * {
@@ -31,9 +27,9 @@
         margin: 0;
         min-height: 100vh;
         background:
-          radial-gradient(circle at 12% 0%, rgba(105, 167, 255, 0.2), transparent 34rem),
-          radial-gradient(circle at 82% 12%, rgba(245, 179, 80, 0.12), transparent 28rem),
-          linear-gradient(135deg, #080a0d, #0b1118 52%, #07080b);
+          radial-gradient(circle at 15% 5%, rgba(120, 183, 255, 0.18), transparent 34rem),
+          radial-gradient(circle at 85% 20%, rgba(240, 187, 88, 0.12), transparent 30rem),
+          linear-gradient(135deg, #07090c, #0b1118 55%, #06070a);
         color: var(--text);
         font:
           14px/1.45 ui-monospace,
@@ -44,56 +40,51 @@
       }
 
       main {
-        width: min(1380px, calc(100vw - 32px));
+        width: min(1500px, calc(100vw - 28px));
         margin: 0 auto;
-        padding: 28px 0 40px;
+        padding: 24px 0 32px;
       }
 
       header {
         display: grid;
         grid-template-columns: 1fr auto;
-        gap: 18px;
+        gap: 16px;
         align-items: end;
-        margin-bottom: 18px;
+        margin-bottom: 16px;
       }
 
       h1 {
         margin: 0;
-        font-size: clamp(28px, 5vw, 58px);
+        font-size: clamp(30px, 5vw, 58px);
+        line-height: 0.92;
         letter-spacing: -0.07em;
-        line-height: 0.9;
       }
 
       .sub {
-        max-width: 760px;
-        margin: 12px 0 0;
+        max-width: 820px;
+        margin: 10px 0 0;
         color: var(--muted);
       }
 
       .drop {
         position: relative;
         display: grid;
+        min-height: 124px;
+        margin-bottom: 14px;
         place-items: center;
-        min-height: 160px;
-        margin-bottom: 18px;
-        border: 1px dashed #42516a;
-        border-radius: 22px;
+        border: 1px dashed #43536d;
+        border-radius: 20px;
         background:
-          linear-gradient(135deg, rgba(17, 23, 32, 0.9), rgba(13, 18, 25, 0.78)),
+          linear-gradient(135deg, rgba(16, 21, 28, 0.94), rgba(9, 13, 18, 0.82)),
           repeating-linear-gradient(90deg, transparent 0 18px, rgba(255, 255, 255, 0.018) 18px 19px);
-        box-shadow: var(--shadow);
-        transition:
-          border-color 120ms ease,
-          transform 120ms ease,
-          background 120ms ease;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
       }
 
       .drop.drag {
-        transform: translateY(-2px);
         border-color: var(--cold);
         background:
-          linear-gradient(135deg, rgba(33, 49, 70, 0.92), rgba(17, 22, 30, 0.82)),
-          repeating-linear-gradient(90deg, transparent 0 18px, rgba(255, 255, 255, 0.035) 18px 19px);
+          linear-gradient(135deg, rgba(26, 40, 58, 0.95), rgba(10, 15, 21, 0.86)),
+          repeating-linear-gradient(90deg, transparent 0 18px, rgba(255, 255, 255, 0.034) 18px 19px);
       }
 
       .drop input {
@@ -110,26 +101,27 @@
 
       .drop-copy strong {
         display: block;
-        font-size: 20px;
-        margin-bottom: 8px;
+        margin-bottom: 6px;
+        font-size: 19px;
       }
 
-      .drop-copy span {
+      .drop-copy span,
+      .status {
         color: var(--muted);
       }
 
       .shell {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 360px;
-        gap: 18px;
+        grid-template-columns: minmax(0, 1fr) 320px;
+        gap: 14px;
       }
 
       .panel {
-        border: 1px solid rgba(87, 106, 134, 0.42);
-        border-radius: 22px;
-        background: rgba(12, 17, 24, 0.84);
-        box-shadow: var(--shadow);
         overflow: hidden;
+        border: 1px solid rgba(88, 106, 133, 0.4);
+        border-radius: 20px;
+        background: rgba(10, 14, 20, 0.84);
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
       }
 
       .controls {
@@ -137,16 +129,16 @@
         flex-wrap: wrap;
         gap: 10px;
         align-items: center;
-        padding: 14px;
-        border-bottom: 1px solid rgba(87, 106, 134, 0.28);
-        background: rgba(6, 9, 13, 0.45);
+        padding: 12px;
+        border-bottom: 1px solid rgba(88, 106, 133, 0.26);
+        background: rgba(6, 8, 12, 0.48);
       }
 
       button,
       select {
-        border: 1px solid #36465d;
+        border: 1px solid #35465d;
         border-radius: 999px;
-        background: #111a25;
+        background: #101824;
         color: var(--text);
         padding: 8px 12px;
         font: inherit;
@@ -156,268 +148,194 @@
         cursor: pointer;
       }
 
-      button:hover,
-      select:hover {
-        border-color: #5c7292;
-      }
-
-      .meter {
-        min-width: 180px;
-        color: var(--muted);
+      button:disabled {
+        cursor: default;
+        opacity: 0.45;
       }
 
       .timeline {
-        flex: 1 1 260px;
+        flex: 1 1 280px;
         height: 8px;
-        border-radius: 999px;
-        background: #182231;
         overflow: hidden;
+        border-radius: 999px;
+        background: #182230;
       }
 
       .timeline > div {
         width: 0;
         height: 100%;
         background: linear-gradient(90deg, var(--cold), var(--good), var(--warm));
-        transition: width 80ms linear;
       }
 
-      .stage {
+      .canvas-wrap {
         position: relative;
-        z-index: 2;
-        display: grid;
-        gap: 14px;
-        padding: 16px;
+        height: min(72vh, 850px);
+        min-height: 620px;
       }
 
-      .viz {
-        position: relative;
-      }
-
-      .links {
-        position: absolute;
-        inset: 0;
-        z-index: 1;
+      canvas {
+        display: block;
         width: 100%;
         height: 100%;
-        pointer-events: none;
       }
 
-      .links line {
-        stroke: var(--warm);
-        stroke-linecap: round;
-        opacity: 0.72;
-        filter: drop-shadow(0 0 8px rgba(245, 179, 80, 0.42));
-      }
-
-      .group {
+      .visual-legend {
         display: grid;
-        grid-template-columns: 92px repeat(3, minmax(130px, 1fr));
+        gap: 8px;
+        padding: 12px;
+        border-top: 1px solid rgba(88, 106, 133, 0.26);
+        background: rgba(6, 8, 12, 0.36);
+      }
+
+      .legend-item {
+        display: flex;
         gap: 10px;
-        align-items: stretch;
+        align-items: center;
+        min-height: 34px;
+        color: var(--muted);
       }
 
-      .group-label {
-        display: grid;
-        place-items: center;
-        border: 1px solid rgba(87, 106, 134, 0.28);
-        border-radius: 18px;
-        background: rgba(255, 255, 255, 0.025);
-        color: var(--muted);
+      .visual-legend h3 {
+        margin: 12px 0 0;
+        color: var(--text);
+        font-size: 13px;
         letter-spacing: 0.08em;
         text-transform: uppercase;
       }
 
-      .peer {
-        position: relative;
-        min-height: 136px;
-        border: 1px solid rgba(87, 106, 134, 0.36);
-        border-radius: 18px;
-        padding: 12px;
-        background:
-          linear-gradient(160deg, rgba(255, 255, 255, 0.055), transparent 55%), var(--panel);
-        overflow: hidden;
+      .visual-legend h3:first-child {
+        margin-top: 0;
       }
 
-      .peer::before {
+      .legend-item span:last-child {
+        min-width: 0;
+      }
+
+      .sample-peer,
+      .sample-topic {
+        display: inline-grid;
+        flex: 0 0 auto;
+        place-items: center;
+        color: var(--text);
+        font-weight: 700;
+      }
+
+      .sample-peer {
+        width: 42px;
+        height: 26px;
+        border: 2px solid #3b4d65;
+        border-radius: 9px;
+        background: rgba(15, 22, 31, 0.96);
+      }
+
+      .sample-peer.synced {
+        border-color: var(--sync);
+        background: rgba(88, 28, 112, 0.96);
+      }
+
+      .sample-peer.hot {
+        border-color: var(--hot);
+        background: rgba(62, 22, 32, 0.96);
+      }
+
+      .sample-topic {
+        width: 34px;
+        height: 34px;
+        border: 2px solid var(--cold);
+        border-radius: 999px;
+        background: rgba(12, 18, 26, 0.96);
+        font-size: 10px;
+      }
+
+      .sample-edge {
+        position: relative;
+        flex: 0 0 48px;
+        height: 18px;
+      }
+
+      .sample-edge::before {
         content: '';
         position: absolute;
-        inset: -40% -20% auto auto;
-        width: 120px;
-        height: 120px;
-        border-radius: 50%;
-        background: var(--accent, var(--cold));
-        opacity: 0.08;
-        filter: blur(2px);
-      }
-
-      .peer.flash {
-        animation: flash 360ms ease;
-      }
-
-      .peer.written {
-        border-color: var(--warm);
-      }
-
-      .peer.complete {
-        border-color: var(--good);
-      }
-
-      .peer.closed {
-        opacity: 0.55;
-      }
-
-      .peer-top {
-        display: flex;
-        justify-content: space-between;
-        gap: 8px;
-        margin-bottom: 10px;
-      }
-
-      .peer-id {
-        font-size: 24px;
-        letter-spacing: -0.08em;
-      }
-
-      .statline {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 6px;
-        margin-bottom: 10px;
-      }
-
-      .stat {
-        border-radius: 12px;
-        padding: 7px;
-        background: rgba(0, 0, 0, 0.18);
-        color: var(--muted);
-        text-align: center;
-      }
-
-      .stat b {
-        display: block;
-        color: var(--text);
-        font-size: 18px;
-        line-height: 1;
-      }
-
-      .chip {
+        top: 8px;
+        left: 0;
+        width: 48px;
+        height: 3px;
         border-radius: 999px;
-        padding: 4px 8px;
-        background: #182231;
-        color: var(--muted);
-        font-size: 12px;
+        background: var(--edge, #7a746c);
+        opacity: var(--edge-opacity, 0.9);
       }
 
-      .chip.pinned {
-        color: #061018;
-        background: var(--pin);
+      .sample-edge.conn {
+        --edge: #7a746c;
+        --edge-opacity: 0.28;
       }
 
-      .chip.autostarted {
-        color: #111807;
-        background: var(--auto);
+      .sample-edge.pinned {
+        --edge: var(--cold);
       }
 
-      .chip.inactive {
-        background: #293141;
-        color: #c1cad8;
+      .sample-edge.auto {
+        --edge: var(--good);
       }
 
-      .sessions {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 6px;
+      .sample-edge.discovering {
+        --edge: var(--warm);
       }
 
-      .session-box {
-        display: grid;
-        min-height: 38px;
-        place-items: center;
-        border-radius: 12px;
-        background: #182231;
-        color: var(--muted);
-      }
-
-      .session-box b {
-        color: inherit;
-        font-size: 18px;
-        line-height: 1;
-      }
-
-      .session-box.pinned {
-        color: #061018;
-        background: var(--pin);
-      }
-
-      .session-box.autostarted {
-        color: #111807;
-        background: var(--auto);
-      }
-
-      .session-box.discovering {
-        color: #170f03;
-        background: var(--warm);
-      }
-
-      .session-box.inactive {
-        color: #c1cad8;
-        background: #293141;
-      }
-
-      .session-box.destroyed {
-        color: #d9a3ad;
-        background: #3a1e27;
+      .sample-edge.inactive {
+        --edge: #566172;
+        --edge-opacity: 0.5;
       }
 
       .side {
         display: grid;
         grid-template-rows: auto auto minmax(0, 1fr);
-        gap: 18px;
       }
 
       .stats {
         display: grid;
         grid-template-columns: repeat(2, 1fr);
         gap: 8px;
-        padding: 14px;
+        padding: 12px;
       }
 
-      .bigstat {
-        border-radius: 16px;
-        padding: 12px;
+      .stat {
+        border-radius: 15px;
+        padding: 10px;
         background: rgba(255, 255, 255, 0.035);
       }
 
-      .bigstat b {
+      .stat b {
         display: block;
-        font-size: 24px;
+        font-size: 23px;
+        line-height: 1;
         letter-spacing: -0.06em;
       }
 
-      .bigstat span {
+      .stat span,
+      .legend {
         color: var(--muted);
       }
 
       .legend {
-        padding: 14px;
-        color: var(--muted);
-        border-top: 1px solid rgba(87, 106, 134, 0.28);
+        padding: 12px;
+        border-top: 1px solid rgba(88, 106, 133, 0.26);
       }
 
       .events {
-        min-height: 380px;
+        min-height: 300px;
         max-height: calc(100vh - 430px);
         overflow: auto;
-        padding: 12px;
-        border-top: 1px solid rgba(87, 106, 134, 0.28);
+        padding: 10px;
+        border-top: 1px solid rgba(88, 106, 133, 0.26);
       }
 
       .event-row {
         display: grid;
-        grid-template-columns: 62px 1fr;
-        gap: 10px;
-        padding: 7px 4px;
-        border-bottom: 1px solid rgba(87, 106, 134, 0.16);
+        grid-template-columns: 64px 1fr;
+        gap: 8px;
+        padding: 6px 2px;
+        border-bottom: 1px solid rgba(88, 106, 133, 0.14);
         color: var(--muted);
       }
 
@@ -425,23 +343,8 @@
         color: var(--text);
       }
 
-      .event-row .time {
-        color: #607086;
-      }
-
-      @keyframes flash {
-        0% {
-          transform: scale(1);
-          filter: brightness(1);
-        }
-        35% {
-          transform: scale(1.018);
-          filter: brightness(1.35);
-        }
-        100% {
-          transform: scale(1);
-          filter: brightness(1);
-        }
+      .time {
+        color: #5f6f84;
       }
 
       @media (max-width: 980px) {
@@ -450,12 +353,8 @@
           grid-template-columns: 1fr;
         }
 
-        .group {
-          grid-template-columns: 1fr;
-        }
-
-        .group-label {
-          min-height: 42px;
+        .canvas-wrap {
+          min-height: 560px;
         }
       }
     </style>
@@ -464,13 +363,13 @@
     <main>
       <header>
         <div>
-          <h1>Duo Scenario Replay</h1>
+          <h1>Duo Canvas Replay</h1>
           <p class="sub">
-            Drop an NDJSON log from <code>scenario_duotopic.js</code>. The replay shows
-            session-updated state, counter writes, updates, and connection churn over scenario time.
+            Drop an NDJSON log from <code>scenario_duotopic.js</code>. Peer boxes show counter view,
+            topic circles show topic prefixes, session edges show state and seen bump.
           </p>
         </div>
-        <div class="meter" id="fileStatus">No log loaded</div>
+        <div class="status" id="fileStatus">No log loaded</div>
       </header>
 
       <label class="drop" id="drop">
@@ -488,25 +387,69 @@
             <button id="reset" disabled>Reset</button>
             <select id="speed" title="Replay speed">
               <option value="0.25">0.25x</option>
-              <option value="1">1x</option>
-              <option value="4" selected>4x</option>
+              <option value="1" selected>1x</option>
+              <option value="4">4x</option>
               <option value="16">16x</option>
               <option value="64">64x</option>
             </select>
             <div class="timeline"><div id="bar"></div></div>
-            <div class="meter" id="clock">t+0ms</div>
+            <div class="status" id="clock">t+0ms</div>
           </div>
-          <div class="viz" id="viz">
-            <svg class="links" id="links"></svg>
-            <div class="stage" id="stage"></div>
+          <div class="canvas-wrap">
+            <canvas id="canvas"></canvas>
+          </div>
+          <div class="visual-legend">
+            <h3>Peer</h3>
+            <div class="legend-item">
+              <span class="sample-peer">3</span>
+              <span>Peer box: current counter view.</span>
+            </div>
+            <div class="legend-item">
+              <span class="sample-peer synced">3</span>
+              <span>Purple peer: latest known counter value.</span>
+            </div>
+            <div class="legend-item">
+              <span class="sample-peer hot">3</span>
+              <span>Red peer: above max connection target.</span>
+            </div>
+
+            <h3>Topic</h3>
+            <div class="legend-item">
+              <span class="sample-topic">636f</span>
+              <span>Topic circle: first topic bytes.</span>
+            </div>
+
+            <h3>Connection</h3>
+            <div class="legend-item">
+              <span class="sample-edge conn"></span>
+              <span>Warm gray edge: peer connection.</span>
+            </div>
+
+            <h3>Session</h3>
+            <div class="legend-item">
+              <span class="sample-edge pinned"></span>
+              <span>Blue session edge: pinned topic.</span>
+            </div>
+            <div class="legend-item">
+              <span class="sample-edge auto"></span>
+              <span>Green session edge: autostarted topic.</span>
+            </div>
+            <div class="legend-item">
+              <span class="sample-edge discovering"></span>
+              <span>Orange session edge: discovery mode.</span>
+            </div>
+            <div class="legend-item">
+              <span class="sample-edge inactive"></span>
+              <span>Dim session edge: inactive topic; edge number is DHT topic bump value.</span>
+            </div>
           </div>
         </section>
 
         <aside class="panel side">
           <div class="stats" id="stats"></div>
           <div class="legend">
-            Peer cells are grouped by `group`. Connection events use numeric `remote` peer ids to
-            render live edges.
+            Gray peer edges are transport connections. Colored topic edges are ReplicatorSession
+            state; numbers on those edges are session seen values.
           </div>
           <div class="events" id="events"></div>
         </aside>
@@ -517,30 +460,38 @@
       const drop = document.getElementById('drop')
       const fileInput = document.getElementById('file')
       const fileStatus = document.getElementById('fileStatus')
-      const viz = document.getElementById('viz')
-      const links = document.getElementById('links')
-      const stage = document.getElementById('stage')
-      const stats = document.getElementById('stats')
-      const eventsEl = document.getElementById('events')
       const playBtn = document.getElementById('play')
       const resetBtn = document.getElementById('reset')
       const speedEl = document.getElementById('speed')
       const clockEl = document.getElementById('clock')
       const bar = document.getElementById('bar')
+      const stats = document.getElementById('stats')
+      const eventsEl = document.getElementById('events')
+      const canvas = document.getElementById('canvas')
+      const ctx = canvas.getContext('2d')
+
+      const colors = {
+        pinned: '#8fd3ff',
+        autostarted: '#a9ed67',
+        discovering: '#f0bb58',
+        inactive: '#566172',
+        destroyed: '#8f3544'
+      }
 
       let log = []
       let peers = new Map()
+      let topics = new Map()
+      let connections = new Map()
       let groups = new Map()
-      let activeEdges = new Map()
+      let layout = { peers: new Map(), topics: new Map() }
       let cursor = 0
-      let running = false
-      let startedAt = 0
-      let replayAt = 0
-      let raf = 0
       let minTime = 0
       let maxTime = 0
-
-      const colors = ['#69a7ff', '#68d391', '#f5b350', '#ff7aa2', '#b49cff', '#73e3d3']
+      let replayAt = 0
+      let startedAt = 0
+      let running = false
+      let raf = 0
+      let dpr = 1
 
       renderEmpty()
 
@@ -567,6 +518,11 @@
       })
 
       resetBtn.addEventListener('click', resetReplay)
+      window.addEventListener('resize', () => {
+        resizeCanvas()
+        computeLayout()
+        draw()
+      })
 
       async function loadFile(file) {
         const text = await file.text()
@@ -582,7 +538,8 @@
         fileStatus.textContent = `${file.name}: ${log.length} events, ${parsed.ignored} ignored`
 
         initializeState()
-        renderAll()
+        resizeCanvas()
+        computeLayout()
         resetReplay()
         play()
       }
@@ -612,12 +569,16 @@
 
       function initializeState() {
         peers = new Map()
+        topics = new Map()
         groups = new Map()
+        connections = new Map()
 
         for (const event of log) {
           const peer = ensurePeer(event)
           if (!groups.has(peer.group)) groups.set(peer.group, new Set())
           groups.get(peer.group).add(peer.id)
+
+          if (event.topic) ensureTopic(event.topic)
         }
       }
 
@@ -625,17 +586,17 @@
         pause()
         cursor = 0
         replayAt = 0
-        activeEdges = new Map()
+        connections = new Map()
         eventsEl.textContent = ''
-        links.textContent = ''
 
         for (const peer of peers.values()) {
-          peer.conn = 0
-          peer.writes = 0
           peer.counter = null
+          peer.conn = 0
+          peer.inbound = 0
+          peer.outbound = 0
+          peer.inflight = 0
           peer.last = 'ready'
           peer.closed = false
-          peer.complete = false
 
           for (const session of peer.sessions.values()) {
             session.state = 'inactive'
@@ -643,8 +604,9 @@
           }
         }
 
-        renderAll()
         updateClock()
+        renderStats()
+        draw()
       }
 
       function play() {
@@ -665,9 +627,16 @@
 
         replayAt = (now - startedAt) * Number(speedEl.value)
         const target = minTime + replayAt
+        let changed = false
 
         while (cursor < log.length && log[cursor].now <= target) {
           applyEvent(log[cursor++])
+          changed = true
+        }
+
+        if (changed) {
+          draw()
+          renderStats()
         }
 
         updateClock()
@@ -676,6 +645,7 @@
           pause()
           replayAt = maxTime - minTime
           updateClock()
+          draw()
           return
         }
 
@@ -684,69 +654,53 @@
 
       function applyEvent(event) {
         const peer = ensurePeer(event)
-
         peer.last = event.event
 
-        updateSession(peer, event)
+        if (Number.isFinite(event.connections)) peer.conn = event.connections
+        if (Number.isFinite(event.inbound)) peer.inbound = event.inbound
+        if (Number.isFinite(event.outbound)) peer.outbound = event.outbound
+        if (Number.isFinite(event.inflight)) peer.inflight = event.inflight
+
+        if (event.topic) {
+          if (event.state === 'destroyed') {
+            peer.sessions.delete(event.topic)
+          } else {
+            const session = ensureSession(peer, event.topic)
+            if (event.state) session.state = event.state
+            if (event.seen !== undefined) session.seen = event.seen
+          }
+        }
 
         switch (event.event) {
           case 'connected':
-            peer.conn++
-            updateEdge(event, 1)
+            updateConnection(event, 1)
             break
           case 'disconnected':
-            peer.conn = Math.max(0, peer.conn - 1)
-            updateEdge(event, -1)
+            updateConnection(event, -1)
             break
           case 'update':
             if (event.value !== undefined) peer.counter = event.value
-            break
-          case 'written':
-            peer.writes++
-            break
-          case 'complete':
-            peer.complete = true
             break
           case 'closed':
             peer.closed = true
             break
         }
 
-        if (Number.isFinite(event.connections)) peer.conn = event.connections
-
-        renderPeer(peer)
-        renderEdges()
         appendEvent(event)
-        renderStats()
       }
 
-      function updateEdge(event, delta) {
+      function updateConnection(event, delta) {
         if (event.remote === undefined) return
+        if (!peers.has(event.remote) || event.remote === event.id) return
 
-        const local = peers.get(event.id)
-        const remote = peers.get(event.remote)
-        if (!local || !remote || local.id === remote.id) return
+        const a = Math.min(event.id, event.remote)
+        const b = Math.max(event.id, event.remote)
+        const key = `${a}:${b}`
+        const current = connections.get(key) || { a, b, count: 0 }
+        current.count = Math.max(0, current.count + delta)
 
-        const [a, b] = local.id < remote.id ? [local, remote] : [remote, local]
-        const key = `${a.id}:${b.id}`
-        const edge = activeEdges.get(key) || { a: a.id, b: b.id, count: 0 }
-        edge.count = Math.max(0, edge.count + delta)
-
-        if (edge.count === 0) activeEdges.delete(key)
-        else activeEdges.set(key, edge)
-      }
-
-      function updateSession(peer, event) {
-        if (!event.topic) return
-
-        let session = peer.sessions.get(event.topic)
-        if (!session) {
-          session = { topic: event.topic, state: 'inactive', seen: null }
-          peer.sessions.set(session.topic, session)
-        }
-
-        if (event.state) session.state = event.state
-        if (event.seen !== undefined) session.seen = event.seen
+        if (current.count === 0) connections.delete(key)
+        else connections.set(key, current)
       }
 
       function ensurePeer(event) {
@@ -756,181 +710,346 @@
         peer = {
           id: event.id,
           group: event.group,
-          conn: 0,
-          writes: 0,
           counter: event.event === 'update' && event.value !== undefined ? event.value : null,
+          conn: Number.isFinite(event.connections) ? event.connections : 0,
+          inbound: Number.isFinite(event.inbound) ? event.inbound : 0,
+          outbound: Number.isFinite(event.outbound) ? event.outbound : 0,
+          inflight: Number.isFinite(event.inflight) ? event.inflight : 0,
           sessions: new Map(),
           last: 'ready',
-          closed: false,
-          complete: false
+          closed: false
         }
         peers.set(peer.id, peer)
-        updateSession(peer, event)
+
+        if (event.topic) ensureSession(peer, event.topic)
+
         return peer
       }
 
-      function renderAll() {
-        renderStage()
-        renderEdges()
-        renderStats()
-        updateClock()
+      function ensureTopic(topic) {
+        let item = topics.get(topic)
+        if (item) return item
+
+        item = { topic, label: topic.slice(0, 6) }
+        topics.set(topic, item)
+        return item
       }
 
-      function renderStage() {
-        stage.textContent = ''
+      function ensureSession(peer, topic) {
+        ensureTopic(topic)
 
-        for (const [group, ids] of [...groups].sort((a, b) => a[0] - b[0])) {
-          const row = document.createElement('section')
-          row.className = 'group'
-
-          const label = document.createElement('div')
-          label.className = 'group-label'
-          label.textContent = `group ${group}`
-          row.append(label)
-
-          for (const id of [...ids].sort((a, b) => a - b)) {
-            row.append(createPeerCard(peers.get(id)))
-          }
-
-          stage.append(row)
+        let session = peer.sessions.get(topic)
+        if (!session) {
+          session = { topic, state: 'inactive', seen: null }
+          peer.sessions.set(topic, session)
         }
 
-        requestAnimationFrame(renderEdges)
+        return session
       }
 
-      function createPeerCard(peer) {
-        const card = document.createElement('article')
-        card.className = 'peer'
-        card.id = `peer-${peer.id}`
-        card.style.setProperty('--accent', colors[peer.group % colors.length])
-        renderPeerInto(card, peer)
-        return card
+      function resizeCanvas() {
+        const rect = canvas.getBoundingClientRect()
+        dpr = window.devicePixelRatio || 1
+        canvas.width = Math.max(1, Math.floor(rect.width * dpr))
+        canvas.height = Math.max(1, Math.floor(rect.height * dpr))
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       }
 
-      function renderPeer(peer) {
-        const card = document.getElementById(`peer-${peer.id}`)
-        if (!card) return
+      function computeLayout() {
+        const rect = canvas.getBoundingClientRect()
+        const w = rect.width
+        const h = rect.height
+        const cx = w / 2
+        const cy = h / 2
+        const min = Math.min(w, h)
+        const topicRing = min * 0.27
+        const peerRing = min * 0.43
+        const sortedGroups = [...groups].sort((a, b) => a[0] - b[0])
+        const sortedPeers = [...peers.values()].sort((a, b) => a.id - b.id)
+        const topicItems = [...topics.values()].sort((a, b) => a.topic.localeCompare(b.topic))
+        const globalTopic = topicItems.find((t) => /^0a0a0a/i.test(t.topic))
 
-        renderPeerInto(card, peer)
-        card.classList.remove('flash')
-        void card.offsetWidth
-        card.classList.add('flash')
+        layout = { peers: new Map(), topics: new Map() }
+
+        if (globalTopic) {
+          layout.topics.set(globalTopic.topic, { x: cx, y: cy, r: 28 })
+        }
+
+        for (let i = 0; i < sortedGroups.length; i++) {
+          const [group, ids] = sortedGroups[i]
+          const angle = -Math.PI / 2 + (i / sortedGroups.length) * Math.PI * 2
+          const gx = cx + Math.cos(angle) * topicRing
+          const gy = cy + Math.sin(angle) * topicRing
+          const groupTopic = topicItems.find((t) => t.topic.startsWith(hexByte(group).repeat(3)))
+
+          if (groupTopic) {
+            layout.topics.set(groupTopic.topic, { x: gx, y: gy, r: 25 })
+          }
+        }
+
+        for (let i = 0; i < sortedPeers.length; i++) {
+          const peer = sortedPeers[i]
+          const angle = -Math.PI / 2 + (i / sortedPeers.length) * Math.PI * 2
+          const px = cx + Math.cos(angle) * peerRing
+          const py = cy + Math.sin(angle) * peerRing
+          layout.peers.set(peer.id, { x: px, y: py, w: 54, h: 34 })
+        }
+
+        const unplacedTopics = topicItems.filter((t) => !layout.topics.has(t.topic))
+        for (let i = 0; i < unplacedTopics.length; i++) {
+          const angle = -Math.PI / 2 + (i / Math.max(1, unplacedTopics.length)) * Math.PI * 2
+          layout.topics.set(unplacedTopics[i].topic, {
+            x: cx + Math.cos(angle) * topicRing * 0.72,
+            y: cy + Math.sin(angle) * topicRing * 0.72,
+            r: 24
+          })
+        }
       }
 
-      function renderPeerInto(card, peer) {
-        card.className = `peer ${peer.closed ? 'closed' : ''} ${peer.complete ? 'complete' : ''} ${peer.last === 'written' ? 'written' : ''}`
-        card.style.setProperty('--accent', colors[peer.group % colors.length])
-        card.innerHTML = `
-        <div class="peer-top">
-          <div>
-            <div class="peer-id">peer ${peer.id}</div>
-          </div>
-          <span class="chip">${escapeHtml(peer.last)}</span>
-        </div>
-        <div class="statline">
-          <div class="stat"><b>${peer.counter === null ? '-' : escapeHtml(peer.counter)}</b>counter</div>
-          <div class="stat"><b>${peer.conn}</b>conn</div>
-          <div class="stat"><b>${peer.writes}</b>writes</div>
-        </div>
-        <div class="sessions">${renderPeerSessions(peer)}</div>
-      `
+      function draw() {
+        const rect = canvas.getBoundingClientRect()
+        ctx.clearRect(0, 0, rect.width, rect.height)
+        drawBackground(rect)
+        drawPeerConnections()
+        drawTopicEdges()
+        drawTopics()
+        drawPeers()
       }
 
-      function renderPeerSessions(peer) {
-        return [...peer.sessions.values()]
-          .sort((a, b) => a.topic.localeCompare(b.topic))
-          .map(
-            (session) => `
-              <div class="session-box ${classToken(session.state)}" title="${escapeHtml(session.topic)} ${escapeHtml(session.state)}">
-                <b>${session.seen === null ? '-' : escapeHtml(session.seen)}</b>
-              </div>
-            `
-          )
-          .join('')
+      function drawBackground(rect) {
+        const grid = 42
+        ctx.save()
+        ctx.strokeStyle = 'rgba(100, 122, 150, 0.055)'
+        ctx.lineWidth = 1
+        for (let x = 0; x < rect.width; x += grid) {
+          ctx.beginPath()
+          ctx.moveTo(x, 0)
+          ctx.lineTo(x, rect.height)
+          ctx.stroke()
+        }
+        for (let y = 0; y < rect.height; y += grid) {
+          ctx.beginPath()
+          ctx.moveTo(0, y)
+          ctx.lineTo(rect.width, y)
+          ctx.stroke()
+        }
+        ctx.restore()
       }
 
-      function renderEdges() {
-        links.textContent = ''
+      function drawPeerConnections() {
+        ctx.save()
+        ctx.lineCap = 'round'
 
-        const host = viz.getBoundingClientRect()
-        links.setAttribute('viewBox', `0 0 ${host.width} ${host.height}`)
-
-        for (const edge of activeEdges.values()) {
-          const a = document.getElementById(`peer-${edge.a}`)
-          const b = document.getElementById(`peer-${edge.b}`)
+        for (const edge of connections.values()) {
+          const a = layout.peers.get(edge.a)
+          const b = layout.peers.get(edge.b)
           if (!a || !b) continue
 
-          const ar = a.getBoundingClientRect()
-          const br = b.getBoundingClientRect()
-          const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
-
-          line.setAttribute('x1', ar.left + ar.width / 2 - host.left)
-          line.setAttribute('y1', ar.top + ar.height / 2 - host.top)
-          line.setAttribute('x2', br.left + br.width / 2 - host.left)
-          line.setAttribute('y2', br.top + br.height / 2 - host.top)
-          line.setAttribute('stroke-width', String(Math.min(10, 2 + edge.count)))
-          links.append(line)
+          ctx.strokeStyle = `rgba(122, 116, 108, ${Math.min(0.34, 0.12 + edge.count * 0.05)})`
+          ctx.lineWidth = Math.min(6, 1.4 + edge.count)
+          ctx.beginPath()
+          ctx.moveTo(a.x, a.y)
+          ctx.lineTo(b.x, b.y)
+          ctx.stroke()
         }
+
+        ctx.restore()
+      }
+
+      function drawTopicEdges() {
+        ctx.save()
+        ctx.lineCap = 'round'
+        ctx.font = '12px ui-monospace, monospace'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+
+        for (const peer of peers.values()) {
+          const p = layout.peers.get(peer.id)
+          if (!p) continue
+
+          for (const session of peer.sessions.values()) {
+            const t = layout.topics.get(session.topic)
+            if (!t) continue
+
+            const color = colors[session.state] || colors.inactive
+            ctx.strokeStyle = color
+            ctx.globalAlpha = session.state === 'inactive' ? 0.34 : 0.88
+            ctx.lineWidth = session.state === 'pinned' ? 3.5 : 2.4
+
+            ctx.beginPath()
+            ctx.moveTo(p.x, p.y)
+            ctx.lineTo(t.x, t.y)
+            ctx.stroke()
+
+            if (session.seen !== null) {
+              const mx = p.x * 0.58 + t.x * 0.42
+              const my = p.y * 0.58 + t.y * 0.42
+              ctx.globalAlpha = 1
+              ctx.fillStyle = '#071018'
+              roundRect(mx - 13, my - 9, 26, 18, 7)
+              ctx.fill()
+              ctx.fillStyle = color
+              ctx.fillText(String(session.seen), mx, my + 0.5)
+            }
+          }
+        }
+
+        ctx.restore()
+      }
+
+      function drawTopics() {
+        ctx.save()
+        ctx.font = '13px ui-monospace, monospace'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+
+        for (const topic of topics.values()) {
+          const pos = layout.topics.get(topic.topic)
+          if (!pos) continue
+
+          ctx.fillStyle = 'rgba(12, 18, 26, 0.96)'
+          ctx.strokeStyle = topic.label === '0a0a0a' ? '#f0bb58' : '#78b7ff'
+          ctx.lineWidth = topic.label === '0a0a0a' ? 3 : 2
+          ctx.beginPath()
+          ctx.arc(pos.x, pos.y, pos.r, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.stroke()
+
+          ctx.fillStyle = '#e7edf4'
+          ctx.fillText(topic.label, pos.x, pos.y)
+        }
+
+        ctx.restore()
+      }
+
+      function drawPeers() {
+        ctx.save()
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        const latest = latestCounter()
+
+        for (const peer of peers.values()) {
+          const pos = layout.peers.get(peer.id)
+          if (!pos) continue
+
+          const x = pos.x - pos.w / 2
+          const y = pos.y - pos.h / 2
+          const hot = peer.conn > 4
+          const synced = latest !== null && peer.counter === latest
+
+          ctx.fillStyle = peer.closed
+            ? 'rgba(40, 45, 54, 0.72)'
+            : synced
+              ? 'rgba(88, 28, 112, 0.96)'
+              : hot
+                ? 'rgba(62, 22, 32, 0.96)'
+                : 'rgba(15, 22, 31, 0.96)'
+          ctx.strokeStyle = synced ? '#d477ff' : hot ? '#ff6174' : '#3b4d65'
+          ctx.lineWidth = hot ? 2.4 : 1.4
+          roundRect(x, y, pos.w, pos.h, 10)
+          ctx.fill()
+          ctx.stroke()
+
+          ctx.fillStyle = peer.closed ? '#7d8ba0' : '#e7edf4'
+          ctx.font = '20px ui-monospace, monospace'
+          ctx.fillText(peer.counter === null ? '-' : String(peer.counter), pos.x, pos.y - 1)
+        }
+
+        ctx.restore()
       }
 
       function renderStats() {
         const counts = countEvents(log.slice(0, cursor))
         const active = [...peers.values()].filter((peer) => !peer.closed).length
-        const connected = [...peers.values()].reduce((sum, peer) => sum + peer.conn, 0)
+        const pressure = [...peers.values()].reduce((sum, peer) => sum + peer.conn, 0)
+        const hot = [...peers.values()].filter((peer) => peer.conn > 4).length
+        const latest = latestCounter()
+        const synced = [...peers.values()].filter((peer) => peer.counter === latest).length
 
         stats.innerHTML = `
-        <div class="bigstat"><b>${cursor}/${log.length}</b><span>events</span></div>
-        <div class="bigstat"><b>${active}</b><span>open peers</span></div>
-        <div class="bigstat"><b>${connected}</b><span>conn pressure</span></div>
-        <div class="bigstat"><b>${counts.written || 0}</b><span>writes</span></div>
-        <div class="bigstat"><b>${counts.update || 0}</b><span>updates</span></div>
-        <div class="bigstat"><b>${counts['session-updated'] || 0}</b><span>sessions</span></div>
-        <div class="bigstat"><b>${activeEdges.size}</b><span>edges</span></div>
-      `
+          <div class="stat"><b>${cursor}/${log.length}</b><span>events</span></div>
+          <div class="stat"><b>${active}</b><span>open peers</span></div>
+          <div class="stat"><b>${pressure}</b><span>conn pressure</span></div>
+          <div class="stat"><b>${hot}</b><span>over max</span></div>
+          <div class="stat"><b>${latest === null ? '-' : latest}</b><span>latest</span></div>
+          <div class="stat"><b>${latest === null ? '-' : synced}</b><span>synced</span></div>
+          <div class="stat"><b>${counts['auto-refresh'] || 0}</b><span>refresh</span></div>
+          <div class="stat"><b>${counts.update || 0}</b><span>updates</span></div>
+          <div class="stat"><b>${topics.size}</b><span>topics</span></div>
+          <div class="stat"><b>${connections.size}</b><span>edges</span></div>
+        `
 
         playBtn.disabled = log.length === 0
         resetBtn.disabled = log.length === 0
       }
 
       function renderEmpty() {
-        stage.innerHTML = ''
-        links.textContent = ''
         stats.innerHTML = `
-        <div class="bigstat"><b>0</b><span>events</span></div>
-        <div class="bigstat"><b>0</b><span>open peers</span></div>
-        <div class="bigstat"><b>0</b><span>conn pressure</span></div>
-        <div class="bigstat"><b>0</b><span>writes</span></div>
-        <div class="bigstat"><b>0</b><span>updates</span></div>
-        <div class="bigstat"><b>0</b><span>sessions</span></div>
-        <div class="bigstat"><b>0</b><span>edges</span></div>
-      `
+          <div class="stat"><b>0</b><span>events</span></div>
+          <div class="stat"><b>0</b><span>open peers</span></div>
+          <div class="stat"><b>0</b><span>conn pressure</span></div>
+          <div class="stat"><b>0</b><span>over max</span></div>
+          <div class="stat"><b>-</b><span>latest</span></div>
+          <div class="stat"><b>-</b><span>synced</span></div>
+          <div class="stat"><b>0</b><span>refresh</span></div>
+          <div class="stat"><b>0</b><span>updates</span></div>
+          <div class="stat"><b>0</b><span>topics</span></div>
+          <div class="stat"><b>0</b><span>edges</span></div>
+        `
+        resizeCanvas()
+        draw()
       }
 
       function appendEvent(event) {
         const row = document.createElement('div')
         row.className = 'event-row'
         row.innerHTML = `
-        <span class="time">+${event.now - minTime}ms</span>
-        <span><strong>${escapeHtml(event.event)}</strong> peer ${event.id} group ${event.group}${event.remote !== undefined ? ` to peer ${escapeHtml(event.remote)}` : ''}${event.topic ? ` topic ${escapeHtml(event.topic)}` : ''}${event.state ? ` ${escapeHtml(event.state)}` : ''}${event.seen !== undefined ? ` seen ${escapeHtml(event.seen)}` : ''}${event.value !== undefined ? ` value ${escapeHtml(event.value)}` : ''}</span>
-      `
+          <span class="time">+${event.now - minTime}ms</span>
+          <span><strong>${escapeHtml(event.event)}</strong> peer ${escapeHtml(event.id)}${event.remote !== undefined ? ` to ${escapeHtml(event.remote)}` : ''}${event.topic ? ` topic ${escapeHtml(event.topic.slice(0, 6))}` : ''}${event.state ? ` ${escapeHtml(event.state)}` : ''}${event.seen !== undefined ? ` seen ${escapeHtml(event.seen)}` : ''}${event.value !== undefined ? ` value ${escapeHtml(event.value)}` : ''}${event.connections !== undefined ? ` conn ${escapeHtml(event.connections)}` : ''}</span>
+        `
         eventsEl.prepend(row)
 
-        while (eventsEl.children.length > 80) {
+        while (eventsEl.children.length > 90) {
           eventsEl.lastElementChild.remove()
         }
       }
 
       function updateClock() {
         const duration = Math.max(1, maxTime - minTime)
-        const clamped = Math.min(replayAt, duration)
-        clockEl.textContent = `t+${Math.round(clamped)}ms`
-        bar.style.width = `${Math.min(100, (clamped / duration) * 100)}%`
+        const elapsed = Math.min(duration, replayAt)
+        clockEl.textContent = `t+${Math.max(0, Math.floor(elapsed))}ms`
+        bar.style.width = `${Math.min(100, (elapsed / duration) * 100)}%`
       }
 
       function countEvents(events) {
         const counts = {}
         for (const event of events) counts[event.event] = (counts[event.event] || 0) + 1
         return counts
+      }
+
+      function latestCounter() {
+        let latest = null
+
+        for (const peer of peers.values()) {
+          if (peer.counter === null) continue
+          if (latest === null || peer.counter > latest) latest = peer.counter
+        }
+
+        return latest
+      }
+
+      function roundRect(x, y, w, h, r) {
+        ctx.beginPath()
+        ctx.moveTo(x + r, y)
+        ctx.arcTo(x + w, y, x + w, y + h, r)
+        ctx.arcTo(x + w, y + h, x, y + h, r)
+        ctx.arcTo(x, y + h, x, y, r)
+        ctx.arcTo(x, y, x + w, y, r)
+        ctx.closePath()
+      }
+
+      function hexByte(n) {
+        return Number(n).toString(16).padStart(2, '0')
       }
 
       function escapeHtml(value) {
@@ -940,10 +1059,6 @@
           .replaceAll('>', '&gt;')
           .replaceAll('"', '&quot;')
           .replaceAll("'", '&#039;')
-      }
-
-      function classToken(value) {
-        return String(value).replaceAll(/[^a-z0-9_-]/gi, '')
       }
     </script>
   </body>
