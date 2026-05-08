@@ -7,14 +7,16 @@ const Corestore = require('corestore')
 const Autobase = require('autobase')
 const ScopeLock = require('scope-lock')
 
+const randomBytes = require(globalThis.Bare ? 'bare-crypto' : 'node:crypto').randomBytes
+
 const LOG_HUMAN = false
 
-const N_GROUPS = 5
+const N_GROUPS = 6
 const N_PEERS = 3
 
-const GLOBAL_TOPIC = Buffer.alloc(32).fill(0xa)
+const GLOBAL_TOPIC = Buffer.alloc(32).fill(0)
+GLOBAL_TOPIC.set(Buffer.from('common topic'))
 const peerids = new Map() // 'hex' -> number
-
 
 async function main() {
   const testnet = await createTestnet()
@@ -73,7 +75,7 @@ class Peer extends ReadyResource {
     const path = `${prefix}/${this.id}`
     this.root = new Corestore(path)
 
-    this.store = this.root.session()
+    this.store = this.root.namespace('counter')
     this.counter = new CounterCore(this.store, remoteKey, this._onremoteupdate.bind(this))
 
     this.dht = new DHT({ bootstrap })
@@ -83,8 +85,9 @@ class Peer extends ReadyResource {
       manual: true,
       slots: 1,
       minPeers: 1,
-      maxPeers: 4,
-      gcIdleTime: 5 * 1000
+      maxPeers: 3,
+      gcIdleTime: 5 * 1000,
+      minActiveTime: 3 * 1000
       /*
       defaultDiscoveryTimeout: 15 * 1000,
       updatedDiscoveryTimeout: 3 * 1000,
@@ -92,6 +95,12 @@ class Peer extends ReadyResource {
       autoStartupDelay: 1000
       */
     })
+
+    this._globSess = null
+
+    this._dummyTopic = randomBytes(32) // should not connect
+    this._dummyStore = this.root.namespace('dummy')
+    this._dummySess = null
 
     const lookupId = (pubkey) => peerids.get(toHex(pubkey))
 
@@ -104,12 +113,18 @@ class Peer extends ReadyResource {
 
     this.replicator.on('session-state', this._logSessionUpdate.bind(this))
 
+    const refreshInterval = 1000
     // manual refresh/gc
-    this._refresher = setInterval(async () => {
-      await this.replicator.refresh()
-      this.log('auto-refresh')
-    }, 1000)
-    this._refresher.unref()
+    setTimeout(() => {
+      this._refresher = setInterval(async () => {
+        if (this.replicator.closed) return
+        await this.replicator.refresh()
+        this.log('auto-refresh')
+      }, refreshInterval)
+      this._refresher.unref()
+
+      this.replicator.on('close', () => clearInterval(this._refresher))
+    }, refreshInterval * Math.random() /* startup jitter */)
   }
 
   log(event, payload = {}) {
@@ -137,6 +152,8 @@ class Peer extends ReadyResource {
   }
 
   _logSessionUpdate(session) {
+    if (session === this._dummySess) return // ignore dummy events
+
     this.log('session-updated', {
       topic: toHex(session.topic).slice(0, 4),
       state: session.state,
@@ -167,15 +184,29 @@ class Peer extends ReadyResource {
       })
     }
 
-    // automatic global
-    this._globSess = this.replicator.join(this.store, GLOBAL_TOPIC)
-    this._globSess.on('bump', () =>
-      this._logSessionUpdate(this._globSess)
-    )
-
-    // this._globSess.discover()
+    this._joinGlobal() // re-joined after evict + bump detection
+    this._joinDummy() // required to pressure eviction policies
 
     this.log('opened')
+  }
+
+  _joinGlobal() {
+    if (this._globSess) return // exists
+
+    this._globSess = this.replicator.join(this.store, GLOBAL_TOPIC)
+    this._globSess.on('bump', () => this._logSessionUpdate(this._globSess))
+    // on evict
+    this._globSess.on('close', () => this._globSess = null)
+    // this._globSess.discover()
+  }
+
+  _joinDummy() {
+    if (this._dummySess) return // exists
+    this._dummySess = this.replicator.join(this._dummyStore, this._dummyTopic)
+    this._dummySess.on('close', () => {
+      this._dummySess = null
+      this._joinDummy() // auto-rejoin, just keep it in pool
+    })
   }
 
   async run() {
@@ -200,8 +231,13 @@ class Peer extends ReadyResource {
     this.log('update', { value })
 
     for (const session of this.replicator.sessions.values()) {
+      if (session === this._dummySess) continue // skip
+
       session.bump(value)
     }
+
+    // Rejoin common global on bump
+    this._joinGlobal()
   }
 
   async _close() {
