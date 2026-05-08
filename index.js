@@ -18,6 +18,7 @@ const DEFAULT_DISCOVERY_TIMEOUT = 60 * 1000
 const UPDATED_DISCOVERY_TIMEOUT = 10 * 1000
 const DISCOVERY_STARTUP_DELAY = 5 * 1000 // 5s
 const AUTO_STARTUP_DELAY = 5 * 1000 // 5s
+const MIN_ACTIVE_TIME = 30 * 1000
 
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
@@ -53,7 +54,8 @@ module.exports = class Replicator extends ReadyResource {
 
       // autoswarm
       slots = DEFAULT_AUTO_SLOTS,
-      autoStartupDelay = AUTO_STARTUP_DELAY
+      autoStartupDelay = AUTO_STARTUP_DELAY,
+      minActiveTime = MIN_ACTIVE_TIME
     } = opts
 
     if (seed) this.keyPair = DHT.keyPair(seed)
@@ -104,6 +106,7 @@ module.exports = class Replicator extends ReadyResource {
     this._gcIdleTime = gcIdleTime
     this.slots = slots
     this._autoStartupDelay = autoStartupDelay
+    this._minActiveTime = minActiveTime
 
     this._defaultDiscoveryTimeout = defaultDiscoveryTimeout
     this._updatedDiscoveryTimeout = updatedDiscoveryTimeout
@@ -561,10 +564,30 @@ module.exports = class Replicator extends ReadyResource {
     await this.dialer.flush()
   }
 
+  /**
+   * Autoswarm policies
+   */
   _autoselect(now = Date.now()) {
-    const pool = Array.from(this.sessions.values())
-      // exclude discovering & manual pins
-      .filter((session) => !session.isDiscovering && !session.isPinned)
+    const pool = []
+    let slots = this.slots
+
+    for (const session of this.sessions.values()) {
+      if (session.isDiscovering) continue
+      if (session.isPinned) continue
+
+      // don't deactivate pending nor newly-started topics
+      if (session.isAuto) {
+        const timeActive = now - session._startTime
+        if (timeActive < session._startDelay + this._minActiveTime) {
+          slots-- // reserved & immovable
+          continue
+        }
+      }
+
+      pool.push(session)
+    }
+
+    if (slots < 0) throw new Error('Assertfail: negative slots')
 
     // weight prio by lexical order
     const order = new Map()
@@ -594,16 +617,16 @@ module.exports = class Replicator extends ReadyResource {
     pool.sort(heuristicSort)
 
     // autostop
-    for (let i = this.slots; i < pool.length; i++) {
+    for (let i = slots; i < pool.length; i++) {
       pool[i]._autoStop(now)
     }
 
     let active = 0
     for (const session of pool) if (session.active) active++
-    if (active >= this.slots) return // no-op
+    if (active >= slots) return // no-op
 
     // autostart
-    const limit = Math.min(this.slots - active, pool.length)
+    const limit = Math.min(slots - active, pool.length)
     for (let i = 0; i < limit; i++) {
       pool[i]._autoStart(now)
     }
