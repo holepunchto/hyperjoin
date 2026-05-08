@@ -564,10 +564,33 @@ module.exports = class Replicator extends ReadyResource {
     await this.dialer.flush()
   }
 
+  /**
+   * Autoswarm policies
+   */
   _autoselect(now = Date.now()) {
+    // don't deactivate pending nor newly-started topics
+    const immovable = new Set()
+    for (const [session, key] of this.sessions) {
+      if (!session.isAuto) continue
+
+      const timeActive = now - session._startTime
+      if (timeActive < session._startDelay + this._minActiveTime) {
+        immovable.add(key) // mark immovable
+      }
+    }
+
+    const slots = this.slots - immovable.size
+    if (slots < 0) throw new Error('Assertfail: negative slots')
+
     const pool = Array.from(this.sessions.values())
-      // exclude discovering & manual pins
-      .filter((session) => !session.isDiscovering && !session.isPinned)
+      // exclude discovering & manual pins from pool
+      .filter((session) => {
+        if (session.isDiscovering) return false
+        if (session.isPinned) return false
+        if (immovable.has(toHex(session.topic))) return false
+
+        return true
+      })
 
     // weight prio by lexical order
     const order = new Map()
@@ -576,17 +599,9 @@ module.exports = class Replicator extends ReadyResource {
       order.set(priorities[i], i)
     }
 
-    const minActiveTime = this._minActiveTime
-
     function score(session) {
       let v = 0
       v += order.get(session.priority) // primary
-
-      // don't deactivate topics that were just started
-      const timeActive = now - session._startTime
-      if (timeActive < session._startDelay + minActiveTime) {
-        v += 100 // TODO: exclude from pool, reduce usable slots
-      }
 
       // secondary; rotate over time by last start
       if (session.isAuto) {
@@ -605,16 +620,16 @@ module.exports = class Replicator extends ReadyResource {
     pool.sort(heuristicSort)
 
     // autostop
-    for (let i = this.slots; i < pool.length; i++) {
+    for (let i = slots; i < pool.length; i++) {
       pool[i]._autoStop(now)
     }
 
     let active = 0
     for (const session of pool) if (session.active) active++
-    if (active >= this.slots) return // no-op
+    if (active >= slots) return // no-op
 
     // autostart
-    const limit = Math.min(this.slots - active, pool.length)
+    const limit = Math.min(slots - active, pool.length)
     for (let i = 0; i < limit; i++) {
       pool[i]._autoStart(now)
     }
