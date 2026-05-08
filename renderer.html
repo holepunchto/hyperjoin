@@ -712,6 +712,8 @@
             break
         }
 
+        if (Number.isFinite(event.connections)) peer.conn = event.connections
+
         renderPeer(peer)
         renderEdges()
         appendEvent(event)
