@@ -45,6 +45,7 @@ General
 - `seed`: derive the replicator keypair from a seed
 - `maxPeers`: drop connections above
 - `minPeers`: minimum connections to keep
+- `maxParallel`: max parallel outbound dials
 - `slots`: auto-rotation slots
 - `gcIdleTime`: Evict idle sessions exceeding time
 - `defaultDiscoveryTimeout`: initial discovery lifetime
@@ -62,12 +63,6 @@ Transport
 - `port`: bind the DHT socket to a fixed port
 - `firewall`: filter inbound and outbound peers
 - `relayThrough`: relay selector for outbound connections
-
-Dialer
-
-- `maxParallel`: max parallel outbound dials
-- `maxClientConnections`: max concurrent outbound connections
-- `maxServerConnections`: max concurrent inbound connections
 
 ### Events
 
