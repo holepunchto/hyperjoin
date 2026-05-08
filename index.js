@@ -18,6 +18,7 @@ const DEFAULT_DISCOVERY_TIMEOUT = 60 * 1000
 const UPDATED_DISCOVERY_TIMEOUT = 10 * 1000
 const DISCOVERY_STARTUP_DELAY = 5 * 1000 // 5s
 const AUTO_STARTUP_DELAY = 5 * 1000 // 5s
+const MIN_ACTIVE_TIME = 30 * 1000
 
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
@@ -53,7 +54,8 @@ module.exports = class Replicator extends ReadyResource {
 
       // autoswarm
       slots = DEFAULT_AUTO_SLOTS,
-      autoStartupDelay = AUTO_STARTUP_DELAY
+      autoStartupDelay = AUTO_STARTUP_DELAY,
+      minActiveTime = MIN_ACTIVE_TIME
     } = opts
 
     if (seed) this.keyPair = DHT.keyPair(seed)
@@ -104,6 +106,7 @@ module.exports = class Replicator extends ReadyResource {
     this._gcIdleTime = gcIdleTime
     this.slots = slots
     this._autoStartupDelay = autoStartupDelay
+    this._minActiveTime = minActiveTime
 
     this._defaultDiscoveryTimeout = defaultDiscoveryTimeout
     this._updatedDiscoveryTimeout = updatedDiscoveryTimeout
@@ -573,9 +576,17 @@ module.exports = class Replicator extends ReadyResource {
       order.set(priorities[i], i)
     }
 
+    const minActiveTime = this._minActiveTime
+
     function score(session) {
       let v = 0
       v += order.get(session.priority) // primary
+
+      // don't deactivate topics that were just started
+      const timeActive = now - session._startTime
+      if (timeActive < session._startDelay + minActiveTime) {
+        v += 100 // TODO: exclude from pool, reduce usable slots
+      }
 
       // secondary; rotate over time by last start
       if (session.isAuto) {
