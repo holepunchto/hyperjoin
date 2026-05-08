@@ -39,7 +39,7 @@ module.exports = class Replicator extends ReadyResource {
       firewall = allowAll,
       suspended,
       autoswarm = true,
-      manual = true,
+      manual = false,
       interval = AUTO_REFRESH_INTERVAL,
       gcDisabled = false,
 
