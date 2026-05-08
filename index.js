@@ -37,6 +37,7 @@ module.exports = class Replicator extends ReadyResource {
       minPeers = MIN_PEERS,
       maxPeers = MAX_PEERS,
       maxParallel,
+      nomad = false,
       firewall = allowAll,
       suspended,
       autoswarm = true,
@@ -100,6 +101,7 @@ module.exports = class Replicator extends ReadyResource {
 
     this._minPeers = minPeers
     this._maxPeers = maxPeers
+    this._nomad = nomad
 
     this.autoswarm = autoswarm
     this._autoRefreshInterval = interval
@@ -509,7 +511,22 @@ module.exports = class Replicator extends ReadyResource {
           connections[i]._evicted = true
           const p = this._evictConnection(connections[i], ERR_MAXPEERS)
           evictions.push(p)
+          connectionsEvicted++
         }
+      }
+    }
+
+    // Force peer rotation
+    // TODO: do this only when connections have been fully saturated over
+    // a extended period of time
+    if (this._nomad && !connectionsEvicted && this.connectionCount === this._maxPeers) {
+      const connections = Array.from(this.connections).filter((c) => !c._evicted)
+      const connection = connections[Math.floor(Math.random() * connections.length)]
+
+      if (connection) {
+        connection._evicted = true
+        evictions.push(this._evictConnection(connection, ERR_MAXPEERS))
+        connectionsEvicted++
       }
     }
 
@@ -540,6 +557,7 @@ module.exports = class Replicator extends ReadyResource {
     const done = []
 
     for (const sess of this.sessions.values()) {
+      if (sess.closing || sess.closed) continue
       done.push(sess.refresh(now)) // applies state
     }
 
@@ -556,6 +574,7 @@ module.exports = class Replicator extends ReadyResource {
   async flush() {
     const pending = []
     for (const sess of this.sessions.values()) {
+      if (sess.closing || sess.closed || sess.state === 'destroyed') continue
       pending.push(sess.flush())
     }
     await Promise.all(pending)
@@ -574,6 +593,7 @@ module.exports = class Replicator extends ReadyResource {
     for (const session of this.sessions.values()) {
       if (session.isDiscovering) continue
       if (session.isPinned) continue
+      if (session.closing || session.closed) continue
 
       // don't deactivate pending nor newly-started topics
       if (session.isAuto) {
