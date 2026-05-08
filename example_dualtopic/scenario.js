@@ -1,4 +1,4 @@
-const Replicator = require('.')
+const Replicator = require('..')
 const ReadyResource = require('ready-resource')
 const DHT = require('hyperdht')
 const createTestnet = require('hyperdht/testnet')
@@ -90,7 +90,8 @@ class Peer extends ReadyResource {
       gcIdleTime: 5 * 1000,
       minActiveTime: 5 * 1000,
       defaultDiscoveryTimeout: 5 * 1000,
-      updatedDiscoveryTimeout: 3 * 1000
+      updatedDiscoveryTimeout: 3 * 1000,
+      nomad: !!(this.id % N_PEERS) // every first peer in group is now a desktop/nomad
       /*
       discoveryStartupDelay: 0,
       autoStartupDelay: 1000

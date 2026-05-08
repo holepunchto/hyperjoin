@@ -17,9 +17,9 @@ speed up and capture the behavior.
 ### Usage
 
 Generate the log:
+
 ```bash
 bare scenario.js | tee out.ndjson
 ```
 
 Open `renderer.html` in browser; drag & drop the log.
-
