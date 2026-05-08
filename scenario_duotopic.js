@@ -7,6 +7,8 @@ const Corestore = require('corestore')
 const Autobase = require('autobase')
 const ScopeLock = require('scope-lock')
 
+const LOG_HUMAN = false
+
 const N_GROUPS = 5
 const N_PEERS = 3
 
@@ -80,10 +82,8 @@ class Peer extends ReadyResource {
       dht: this.dht,
       interval: 1000,
       slots: 1,
-      minPeers: 2,
+      minPeers: 1,
       maxPeers: 4,
-      maxClientConnections: 2,
-      maxServerConnections: 2,
       gcIdleTime: 5 * 1000
       /*
       defaultDiscoveryTimeout: 15 * 1000,
@@ -106,7 +106,7 @@ class Peer extends ReadyResource {
   }
 
   log(event, payload = {}) {
-    if (!this._detailed) {
+    if (LOG_HUMAN) {
       // readable
       console.log('id', this.id, 'group', this.group, 'event', event, 'view', this.counter.last)
     } else {
