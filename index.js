@@ -568,29 +568,26 @@ module.exports = class Replicator extends ReadyResource {
    * Autoswarm policies
    */
   _autoselect(now = Date.now()) {
-    // don't deactivate pending nor newly-started topics
-    const immovable = new Set()
-    for (const [session, key] of this.sessions) {
-      if (!session.isAuto) continue
+    const pool = []
+    let slots = this.slots
 
-      const timeActive = now - session._startTime
-      if (timeActive < session._startDelay + this._minActiveTime) {
-        immovable.add(key) // mark immovable
+    for (const session of this.sessions.values()) {
+      if (session.isDiscovering) continue
+      if (session.isPinned) continue
+
+      // don't deactivate pending nor newly-started topics
+      if (session.isAuto) {
+        const timeActive = now - session._startTime
+        if (timeActive < session._startDelay + this._minActiveTime) {
+          slots-- // reserved & immovable
+          continue
+        }
       }
+
+      pool.push(session)
     }
 
-    const slots = this.slots - immovable.size
     if (slots < 0) throw new Error('Assertfail: negative slots')
-
-    const pool = Array.from(this.sessions.values())
-      // exclude discovering & manual pins from pool
-      .filter((session) => {
-        if (session.isDiscovering) return false
-        if (session.isPinned) return false
-        if (immovable.has(toHex(session.topic))) return false
-
-        return true
-      })
 
     // weight prio by lexical order
     const order = new Map()
