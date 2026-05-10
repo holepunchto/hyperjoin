@@ -10,6 +10,7 @@ const {
   seedB,
   seedC,
   spawnPeer,
+  timeout,
   toHex
 } = require('./helpers/backports')
 
@@ -101,6 +102,50 @@ test('GC connections with no active mux sessions', async (t) => {
 
   await p1.cores[0].append(b4a.from('gc-kept'))
   t.alike(await remote[0].get(2), b4a.from('gc-kept'), 'replication survives gc on the kept peer')
+
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await testnet.destroy()
+})
+
+test('GC preserves stable connections over rookies', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, {
+    bootstrap,
+    seed: seedA,
+    minPeers: 0,
+    maxPeers: 1
+  })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
+
+  const remote2 = await joinRemote(p2, p1)
+  await remote2[0].get(0)
+
+  const p2Key = toHex(p2.replicator.peerId)
+  const p3Key = toHex(p3.replicator.peerId)
+
+  await timeout(30)
+
+  const p3Connected = onceEvent(p1.replicator, 'connected')
+  const remote3 = await joinRemote(p3, p1)
+  await remote3[0].get(0)
+  await p3Connected
+
+  t.is(p1.replicator.connectionCount, 2, 'p1 is over cap before gc')
+  t.ok(p1.replicator.getConnection(p2Key)._protomuxSessions() > 0, 'stable peer is active')
+  t.ok(p1.replicator.getConnection(p3Key)._protomuxSessions() > 0, 'rookie peer is active')
+
+  await p1.replicator._gc()
+
+  t.alike(
+    Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)),
+    [p2Key],
+    'gc keeps the stable active connection'
+  )
 
   await p1.destroy()
   await p2.destroy()
