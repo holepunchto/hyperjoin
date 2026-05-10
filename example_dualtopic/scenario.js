@@ -11,8 +11,8 @@ const randomBytes = require(globalThis.Bare ? 'bare-crypto' : 'node:crypto').ran
 
 const LOG_HUMAN = false
 
-const N_GROUPS = 4
-const N_PEERS = 3
+const N_GROUPS = 10
+const N_PEERS = 4
 const TARGET_VALUE = 50
 
 const GLOBAL_TOPIC = Buffer.alloc(32).fill(0)
@@ -91,7 +91,7 @@ class Peer extends ReadyResource {
       minActiveTime: 5 * 1000,
       defaultDiscoveryTimeout: 5 * 1000,
       updatedDiscoveryTimeout: 3 * 1000,
-      nomad: !!(this.id % N_PEERS) // every first peer in group is now a desktop/nomad
+      nomad: 10 * 1000
       /*
       discoveryStartupDelay: 0,
       autoStartupDelay: 1000
@@ -196,6 +196,8 @@ class Peer extends ReadyResource {
     if (this._globSess) return // exists
 
     this._globSess = this.replicator.join(this.store, GLOBAL_TOPIC)
+    this.counter.value((v) => this._globSess.bump(v)).catch(console.error)
+
     this._globSess.on('bump', () => this._logSessionUpdate(this._globSess))
     // on evict
     this._globSess.on('close', () => {
@@ -221,7 +223,9 @@ class Peer extends ReadyResource {
 
   async run() {
     while ((await this.counter.value()) < TARGET_VALUE) {
-      const chosen = !(this.id % 5)
+      const nWriters = 2
+      const mod = Math.floor((N_GROUPS * N_PEERS) / nWriters)
+      const chosen = !(this.id % mod)
 
       if (chosen && this.counter.writable) {
         await this.counter.bump()
