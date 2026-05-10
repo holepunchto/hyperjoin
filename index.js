@@ -497,15 +497,28 @@ module.exports = class Replicator extends ReadyResource {
         }
       }
 
-      // TODO: avoid dropping if:
-      // - belongs to pinned topic
-      // - stable & good throughput
+      // Heuristic evict if still over max-cap
       const nHeuristicEvict = nEvict - connectionsEvicted
+
       if (nHeuristicEvict > 0) {
-        // Evict by last activity
+        // TODO: avoid eviction for connection:
+        // - from pinned topic
+        // - good throughput
         const connections = Array.from(this.connections)
           .filter((c) => !c._evicted)
-          .sort((a, b) => a.lastActivity - b.lastActivity)
+          .sort((a, b) => {
+            const aRookie = a._survived < 1
+            const bRookie = b._survived < 1
+
+            // Evict rookie over established
+            if (aRookie !== bRookie) return aRookie ? -1 : 1
+
+            // Evict newest, comparing 2 rookies.
+            if (aRookie) return b.connectedTime - a.connectedTime
+
+            // Evict stale, comparing 2 established
+            return a.lastActivity - b.lastActivity
+          })
 
         for (let i = 0; i < nHeuristicEvict; i++) {
           connections[i]._evicted = true
@@ -530,9 +543,12 @@ module.exports = class Replicator extends ReadyResource {
       }
     }
 
-    await Promise.all(evictions)
+    for (const connection of this.connections) {
+      if (connection._evicted) continue
+      connection._survived++
+    }
 
-    // TODO: Evict long-term idle (no bytes change)
+    await Promise.all(evictions)
 
     this.dialer.collectGarbage()
 
@@ -728,6 +744,7 @@ class Connection {
     this.bytesWritten = -1
     this.lastActivity = -1
     this.refresh()
+    this._survived = 0 // incremented on gc
   }
 
   get protomux() {
@@ -736,6 +753,10 @@ class Connection {
 
   get info() {
     return this.replicator.dialer.lookup(this.peerId)
+  }
+
+  get connectedTime() {
+    return this.info.connectedTime
   }
 
   isIdle(now = Date.now()) {
