@@ -8,9 +8,8 @@ const Session = require('./lib/session')
 const { getStreamError } = require('streamx')
 
 const AUTO_REFRESH_INTERVAL = 5000
-const MIN_PEERS = 20
-const MAX_PEERS = 40
 
+// sessions
 const DEFAULT_AUTO_SLOTS = 8
 const DEFAULT_SWARM_GC_IDLE_TIME = 30 * 1000
 
@@ -19,6 +18,11 @@ const UPDATED_DISCOVERY_TIMEOUT = 10 * 1000
 const DISCOVERY_STARTUP_DELAY = 5 * 1000 // 5s
 const AUTO_STARTUP_DELAY = 5 * 1000 // 5s
 const MIN_ACTIVE_TIME = 30 * 1000
+
+// connections
+const MIN_PEERS = 20
+const MAX_PEERS = 40
+const NOMAD_THRESHOLD = 60 * 1000
 
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
@@ -37,7 +41,7 @@ module.exports = class Replicator extends ReadyResource {
       minPeers = MIN_PEERS,
       maxPeers = MAX_PEERS,
       maxParallel,
-      nomad = false,
+      nomad = NOMAD_THRESHOLD,
       firewall = allowAll,
       suspended,
       autoswarm = true,
@@ -102,6 +106,7 @@ module.exports = class Replicator extends ReadyResource {
     this._minPeers = minPeers
     this._maxPeers = maxPeers
     this._nomad = nomad
+    this._lastConnectionEvict = 0
 
     this.autoswarm = autoswarm
     this._autoRefreshInterval = interval
@@ -472,7 +477,7 @@ module.exports = class Replicator extends ReadyResource {
       connectionsEvicted++
     }
 
-    // Evict idle sessions
+    // GC idle sessions
 
     for (const session of this.sessions.values()) {
       if (!session._shouldEvict(now)) continue
@@ -480,59 +485,83 @@ module.exports = class Replicator extends ReadyResource {
       sessionsEvicted++
     }
 
-    // Evict idle connections
+    // GC Connections
+
+    if (!this._lastConnectionEvict) this._lastConnectionEvict = now
+
+    const gcConn = (connection, reason = ERR_IDLE) => {
+      connection._evicted = true
+      evictions.push(this._evictConnection(connection, reason))
+      connectionsEvicted++
+      this._lastConnectionEvict = now
+    }
 
     if (this.connectionCount > this._maxPeers) {
       const nEvict = this.connectionCount - this._maxPeers
 
+      // Evict idle connections
       for (const connection of this.connections) {
         if (!connection.isIdle(now)) continue
 
-        connection._evicted = true
-        evictions.push(this._evictConnection(connection, ERR_IDLE))
-        connectionsEvicted++
+        gcConn(connection, ERR_IDLE)
 
-        if (this.connectionCount <= this._minPeers) {
+        if (connectionsEvicted >= nEvict) {
           break // target reached
         }
       }
 
-      // TODO: avoid dropping if:
-      // - belongs to pinned topic
-      // - stable & good throughput
+      // Heuristic evict if still over max-cap
       const nHeuristicEvict = nEvict - connectionsEvicted
+
       if (nHeuristicEvict > 0) {
-        // Evict by last activity
+        // TODO: avoid eviction for connection:
+        // - from pinned topic
+        // - good throughput
         const connections = Array.from(this.connections)
           .filter((c) => !c._evicted)
-          .sort((a, b) => a.lastActivity - b.lastActivity)
+          .sort((a, b) => {
+            const aRookie = a._survived < 1
+            const bRookie = b._survived < 1
+
+            // Evict rookie over established
+            if (aRookie !== bRookie) return aRookie ? -1 : 1
+
+            // Evict newest, comparing 2 rookies.
+            if (aRookie) return b.connectedTime - a.connectedTime
+
+            // Evict stale, comparing 2 established
+            return a.lastActivity - b.lastActivity
+          })
 
         for (let i = 0; i < nHeuristicEvict; i++) {
-          connections[i]._evicted = true
-          const p = this._evictConnection(connections[i], ERR_MAXPEERS)
-          evictions.push(p)
-          connectionsEvicted++
+          gcConn(connections[i], ERR_MAXPEERS)
         }
       }
     }
 
-    // Force peer rotation
-    // TODO: do this only when connections have been fully saturated over
-    // a extended period of time
-    if (this._nomad && !connectionsEvicted && this.connectionCount === this._maxPeers) {
+    // Force peer rotation when fully saturated over extend period of time.
+    const treshold = this._nomad + Math.random() * Math.max(this._nomad, 10000)
+    if (
+      !connectionsEvicted && // nothing evicted
+      this.connectionCount === this._maxPeers && // at max cap
+      now - this._lastConnectionEvict > treshold // topology growing stale
+    ) {
       const connections = Array.from(this.connections).filter((c) => !c._evicted)
       const connection = connections[Math.floor(Math.random() * connections.length)]
 
       if (connection) {
-        connection._evicted = true
-        evictions.push(this._evictConnection(connection, ERR_MAXPEERS))
-        connectionsEvicted++
+        gcConn(connection, ERR_IDLE)
       }
+    }
+
+    for (const connection of this.connections) {
+      if (connection._evicted) continue
+      connection._survived++
     }
 
     await Promise.all(evictions)
 
-    // TODO: Evict long-term idle (no bytes change)
+    // GC Peer cache
 
     this.dialer.collectGarbage()
 
@@ -728,6 +757,7 @@ class Connection {
     this.bytesWritten = -1
     this.lastActivity = -1
     this.refresh()
+    this._survived = 0 // incremented on gc
   }
 
   get protomux() {
@@ -736,6 +766,10 @@ class Connection {
 
   get info() {
     return this.replicator.dialer.lookup(this.peerId)
+  }
+
+  get connectedTime() {
+    return this.info.connectedTime
   }
 
   isIdle(now = Date.now()) {
