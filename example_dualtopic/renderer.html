@@ -266,8 +266,21 @@
       }
 
       .sample-edge.conn {
-        --edge: #7a746c;
-        --edge-opacity: 0.28;
+        --edge: #c6a45d;
+        --edge-opacity: 0.52;
+      }
+
+      .sample-edge.conn::after {
+        content: '';
+        position: absolute;
+        top: 4px;
+        right: -1px;
+        width: 0;
+        height: 0;
+        border-top: 6px solid transparent;
+        border-bottom: 6px solid transparent;
+        border-left: 9px solid #c6a45d;
+        opacity: 0.72;
       }
 
       .sample-edge.pinned {
@@ -422,7 +435,9 @@
             <h3>Connection</h3>
             <div class="legend-item">
               <span class="sample-edge conn"></span>
-              <span>Warm gray edge: peer connection.</span>
+              <span
+                >Muted yellow edge: peer connection; arrow points toward the accepting peer.</span
+              >
             </div>
 
             <h3>Session</h3>
@@ -448,7 +463,7 @@
         <aside class="panel side">
           <div class="stats" id="stats"></div>
           <div class="legend">
-            Gray peer edges are transport connections. Colored topic edges are ReplicatorSession
+            Yellow peer edges are transport connections. Colored topic edges are ReplicatorSession
             state; numbers on those edges are session seen values.
           </div>
           <div class="events" id="events"></div>
@@ -696,8 +711,12 @@
         const a = Math.min(event.id, event.remote)
         const b = Math.max(event.id, event.remote)
         const key = `${a}:${b}`
-        const current = connections.get(key) || { a, b, count: 0 }
+        const current = connections.get(key) || { a, b, count: 0, from: event.id, to: event.remote }
         current.count = Math.max(0, current.count + delta)
+        if (delta > 0) {
+          current.from = event.id
+          current.to = event.remote
+        }
 
         if (current.count === 0) connections.delete(key)
         else connections.set(key, current)
@@ -769,7 +788,7 @@
         const topicItems = [...topics.values()].sort((a, b) => a.topic.localeCompare(b.topic))
         const globalTopic = topicItems.find((t) => /^0a0a0a/i.test(t.topic))
 
-        layout = { peers: new Map(), topics: new Map() }
+        layout = { peers: new Map(), topics: new Map(), cx, cy, peerRing }
 
         if (globalTopic) {
           layout.topics.set(globalTopic.topic, { x: cx, y: cy, r: 28 })
@@ -837,23 +856,86 @@
       }
 
       function drawPeerConnections() {
+        const rect = canvas.getBoundingClientRect()
         ctx.save()
         ctx.lineCap = 'round'
 
         for (const edge of connections.values()) {
-          const a = layout.peers.get(edge.a)
-          const b = layout.peers.get(edge.b)
-          if (!a || !b) continue
+          const from = layout.peers.get(edge.from)
+          const to = layout.peers.get(edge.to)
+          if (!from || !to) continue
 
-          ctx.strokeStyle = `rgba(122, 116, 108, ${Math.min(0.34, 0.12 + edge.count * 0.05)})`
+          const alpha = Math.min(0.48, 0.22 + edge.count * 0.07)
+          ctx.strokeStyle = `rgba(198, 164, 93, ${alpha})`
           ctx.lineWidth = Math.min(6, 1.4 + edge.count)
           ctx.beginPath()
-          ctx.moveTo(a.x, a.y)
-          ctx.lineTo(b.x, b.y)
+          const curve = drawOuterPeerCurve(from, to, rect)
           ctx.stroke()
+          drawConnectionArrow(curve, alpha)
         }
 
         ctx.restore()
+      }
+
+      function drawOuterPeerCurve(a, b, rect) {
+        const cx = layout.cx ?? rect.width / 2
+        const cy = layout.cy ?? rect.height / 2
+        const ax = a.x - cx
+        const ay = a.y - cy
+        const bx = b.x - cx
+        const by = b.y - cy
+        const ar = Math.hypot(ax, ay) || 1
+        const br = Math.hypot(bx, by) || 1
+        const box = Math.max(a.w || 0, a.h || 0, b.w || 0, b.h || 0) * 0.58
+        const outer = Math.max(layout.peerRing || 0, ar, br) + box + 42
+        const c1x = cx + (ax / ar) * outer
+        const c1y = cy + (ay / ar) * outer
+        const c2x = cx + (bx / br) * outer
+        const c2y = cy + (by / br) * outer
+
+        ctx.moveTo(a.x, a.y)
+        ctx.bezierCurveTo(c1x, c1y, c2x, c2y, b.x, b.y)
+
+        return { x0: a.x, y0: a.y, x1: c1x, y1: c1y, x2: c2x, y2: c2y, x3: b.x, y3: b.y }
+      }
+
+      function drawConnectionArrow(curve, alpha) {
+        const t = 0.78
+        const p = cubicPoint(curve, t)
+        const q = cubicPoint(curve, Math.max(0, t - 0.04))
+        const angle = Math.atan2(p.y - q.y, p.x - q.x)
+        const size = 8
+
+        ctx.save()
+        ctx.translate(p.x, p.y)
+        ctx.rotate(angle)
+        ctx.fillStyle = `rgba(224, 187, 96, ${Math.min(0.82, alpha + 0.22)})`
+        ctx.beginPath()
+        ctx.moveTo(size, 0)
+        ctx.lineTo(-size * 0.65, -size * 0.55)
+        ctx.lineTo(-size * 0.32, 0)
+        ctx.lineTo(-size * 0.65, size * 0.55)
+        ctx.closePath()
+        ctx.fill()
+        ctx.restore()
+      }
+
+      function cubicPoint(curve, t) {
+        const mt = 1 - t
+        const mt2 = mt * mt
+        const t2 = t * t
+        return {
+          x:
+            mt2 * mt * curve.x0 +
+            3 * mt2 * t * curve.x1 +
+            3 * mt * t2 * curve.x2 +
+            t2 * t * curve.x3,
+          y:
+            mt2 * mt * curve.y0 +
+            3 * mt2 * t * curve.y1 +
+            3 * mt * t2 * curve.y2 +
+            t2 * t * curve.y3
+        }
       }
 
       function drawTopicEdges() {
