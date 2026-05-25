@@ -198,6 +198,15 @@ module.exports = class Replicator extends ReadyResource {
     return !!this.getConnection(peerId) || this._inflight.has(peerId)
   }
 
+  get activeSessions() {
+    const active = []
+    for (const session of this.sessions.values()) {
+      if (!session.active || session._suspended) continue
+      active.push(session)
+    }
+    return active
+  }
+
   _selectRelay(force) {
     if (!this.relayThrough) return null
     return this.relayThrough(force, this)
