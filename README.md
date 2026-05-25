@@ -92,8 +92,24 @@ for (const [topic, session] of rep.sessions) {
 ```
 
 #### `rep.on('dropped', (count) => {})`
-
 Fired after GC drops connections. `count` is the number dropped.
+
+
+### Getters
+
+#### `rep.connectionCount`
+Total amount of active connections.
+
+#### `rep.connecting`
+Amount of outbound connections in-flight.
+
+#### `rep.connections`
+Returns iterator over all established connections.
+
+#### `rep.activeSessions`
+Returns list of active sessions.
+
+### Methods
 
 ### `await rep.ready()`
 
