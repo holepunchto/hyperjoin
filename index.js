@@ -97,6 +97,7 @@ module.exports = class Replicator extends ReadyResource {
 
     this.destroyed = false
     this.suspended = suspended
+    this._suspending = Promise.resolve()
 
     this.sessions = new Map() // hex(discoveryKey) -> Session
     this.inbound = new Map() // hex(peerId) -> Connection
@@ -197,14 +198,30 @@ module.exports = class Replicator extends ReadyResource {
     return !!this.getConnection(peerId) || this._inflight.has(peerId)
   }
 
+  get activeSessions() {
+    const active = []
+    for (const session of this.sessions.values()) {
+      if (!session.active || session._suspended) continue
+      active.push(session)
+    }
+    return active
+  }
+
   _selectRelay(force) {
     if (!this.relayThrough) return null
     return this.relayThrough(force, this)
   }
 
-  async suspend({ log = noop } = {}) {
-    if (this.suspended) return
+  suspend({ log = noop } = {}) {
+    if (!this.suspended) {
+      this._suspending = this._beginSuspension({ log })
+      this.suspended = true
+    }
 
+    return this._suspending
+  }
+
+  async _beginSuspension({ log = noop } = {}) {
     const pending = []
     const suspending = [this.server.suspend({ log })]
 
@@ -218,7 +235,6 @@ module.exports = class Replicator extends ReadyResource {
 
     this.dialer.suspend({ log })
 
-    this.suspended = true
     this._inflight.clear()
     this._stopAutoRefresh()
 

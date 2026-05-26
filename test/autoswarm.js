@@ -182,20 +182,15 @@ test('autoswarm: replicator activates sessions', async (t) => {
   await swarm.propagateWriters()
   await Promise.all(joins)
 
-  t.is(listActive(p1).length, 0)
+  t.is(p1.replicator.activeSessions.length, 0)
 
   await p1.replicator.refresh()
-  t.is(listActive(p1).length, slots, 'topics auto activate')
+  t.is(p1.replicator.activeSessions.length, slots, 'topics auto activate')
+
+  await p1.replicator.suspend()
+  t.is(p1.replicator.activeSessions.length, 0, 'topics unannounced')
 
   await swarm.destroy()
-
-  function listActive(peer) {
-    const active = []
-    for (const [key, session] of peer.replicator.sessions) {
-      if (session.active) active.push(key)
-    }
-    return active
-  }
 })
 
 function toHex(buffer) {
