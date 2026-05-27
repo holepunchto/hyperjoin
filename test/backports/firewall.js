@@ -72,6 +72,69 @@ test('firewalled client - bad server is rejected', async (t) => {
   await testnet.destroy()
 })
 
+test('async firewall - client allows good server', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, backoffs: BACKOFFS, jitter: 0 })
+  const p2 = await spawnPeer(t, {
+    bootstrap,
+    seed: seedB,
+    backoffs: BACKOFFS,
+    jitter: 0,
+    firewall: async () => false
+  })
+
+  const connected = new Promise((resolve) => p2.replicator.once('connected', resolve))
+
+  p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey, {
+    discover: true
+  })
+
+  await p2.replicator.flush()
+  await connected
+
+  t.alike(p2.replicator.connectionCount, 1, 'client connected')
+  t.alike(p2.replicator.stats.bannedPeers, 0, 'client did not ban good server')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
+test('async firewall - server allows good client', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, backoffs: BACKOFFS, jitter: 0 })
+  const p2 = await spawnPeer(t, {
+    bootstrap,
+    seed: seedB,
+    backoffs: BACKOFFS,
+    jitter: 0,
+    firewall: async () => false
+  })
+
+  const server = [...p2.replicator.sessions.values()][0]
+  await server.flush()
+
+  const accepted = new Promise((resolve) => p2.replicator.once('connected', resolve))
+  const client = p1.replicator.join(p1.store.session(), p2.cores[0].discoveryKey, {
+    discover: true
+  })
+
+  await client.flush()
+  await p1.replicator.flush()
+  const connected = await Promise.race([accepted, timeout(1000).then(() => false)])
+
+  t.ok(connected, 'server accepted client')
+  t.alike(p2.replicator.stats.bannedPeers, 0, 'server did not ban good client')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
 test('firewalled server - rejection does not trigger retry cascade', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet

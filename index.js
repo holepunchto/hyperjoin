@@ -381,7 +381,7 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
-  _handleFirewall(remotePublicKey, payload) {
+  async _handleFirewall(remotePublicKey, payload) {
     if (b4a.equals(remotePublicKey, this.keyPair.publicKey)) return true
 
     return this.dialer.handleFirewall(remotePublicKey, payload)
@@ -408,12 +408,19 @@ module.exports = class Replicator extends ReadyResource {
 
     const peerInfo = this.dialer.lookup(peer.publicKey)
 
-    // TODO: Support async firewalling at some point.
-    if (this._handleFirewall(peerInfo.publicKey, null)) {
-      return
+    this._inflight.add(hex)
+
+    let firewalled = true
+    try {
+      firewalled = await this._handleFirewall(peerInfo.publicKey, null)
+    } finally {
+      // userhandler threw or firewalled - clear ref
+      if (firewalled) this._inflight.delete(hex)
     }
 
-    this._inflight.add(hex)
+    if (firewalled) {
+      return
+    }
 
     let stream
     let error = null
