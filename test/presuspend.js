@@ -18,7 +18,7 @@ test('presuspend() enters background mode', async (t) => {
   t.is(rep1.activeSessions.length, 0)
   t.is(rep1.connectionCount, 0)
 
-  const connected = new Promise(resolve => p1.replicator.on('connected', resolve))
+  const connected = new Promise((resolve) => p1.replicator.on('connected', resolve))
 
   const session1 = await p1.join(topic)
   await p2.join(topic)

@@ -176,7 +176,7 @@ module.exports = class Replicator extends ReadyResource {
     return this.dialer.peers
   }
 
-  get isPresuspended () {
+  get isPresuspended() {
     return !!this._presuspending
   }
 
