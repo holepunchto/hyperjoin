@@ -98,6 +98,7 @@ module.exports = class Replicator extends ReadyResource {
     this.destroyed = false
     this.suspended = suspended
     this._suspending = Promise.resolve()
+    this._presuspending = null
 
     this.sessions = new Map() // hex(discoveryKey) -> Session
     this.inbound = new Map() // hex(peerId) -> Connection
@@ -175,6 +176,10 @@ module.exports = class Replicator extends ReadyResource {
     return this.dialer.peers
   }
 
+  get isPresuspended() {
+    return !!this._presuspending
+  }
+
   *_connections() {
     yield* this.inbound.values()
     yield* this.outbound.values()
@@ -222,6 +227,8 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _beginSuspension({ log = noop } = {}) {
+    if (this._presuspending) await this._presuspending
+
     const pending = []
     const suspending = [this.server.suspend({ log })]
 
@@ -245,7 +252,23 @@ module.exports = class Replicator extends ReadyResource {
     await Promise.all(pending)
   }
 
+  presuspend() {
+    if (this._presuspending) return this._presuspending
+
+    this._presuspending = Promise.resolve()
+      .then(() => this.refresh())
+      .then(() => this.flush())
+
+    return this._presuspending
+  }
+
   async resume({ log = noop } = {}) {
+    if (this._presuspending) {
+      await this._presuspending
+      this._presuspending = null
+      this.dialer._attemptClientConnections()
+    }
+
     if (!this.suspended) return
 
     await this.dht.resume({ log })
@@ -392,8 +415,9 @@ module.exports = class Replicator extends ReadyResource {
       this.destroyed || // replicator begin-teardown
       this.suspended || // replicator
       this.closed || // ready-resource fully torn down
-      this.closing
-    ) // ready-resource synonymous w/ destroyed
+      this.closing ||
+      this.isPresuspended
+    )
   }
 
   async _connect(peer, queued, topic) {
@@ -602,8 +626,6 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async refresh(now = Date.now()) {
-    await this.flush() // TODO: blocks unnanounce
-
     this._autoselect(now) // updates sessions
 
     const done = []

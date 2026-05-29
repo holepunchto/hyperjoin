@@ -168,6 +168,3 @@ test('root close closes replicator', async (t) => {
 
   await testnet.destroy()
 })
-
-test.skip('Sessions are garbage collected', () => {})
-test.skip('sessions are garbage collected & reactivated', () => {})

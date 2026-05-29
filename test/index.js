@@ -9,6 +9,7 @@ async function runTests() {
 
   await import('./basic.js')
   await import('./autoswarm.js')
+  await import('./presuspend.js')
   await import('./backports/bulk-timer.js')
   await import('./backports/firewall.js')
   await import('./backports/retry-timer.js')
