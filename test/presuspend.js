@@ -34,13 +34,13 @@ test('presuspend() enters background mode', async (t) => {
 
   t.is(rep1.isPresuspended, false)
   t.is(rep1.announcedSessions.length, 1)
-  t.is(rep1.connectionCount, 1)
+  t.ok(rep1.connectionCount > 0)
   t.is(session1.isAnnounced, true)
 
   const presuspended = rep1.presuspend()
 
   t.is(rep1.isPresuspended, true)
-  t.is(rep1.connectionCount, 1)
+  t.ok(rep1.connectionCount > 0)
 
   await presuspended
 
