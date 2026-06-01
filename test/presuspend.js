@@ -15,7 +15,7 @@ test('presuspend() enters background mode', async (t) => {
 
   const rep1 = p1.replicator
 
-  t.is(rep1.activeSessions.length, 0)
+  t.is(rep1.announcedSessions.length, 0)
   t.is(rep1.connectionCount, 0)
 
   const connected = new Promise((resolve) => p1.replicator.on('connected', resolve))
@@ -33,7 +33,7 @@ test('presuspend() enters background mode', async (t) => {
   t.ok('connected')
 
   t.is(rep1.isPresuspended, false)
-  t.is(rep1.activeSessions.length, 1)
+  t.is(rep1.announcedSessions.length, 1)
   t.is(rep1.connectionCount, 1)
   t.is(session1.isAnnounced, true)
 
@@ -69,7 +69,7 @@ test('presuspend() enters background mode', async (t) => {
   t.is(rep1.connectionCount, 0)
   t.is(rep1.isPresuspended, true)
   t.is(session1.isAnnounced, false)
-  t.is(rep1.activeSessions.length, 0)
+  t.is(rep1.announcedSessions.length, 0)
 
   await swarm.close()
 })

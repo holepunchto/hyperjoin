@@ -172,7 +172,7 @@ test('autoswarm: replicator activates sessions', async (t) => {
 
   const topics = new Array(10).fill(null).map((_, i) => b4a.alloc(32, i))
 
-  const p1 = await swarm.spawnPeer({ slots, gcIdleTime })
+  const p1 = await swarm.spawnPeer({ slots, gcIdleTime, autoStartupDelay: 0 })
 
   const joins = []
   const nCores = 5
@@ -182,13 +182,16 @@ test('autoswarm: replicator activates sessions', async (t) => {
   await swarm.propagateWriters()
   await Promise.all(joins)
 
-  t.is(p1.replicator.activeSessions.length, 0)
+  t.is(p1.replicator.activeSessions.length, 0, 'nothing active')
+  t.is(p1.replicator.announcedSessions.length, 0, 'nothing announced')
 
   await p1.replicator.refresh()
   t.is(p1.replicator.activeSessions.length, slots, 'topics auto activate')
+  t.is(p1.replicator.announcedSessions.length, slots, 'topics announced')
 
   await p1.replicator.suspend()
-  t.is(p1.replicator.activeSessions.length, 0, 'topics unannounced')
+  t.is(p1.replicator.activeSessions.length, 0, 'topics deactivated')
+  t.is(p1.replicator.announcedSessions.length, 0, 'topics unannounced')
 
   await swarm.destroy()
 })
