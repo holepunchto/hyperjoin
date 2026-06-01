@@ -59,7 +59,7 @@ Transport
 - `keyPair`: provide an explicit keypair (default: store.createKeypair)
 - `bootstrap`: DHT bootstrap nodes
 - `nodes`: explicit DHT nodes
-- `dht`: reuse an existing HyperDHT instance
+- `dht`: reuse an existing HyperDHT instance, _note:_ replicator does not close/suspend/resume borrowed dht instances.
 - `port`: bind the DHT socket to a fixed port
 - `firewall`: filter inbound and outbound peers
 - `relayThrough`: relay selector for outbound connections
@@ -112,6 +112,10 @@ Returns iterator over all established connections.
 #### `rep.activeSessions`
 
 Returns list of active sessions.
+
+#### `rep.announcedSessions`
+
+Returns list of announced sessions that are required to be un-announced on teardown.
 
 ### Methods
 

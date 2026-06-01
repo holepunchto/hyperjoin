@@ -67,7 +67,7 @@ module.exports = class Replicator extends ReadyResource {
     if (keyPair) this.keyPair = keyPair
 
     this.root = rootStore
-
+    this._dhtOwned = !opts.dht
     this.dht =
       opts.dht ||
       new DHT({
@@ -212,6 +212,15 @@ module.exports = class Replicator extends ReadyResource {
     return active
   }
 
+  get announcedSessions() {
+    const announced = []
+    for (const session of this.sessions.values()) {
+      if (!session.isAnnounced) continue
+      announced.push(session)
+    }
+    return announced
+  }
+
   _selectRelay(force) {
     if (!this.relayThrough) return null
     return this.relayThrough(force, this)
@@ -247,7 +256,7 @@ module.exports = class Replicator extends ReadyResource {
 
     await Promise.allSettled(suspending)
 
-    await this.dht.suspend({ log })
+    if (this._dhtOwned) await this.dht.suspend({ log })
 
     await Promise.all(pending)
   }
@@ -271,8 +280,10 @@ module.exports = class Replicator extends ReadyResource {
 
     if (!this.suspended) return
 
-    await this.dht.resume({ log })
+    if (this._dhtOwned) await this.dht.resume({ log })
+
     await this.server.resume({ log })
+
     this.dialer.resume({ log })
 
     this.suspended = false
@@ -780,7 +791,7 @@ module.exports = class Replicator extends ReadyResource {
 
     await Promise.all(tasks)
     await this.server.close()
-    if (!this.dht.destroyed) await this.dht.destroy()
+    if (this._dhtOwned && !this.dht.destroyed) await this.dht.destroy()
   }
 
   async destroy() {
