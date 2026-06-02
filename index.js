@@ -692,7 +692,7 @@ module.exports = class Replicator extends ReadyResource {
       pool.push(session)
     }
 
-    if (slots < 0) throw new Error('Assertfail: negative slots')
+    slots = Math.max(slots, 0) // `slots` reduced during runtime.
 
     // weight prio by lexical order
     const order = new Map()
