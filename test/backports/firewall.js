@@ -26,6 +26,8 @@ test('firewalled server - bad client is rejected', async (t) => {
   const client = p1.replicator.join(p1.store.session(), p2.cores[0].discoveryKey, {
     discover: true
   })
+  await client.ready()
+  await client.refresh()
   await client.flush()
   await p1.replicator.flush()
   await new Promise((resolve) => setImmediate(resolve))
@@ -61,6 +63,8 @@ test('firewalled client - bad server is rejected', async (t) => {
   const client = p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey, {
     discover: true
   })
+  await client.ready()
+  await client.refresh()
   await client.flush()
   await p2.replicator.flush()
   await new Promise((resolve) => setImmediate(resolve))
@@ -87,10 +91,12 @@ test('async firewall - client allows good server', async (t) => {
 
   const connected = new Promise((resolve) => p2.replicator.once('connected', resolve))
 
-  p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey, {
+  const client = p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey, {
     discover: true
   })
 
+  await client.ready()
+  await client.refresh()
   await p2.replicator.flush()
   await connected
 
@@ -123,6 +129,8 @@ test('async firewall - server allows good client', async (t) => {
     discover: true
   })
 
+  await client.ready()
+  await client.refresh()
   await client.flush()
   await p1.replicator.flush()
   const connected = await Promise.race([accepted, timeout(1000).then(() => false)])
@@ -159,7 +167,11 @@ test('firewalled server - rejection does not trigger retry cascade', async (t) =
   const server = [...p2.replicator.sessions.values()][0]
   await server.flush()
 
-  p1.replicator.join(p1.store.session(), p2.cores[0].discoveryKey, { discover: true })
+  const client = p1.replicator.join(p1.store.session(), p2.cores[0].discoveryKey, {
+    discover: true
+  })
+  await client.ready()
+  await client.refresh()
 
   await timeout(BACKOFFS[2] * 5)
 
