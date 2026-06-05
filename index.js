@@ -110,7 +110,7 @@ module.exports = class Replicator extends ReadyResource {
     this._nomad = nomad
     this._lastConnectionEvict = 0
 
-    this._autoswarmEnabled = true
+    this._autoswarm = autoswarm
     this._autoRefreshInterval = interval
     this._gcIdleTime = gcIdleTime
     this.slots = slots
@@ -299,7 +299,11 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._manual) this._startAutoRefresh()
   }
 
-  join(store, topic, { priority = 0, pin = false, active = false /* deprecated */, discover = false } = {}) {
+  join(
+    store,
+    topic,
+    { priority = 0, pin = false, active = false /* deprecated */, discover = false } = {}
+  ) {
     const dk = toHex(topic)
     if (this.sessions.has(dk)) throw new Error('session exists')
 
@@ -678,7 +682,7 @@ module.exports = class Replicator extends ReadyResource {
         const timeActive = now - session._startTime
         const minActive = session._startDelay + this._minActiveTime
 
-        if (this._autoswarmEnabled && timeActive < minActive) {
+        if (this._autoswarm && timeActive < minActive) {
           slots-- // reserved & immovable
           continue
         }
@@ -716,7 +720,7 @@ module.exports = class Replicator extends ReadyResource {
     // rotate
     pool.sort(heuristicSort)
 
-    if (!this._autoswarmEnabled) slots = 0
+    if (!this._autoswarm) slots = 0
 
     // autostop
     for (let i = slots; i < pool.length; i++) {
@@ -734,8 +738,8 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
-  async setAutoswarmEnabled(enabled) {
-    this._autoswarmEnabled = enabled
+  async setAutoswarm(enabled) {
+    this._autoswarm = enabled
     await this.refresh()
   }
 

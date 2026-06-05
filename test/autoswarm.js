@@ -8,10 +8,7 @@ test('autoswarm: all topics pinned (hyperswarm mode)', async (t) => {
   const p1 = await swarm.spawnPeer()
   const p2 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 0x1)
-  await Promise.all([
-    p1.join(topic, { pin: true }),
-    p2.join(topic, { pin: true })
-  ])
+  await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
 
   await swarm.propagateWriters()
   await swarm.refresh()
@@ -215,11 +212,11 @@ test('autoswarm: can be disabled', async (t) => {
 
   t.is(peer.replicator.announcedSessions.length, 1, 'autoswarm announce')
 
-  await peer.replicator.setAutoswarmEnabled(false)
+  await peer.replicator.setAutoswarm(false)
 
   t.is(peer.replicator.announcedSessions.length, 0, 'unannounced')
 
-  await peer.replicator.setAutoswarmEnabled(true)
+  await peer.replicator.setAutoswarm(true)
 
   t.is(peer.replicator.announcedSessions.length, 1, 're-announced')
 
