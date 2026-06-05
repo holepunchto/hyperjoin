@@ -22,7 +22,7 @@ await core.ready()
 const topic = Buffer.alloc(32, 0x1)
 
 // ReplicatorSession
-const rs = rep.join(session, topic)
+const rs = rep.join(session, topic, { pin: true })
 
 await rep.refresh() // apply auto-rotation & launch topics
 
@@ -50,6 +50,9 @@ General
 - `gcIdleTime`: Evict idle sessions exceeding time
 - `defaultDiscoveryTimeout`: initial discovery lifetime
 - `updatedDiscoveryTimeout`: shortened discovery lifetime after `session.bump()`
+- `discoveryStartupDelay`: delay before discovery lookups
+- `autoStartupDelay`: delay before autoswarm announcements
+- `minActiveTime`: minimum time an autoswarmed session stays active
 - `manual`: don't launch internal `refresh()` interval (default: `false`)
 - `interval`: Auto-refresh interval (default: `5000`)
 - `gcDisabled`: prevent garbage collection on `refresh()`
@@ -123,19 +126,34 @@ Returns list of announced sessions that are required to be un-announced on teard
 
 Resolves after dht.server port is bound and store is ready.
 
-### `const rs = rep.join(storeSession, topic)`
+### `const rs = rep.join(storeSession, topic, opts)`
 
 Join topic, returns `ReplicatorSession`.
+
+`opts`:
+
+- `priority`: autoswarm priority `number`
+- `pin`: same as `session.pin()`
+- `discover`: same as `session.discover()`
 
 ### `await rep.refresh()`
 
 Invokes topic-rotation, applies state transitions, then finally runs garbage-collector.
 
-Replicator takes no actions unless refresh is called.
+Manual replicators take no actions unless refresh is called.
 
 ### `await rep.flush()`
 
 Wait until current discovery and dial work settles.
+
+### `await rep.setAutoswarm(enabled)`
+
+Enable or disable autoswarm topic rotation.
+Disabling un-announces all autostarted topics
+
+### `await rep.presuspend()`
+
+Enter pre-suspend mode: unannounce and prevent new dials
 
 ### `await rep.suspend()` / `await rep.resume()`
 
@@ -183,11 +201,14 @@ forces the session to be active until manual call to `unpin()`.
 ### `rs.discover()`
 
 Launch a dht lookup for the topic to discover peers and update version `seen`. (announce: false / client only)
+On pinned sessions, forces a discovery refresh without unpinning.
 
 ### `rs.bump(version = -1)`
 
 Announce local version on topic.
-If a disovery is in progress, then it will be prolonged with a shorter disovery window.
+
+If bump is called while in discovery mode, the discovery timeout is reset to
+`updatedDiscoveryTimeout` as the discovery operation can be considered 'sucessful'
 
 ### `rs.priority = number`
 

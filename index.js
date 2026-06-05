@@ -110,7 +110,7 @@ module.exports = class Replicator extends ReadyResource {
     this._nomad = nomad
     this._lastConnectionEvict = 0
 
-    this.autoswarm = autoswarm
+    this._autoswarm = autoswarm
     this._autoRefreshInterval = interval
     this._gcIdleTime = gcIdleTime
     this.slots = slots
@@ -299,13 +299,15 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._manual) this._startAutoRefresh()
   }
 
-  join(store, topic, { priority = 0, active = false, discover = false } = {}) {
+  join(
+    store,
+    topic,
+    { priority = 0, pin = false, active = false /* deprecated */, discover = false } = {}
+  ) {
     const dk = toHex(topic)
     if (this.sessions.has(dk)) throw new Error('session exists')
 
-    active ||= !this.autoswarm && !discover // TODO: deprecated
-
-    const session = new Session(this, store, topic, { priority, active, discover })
+    const session = new Session(this, store, topic, { priority, pin, active, discover })
     this.sessions.set(dk, session)
 
     session.on('close', () => {
@@ -314,11 +316,6 @@ module.exports = class Replicator extends ReadyResource {
     })
 
     store.on('close', session.close.bind(session))
-
-    session
-      .ready()
-      .then(() => !this.autoswarm && session.refresh()) // TODO: deprecated
-      .catch(safetyCatch)
 
     return session
   }
@@ -683,7 +680,9 @@ module.exports = class Replicator extends ReadyResource {
       // don't deactivate pending nor newly-started topics
       if (session.isAuto) {
         const timeActive = now - session._startTime
-        if (timeActive < session._startDelay + this._minActiveTime) {
+        const minActive = session._startDelay + this._minActiveTime
+
+        if (this._autoswarm && timeActive < minActive) {
           slots-- // reserved & immovable
           continue
         }
@@ -721,6 +720,8 @@ module.exports = class Replicator extends ReadyResource {
     // rotate
     pool.sort(heuristicSort)
 
+    if (!this._autoswarm) slots = 0
+
     // autostop
     for (let i = slots; i < pool.length; i++) {
       pool[i]._autoStop(now)
@@ -735,6 +736,11 @@ module.exports = class Replicator extends ReadyResource {
     for (let i = 0; i < limit; i++) {
       pool[i]._autoStart(now)
     }
+  }
+
+  async setAutoswarm(enabled) {
+    this._autoswarm = enabled
+    await this.refresh()
   }
 
   async _handleNetworkUpdate() {

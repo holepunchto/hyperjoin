@@ -116,10 +116,13 @@ class TestPeer extends ReadyResource {
     await this.replicator.ready()
   }
 
-  async join(topic, nCores = 3) {
+  async join(topic, opts = {}) {
+    const nCores = opts.nCores ?? 3
+    delete opts.nCores
+
     const ns = this.store.namespace(topic)
     const session = ns.session()
-    const repSession = this.replicator.join(session, topic)
+    const repSession = this.replicator.join(session, topic, opts)
     await repSession.ready()
 
     this.sessions.set(toHex(topic), { session, repSession })

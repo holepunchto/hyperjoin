@@ -44,7 +44,9 @@ test('connectionsOpened and connectionsClosed stats', async (t) => {
   })
 
   await p1.session.close()
-  p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey)
+  const session = p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey, { pin: true })
+  await session.ready()
+  await session.refresh()
   await p2.replicator.flush()
   await Promise.all([p1Connected, p2Connected])
 

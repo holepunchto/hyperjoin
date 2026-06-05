@@ -2,16 +2,16 @@ const test = require('brittle')
 const b4a = require('b4a')
 const { spawnSwarm } = require('./helpers')
 
-// hyperswarm mode (deprecated)
-test('autoswarm: all topics treated as pinned when autoswarm disabled (sanity test)', async (t) => {
+test('autoswarm: all topics pinned (hyperswarm mode)', async (t) => {
   const swarm = await spawnSwarm(t)
 
-  const p1 = await swarm.spawnPeer({ autoswarm: false })
-  const p2 = await swarm.spawnPeer({ autoswarm: false })
+  const p1 = await swarm.spawnPeer()
+  const p2 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 0x1)
-  await Promise.all([p1.join(topic), p2.join(topic)])
+  await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
 
   await swarm.propagateWriters()
+  await swarm.refresh()
   await swarm.refresh()
   await swarm.flush()
   await swarm.gc()
@@ -177,7 +177,7 @@ test('autoswarm: replicator activates sessions', async (t) => {
   const joins = []
   const nCores = 5
   for (const topic of topics) {
-    joins.push(p1.join(topic, nCores))
+    joins.push(p1.join(topic, { nCores }))
   }
   await swarm.propagateWriters()
   await Promise.all(joins)
@@ -192,6 +192,33 @@ test('autoswarm: replicator activates sessions', async (t) => {
   await p1.replicator.suspend()
   t.is(p1.replicator.activeSessions.length, 0, 'topics deactivated')
   t.is(p1.replicator.announcedSessions.length, 0, 'topics unannounced')
+
+  await swarm.destroy()
+})
+
+test('autoswarm: can be disabled', async (t) => {
+  const swarm = await spawnSwarm(t)
+  const peer = await swarm.spawnPeer({ autoStartupDelay: 0 })
+
+  const topic = b4a.alloc(32, 0x1)
+
+  t.is(peer.replicator.announcedSessions.length, 0, 'nothing announced')
+  await peer.join(topic)
+
+  await swarm.propagateWriters()
+  await swarm.refresh()
+  await swarm.refresh()
+  await swarm.flush()
+
+  t.is(peer.replicator.announcedSessions.length, 1, 'autoswarm announce')
+
+  await peer.replicator.setAutoswarm(false)
+
+  t.is(peer.replicator.announcedSessions.length, 0, 'unannounced')
+
+  await peer.replicator.setAutoswarm(true)
+
+  t.is(peer.replicator.announcedSessions.length, 1, 're-announced')
 
   await swarm.destroy()
 })
