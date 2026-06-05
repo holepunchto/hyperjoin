@@ -76,7 +76,7 @@ test('GC connections with no active mux sessions', async (t) => {
 
   const p3Connected = onceEvent(p1.replicator, 'connected')
   const p3Session = p3.replicator.join(p3.store.session(), p1.cores[0].discoveryKey, {
-    pin: true
+    discover: true
   })
   await p3Session.ready()
   await p3Session.refresh()

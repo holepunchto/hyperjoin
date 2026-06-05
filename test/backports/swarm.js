@@ -50,7 +50,7 @@ test('one server, one client - first connection', async (t) => {
     connection.stream.end()
   })
 
-  await joinPinned(p2.replicator, p2.store.session(), p1.cores[0].discoveryKey)
+  await joinDiscover(p2.replicator, p2.store.session(), p1.cores[0].discoveryKey)
   await connected
 
   await p1.destroy()
@@ -520,7 +520,7 @@ test('one server, two clients - if a second client joins after the server leaves
   await p1.session.close()
   await p1RepSession.close()
 
-  await joinPinned(p3.replicator, p3.store.session(), p1.cores[0].discoveryKey)
+  await joinDiscover(p3.replicator, p3.store.session(), p1.cores[0].discoveryKey)
   const r3 = await remote3
   await Promise.all(r3.map((core) => core.ready()))
 
