@@ -739,6 +739,8 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async setAutoswarm(enabled) {
+    if (this._autoswarm === enabled) return
+
     this._autoswarm = enabled
     await this.refresh()
   }
