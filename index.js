@@ -783,6 +783,10 @@ module.exports = class Replicator extends ReadyResource {
     for (const session of this.sessions.values()) {
       tasks.push(session.destroy())
     }
+
+    // wait for all un-announces before dropping connections
+    await Promise.all(tasks)
+
     this.sessions.clear()
 
     for (const connection of this.connections) {
