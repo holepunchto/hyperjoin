@@ -44,6 +44,28 @@ test('autoswarm: two new instances do not swarm without intent (sanity test)', a
   await swarm.destroy()
 })
 
+// TODO Flakes
+test('autoswarm: deferSwarming disabled', async (t) => {
+  const swarm = await spawnSwarm(t)
+
+  const p1 = await swarm.spawnPeer()
+  const p2 = await swarm.spawnPeer()
+
+  const topic = b4a.alloc(32, 0x1)
+  await Promise.all([p1.join(topic, { deferSwarming: false }), p2.join(topic, { deferSwarming: false })])
+
+  await swarm.propagateWriters()
+  await swarm.refresh() // lookup then commit announce
+  await swarm.refresh() // lookup
+  await swarm.flush() // dht-query + dials
+
+  t.is(p1.replicator.announcedSessions.length, 1, 'autoswarm announce')
+  t.is(p1.replicator.connectionCount, 1)
+  t.is(p2.replicator.connectionCount, 1)
+
+  await swarm.destroy()
+})
+
 test('autoswarm: manually activated instances', async (t) => {
   const swarm = await spawnSwarm(t)
 
