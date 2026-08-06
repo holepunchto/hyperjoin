@@ -113,6 +113,28 @@ test('GC connections with no active mux sessions', async (t) => {
   await testnet.destroy()
 })
 
+test('parent corestore doesnt activate core on namespace for session', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
+  const session = p1.replicator.activeSessions[0]
+  const dkey = toHex(p1.cores[0].discoveryKey)
+  t.ok(session.hasCore(dkey))
+
+  const otherNamespace = p1.store.namespace('bepp')
+  const core = otherNamespace.get({ name: 'other' })
+  await core.ready()
+  t.absent(session.hasCore(toHex(core.discoveryKey)))
+
+  const sessionNewCore = session.store.get({ name: 'three' })
+  await sessionNewCore.ready()
+  t.ok(session.hasCore(toHex(sessionNewCore.discoveryKey)))
+
+  await p1.destroy()
+  await testnet.destroy()
+})
+
 test('GC preserves stable connections over rookies', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
