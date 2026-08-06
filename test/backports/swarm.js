@@ -358,8 +358,8 @@ test('GC dedupes connections', async (t) => {
   const p1Connections = waitForEvents(p1.replicator, 'connected', 2)
   const p2Connections = waitForEvents(p2.replicator, 'connected', 2)
 
-  p1.replicator._connect({ publicKey: p2.replicator.peerId }, false, s1.discoveryKey)
-  p2.replicator._connect({ publicKey: p1.replicator.peerId }, false, s2.discoveryKey)
+  p1.replicator._connect({ publicKey: p2.replicator.peerId }, s1.discoveryKey)
+  p2.replicator._connect({ publicKey: p1.replicator.peerId }, s2.discoveryKey)
 
   await Promise.all([p1Connections, p2Connections])
 

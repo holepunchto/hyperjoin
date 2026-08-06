@@ -361,7 +361,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   // stream param expected opened stream
-  _initConnection(initiator, peerId, stream, topic) {
+  _initConnection(initiator, peerId, stream) {
     const hex = toHex(peerId)
 
     const map = initiator ? this.outbound : this.inbound
@@ -428,7 +428,7 @@ module.exports = class Replicator extends ReadyResource {
     )
   }
 
-  async _connect(peer, queued, topic) {
+  async _connect(peer, topic) {
     if (this._isTearingdown) return
 
     const hex = toHex(peer.publicKey)
@@ -840,7 +840,7 @@ class Connection {
     return this.info.connectedTime
   }
 
-  isIdle(now = Date.now()) {
+  isIdle() {
     if (this._protomuxSessions() === 0) return true
 
     return false
