@@ -45,7 +45,7 @@ test('autoswarm: two new instances do not swarm without intent (sanity test)', a
 })
 
 // TODO Flakes, probably just bad timing assumptions
-test.skip('autoswarm: deferSwarming disabled', async (t) => {
+test('autoswarm: deferSwarming disabled', async (t) => {
   const swarm = await spawnSwarm(t)
 
   const p1 = await swarm.spawnPeer()
