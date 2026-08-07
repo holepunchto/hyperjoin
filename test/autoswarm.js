@@ -51,7 +51,10 @@ test('autoswarm: deferSwarming disabled', async (t) => {
   const p2 = await swarm.spawnPeer()
 
   const topic = b4a.alloc(32, 0x1)
-  await Promise.all([p1.join(topic, { deferSwarming: false }), p2.join(topic, { deferSwarming: false })])
+  await Promise.all([
+    p1.join(topic, { deferSwarming: false }),
+    p2.join(topic, { deferSwarming: false })
+  ])
 
   await swarm.propagateWriters()
   await swarm.refresh() // lookup then commit announce

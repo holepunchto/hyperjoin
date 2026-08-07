@@ -302,12 +302,24 @@ module.exports = class Replicator extends ReadyResource {
   join(
     store,
     topic,
-    { priority = 0, pin = false, active = false /* deprecated */, discover = false, deferSwarming } = {}
+    {
+      priority = 0,
+      pin = false,
+      active = false /* deprecated */,
+      discover = false,
+      deferSwarming
+    } = {}
   ) {
     const dk = toHex(topic)
     if (this.sessions.has(dk)) throw new Error('session exists')
 
-    const session = new Session(this, store, topic, { priority, pin, active, discover, deferSwarming })
+    const session = new Session(this, store, topic, {
+      priority,
+      pin,
+      active,
+      discover,
+      deferSwarming
+    })
     this.sessions.set(dk, session)
 
     session.on('close', () => {
