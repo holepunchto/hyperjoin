@@ -44,7 +44,6 @@ test('autoswarm: two new instances do not swarm without intent (sanity test)', a
   await swarm.destroy()
 })
 
-// TODO Flakes, probably just bad timing assumptions
 test('autoswarm: deferSwarming disabled', async (t) => {
   const swarm = await spawnSwarm(t)
 
