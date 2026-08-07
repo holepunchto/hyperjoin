@@ -113,7 +113,7 @@ test('GC connections with no active mux sessions', async (t) => {
   await testnet.destroy()
 })
 
-test.solo('parent corestore doesnt activate core on namespace for session', async (t) => {
+test('parent corestore doesnt activate core on namespace for session', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
