@@ -86,7 +86,7 @@ test('async firewall - client allows good server', async (t) => {
     seed: seedB,
     backoffs: BACKOFFS,
     jitter: 0,
-    firewall: async () => false
+    firewall: () => false
   })
 
   const connected = new Promise((resolve) => p2.replicator.once('connected', resolve))
@@ -118,7 +118,7 @@ test('async firewall - server allows good client', async (t) => {
     seed: seedB,
     backoffs: BACKOFFS,
     jitter: 0,
-    firewall: async () => false
+    firewall: () => false
   })
 
   const server = [...p2.replicator.sessions.values()][0]

@@ -424,7 +424,7 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
-  async _handleFirewall(remotePublicKey, payload) {
+  _handleFirewall(remotePublicKey, payload) {
     if (b4a.equals(remotePublicKey, this.keyPair.publicKey)) return true
 
     return this.dialer.handleFirewall(remotePublicKey, payload)
