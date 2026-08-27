@@ -870,7 +870,7 @@ class Connection {
       for (const session of this.replicator.sessions.values()) {
         if (!session.active) continue
 
-        if (session.cores.has(dkeystr)) {
+        if (session.hasCore(dkeystr)) {
           opened++
           break
         }
