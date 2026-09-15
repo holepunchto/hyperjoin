@@ -329,6 +329,8 @@ module.exports = class Replicator extends ReadyResource {
 
     store.on('close', session.close.bind(session))
 
+    this.emit('join', session)
+
     return session
   }
 
