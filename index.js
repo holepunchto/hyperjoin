@@ -22,7 +22,7 @@ const MIN_ACTIVE_TIME = 30 * 1000
 // connections
 const MIN_PEERS = 20
 const MAX_PEERS = 40
-const NOMAD_THRESHOLD = 60 * 1000
+const WANDERLUST_THRESHOLD = 60 * 1000
 
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
@@ -41,7 +41,7 @@ module.exports = class Replicator extends ReadyResource {
       minPeers = MIN_PEERS,
       maxPeers = MAX_PEERS,
       maxParallel,
-      nomad = NOMAD_THRESHOLD,
+      wanderlust = WANDERLUST_THRESHOLD,
       firewall = allowAll,
       suspended,
       autoswarm = true,
@@ -107,7 +107,7 @@ module.exports = class Replicator extends ReadyResource {
 
     this._minPeers = minPeers
     this._maxPeers = maxPeers
-    this._nomad = nomad
+    this._wanderlust = wanderlust
     this._lastConnectionEvict = 0
 
     this._autoswarm = autoswarm
@@ -401,6 +401,9 @@ module.exports = class Replicator extends ReadyResource {
 
   async _evictConnection(connection, err) {
     if (connection.stream.closed) return
+
+    this.emit('_evictConnection', connection.peerId, /* reason */ err)
+
     const closed = new Promise((resolve) => connection.stream.once('close', resolve))
     connection.destroy(err)
     await closed
@@ -609,7 +612,7 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     // Force peer rotation when fully saturated over extend period of time.
-    const treshold = this._nomad + Math.random() * Math.max(this._nomad, 10000)
+    const treshold = this._wanderlust + Math.random() * Math.max(this._wanderlust, 10000)
     if (
       !connectionsEvicted && // nothing evicted
       this.connectionCount === this._maxPeers && // at max cap
