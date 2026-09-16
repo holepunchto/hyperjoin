@@ -343,6 +343,10 @@ module.exports = class Replicator extends ReadyResource {
     const peerId = conn.remotePublicKey
     const hex = toHex(peerId)
 
+    const peerInfo = this.dialer.lookup(peerId)
+    const initiator = false
+    peerInfo.markAttempt(initiator)
+
     if (this.inbound.has(hex)) {
       const existing = this.inbound.get(hex).stream
       // If both connections are from the same peer,
@@ -351,10 +355,12 @@ module.exports = class Replicator extends ReadyResource {
       const keepNew = existing.rawBytesRead > 0 && existing.rawBytesWritten > 0
 
       if (keepNew === false) {
+        peerInfo.markAttemptDone(initiator, true)
         existing.sendKeepAlive()
         conn.on('error', noop)
         conn.destroy(new Error(ERR_DUPLICATE))
       } else {
+        peerInfo.markAttemptDone(initiator)
         existing.on('error', noop)
         existing.destroy(new Error(ERR_DUPLICATE))
         this._handleServerConnectionSwap(existing, conn)
@@ -365,12 +371,14 @@ module.exports = class Replicator extends ReadyResource {
 
     // Hard limit max-drop
     if (this.connectionCount >= this._maxPeers + 5) {
+      peerInfo.markAttemptDone(initiator, true)
       conn.on('error', noop)
       return conn.destroy(ERR_MAXPEERS)
     }
 
-    // When reaching here, the connection will always be 'opened' next tick
+    peerInfo.markAttemptDone(initiator)
 
+    // When reaching here, the connection will always be 'opened' next tick
     this._initConnection(false, peerId, conn)
   }
 
@@ -383,9 +391,6 @@ module.exports = class Replicator extends ReadyResource {
     if (map.has(hex)) throw new Error('unreachable: connection leak') // sanity check
 
     const connection = new Connection(this, stream, peerId, initiator)
-
-    connection.info._connected()
-    connection.info.client = initiator
 
     map.set(hex, connection)
     this.root.replicate(stream)
@@ -473,6 +478,8 @@ module.exports = class Replicator extends ReadyResource {
 
     let stream
     let error = null
+    peer.markAttempt(true) // dial start: firewall + holepunch + handshake
+
     const opened = await new Promise((resolve) => {
       const onerror = (err) => {
         error = err
@@ -508,12 +515,15 @@ module.exports = class Replicator extends ReadyResource {
     // opened after teardown
     if (this._isTearingdown) {
       stream.once('error', noop)
-      stream.destroy(new Error(ERR_DESTROYED))
+      const e = new Error(ERR_DESTROYED)
+      stream.destroy(e)
+      peerInfo.markAttemptDone(true, true)
       return
     }
 
+    peerInfo.markAttemptDone(true, !opened)
+
     if (!opened) {
-      this.dialer.connectFailed(peer.publicKey, error)
       this.emit('update')
       return
     }
@@ -843,6 +853,8 @@ class Connection {
     this.lastActivity = -1
     this.refresh()
     this._survived = 0 // incremented on gc
+
+    this.info.markConnected(this.initiator)
   }
 
   get protomux() {
@@ -899,7 +911,7 @@ class Connection {
       rep.stats.connects.server.closed++
     }
 
-    this.replicator.dialer.disconnected(this.peerId, err)
+    this.info.markDisconnected(this.initiator, err)
 
     rep.emit('disconnected', this)
     rep.emit('update')

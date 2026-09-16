@@ -147,11 +147,13 @@ test('dial latency reads off the timestamps, both readings agree', (t) => {
   const p = new Peer(key(1))
 
   p.markAttempt(T0)
+  t.ok(p.isAttempting, 'in-flight once the dial begins')
   p.markConnected(T0 + 420)
 
   t.is(p.connectedAt - p.attemptedAt, 420, 'stamp delta')
   t.is(p.markAttemptDone(T0 + 420, false), 420, 'returned span')
   t.is(p._attemptsSuceeded, 1)
+  t.ok(!p.isAttempting, 'clear at the verdict')
 
   const q = new Peer(key(2))
   q.markAttempt(T0)
@@ -180,8 +182,8 @@ test('session counters and stamps', (t) => {
 
 test('expiry: never-seen, sighted, connected, disconnected clocks', (t) => {
   const q = new Peer(key(9))
-  t.ok(!q.isExpired(COOLDOWN * 3 - 1), 'never-seen lives on the wall clock')
-  t.ok(q.isExpired(COOLDOWN * 3), 'never-seen expires at 3x')
+  t.ok(!q.isExpired(T0 + 100_000_000), 'never-seen: no clock started, no staleness')
+  t.ok(q.shouldDial(T0 + 100_000_000), 'never-seen: born dialable')
 
   const p = new Peer(key(1))
   p.observe(T0)
@@ -217,6 +219,40 @@ test('redemption bar: a session must outlive COOLDOWN / 2 to forgive', (t) => {
   q.markAttempt(T0)
   q.markConnected(T0 + 5)
   q.markDisconnected(T0 + 5 + COOLDOWN / 2 + 1)
+  q.markAttemptDone(T0 + 5 + COOLDOWN / 2 + 1, false) // attempt closes at hand-off in the live wiring
   t.is(q.attempts, 0, 'one tick past the bar forgives')
   t.ok(q.shouldDial(T0 + 5 + COOLDOWN / 2 + 1), 'and is immediately dialable')
+})
+
+test('orphan verdict + retirement flag (the GC contract Peer now owns)', (t) => {
+  const p = new Peer(key(1))
+  t.ok(p.isOrphaned(new Set(['cafe'])), 'no seen topics -> orphaned')
+  p.observe(T0, b4a.alloc(32, 1))
+  const live = new Set([b4a.toString(b4a.alloc(32, 1), 'hex')])
+  t.ok(!p.isOrphaned(live), 'a live session topic keeps the record')
+  t.ok(p.isOrphaned(new Set(['beef'])), 'when the last session dies, orphaned again')
+
+  const q = new Peer(key(2))
+  t.ok(!q.isRetired, 'laddered record is not retired')
+  q.attempts = 4 // past LADDER.length (3)
+  t.ok(q.isRetired, 'past the ladder: retired')
+})
+
+test('ban retention: the 20x Max-GC-retain statement lives in expiresAt', (t) => {
+  const p = new Peer(key(3))
+  t.ok(!p.isBanned, 'fresh record is not banned')
+  p.setBanned(T0)
+  t.ok(p.isBanned, 'setBanned marks the record')
+  t.is(p.expiresAt, T0 + COOLDOWN * 20, 'banned: Max GC retain at 20x')
+  t.ok(!p.isExpired(T0 + COOLDOWN * 20), 'retained through the boundary')
+  t.ok(p.isExpired(T0 + COOLDOWN * 20 + 1), 'expires past the retain')
+
+  const r = new Peer(key(4))
+  r.lastSeenAt = T0
+  t.is(r.expiresAt, T0 + COOLDOWN * 3, 'unbanned: staleness expiry at 3x')
+
+  const q = new Peer(key(5))
+  q.setBanned(T0) // never-seen: the firewall-mint shape
+  t.ok(!q.isExpired(T0), 'ban clock runs without a sighting clock')
+  t.ok(q.isExpired(T0 + COOLDOWN * 20 + 1), 'and still expires at 20x')
 })
