@@ -305,7 +305,7 @@ module.exports = class Replicator extends ReadyResource {
     {
       priority = 0,
       pin = false,
-      active = false /* deprecated */,
+      active = false /* deprecated TODO: REMOVE PRE 1.5*/,
       discover = false,
       deferSwarming
     } = {}
@@ -345,7 +345,7 @@ module.exports = class Replicator extends ReadyResource {
 
     const peerInfo = this.dialer.lookup(peerId)
     const initiator = false
-    peerInfo.markAttempt(initiator)
+    const attemptDone = peerInfo.markAttempt(initiator)
 
     if (this.inbound.has(hex)) {
       const existing = this.inbound.get(hex).stream
@@ -355,12 +355,14 @@ module.exports = class Replicator extends ReadyResource {
       const keepNew = existing.rawBytesRead > 0 && existing.rawBytesWritten > 0
 
       if (keepNew === false) {
-        peerInfo.markAttemptDone(initiator, true)
+        attemptDone(true, ERR_DUPLICATE)
+
         existing.sendKeepAlive()
         conn.on('error', noop)
         conn.destroy(new Error(ERR_DUPLICATE))
       } else {
-        peerInfo.markAttemptDone(initiator)
+        attemptDone()
+
         existing.on('error', noop)
         existing.destroy(new Error(ERR_DUPLICATE))
         this._handleServerConnectionSwap(existing, conn)
@@ -371,12 +373,12 @@ module.exports = class Replicator extends ReadyResource {
 
     // Hard limit max-drop
     if (this.connectionCount >= this._maxPeers + 5) {
-      peerInfo.markAttemptDone(initiator, true)
+      attemptDone(true, ERR_MAXPEERS)
       conn.on('error', noop)
       return conn.destroy(ERR_MAXPEERS)
     }
 
-    peerInfo.markAttemptDone(initiator)
+    attemptDone()
 
     // When reaching here, the connection will always be 'opened' next tick
     this._initConnection(false, peerId, conn)
@@ -477,8 +479,8 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     let stream
-    let error = null
-    peer.markAttempt(true) // dial start: firewall + holepunch + handshake
+    let error = null // TODO !!! Value controls forceRelay; needs to use peer.ondisconnect
+    const attemptDone = peer.markAttempt(true, { canRelay: !!this.relayThrough }) // dial start: firewall + holepunch + handshake
 
     const opened = await new Promise((resolve) => {
       const onerror = (err) => {
@@ -517,11 +519,11 @@ module.exports = class Replicator extends ReadyResource {
       stream.once('error', noop)
       const e = new Error(ERR_DESTROYED)
       stream.destroy(e)
-      peerInfo.markAttemptDone(true, true)
+      attemptDone(true, ERR_DESTROYED)
       return
     }
 
-    peerInfo.markAttemptDone(true, !opened)
+    attemptDone(!opened, error)
 
     if (!opened) {
       this.emit('update')
