@@ -50,11 +50,9 @@
     "b4a": "^1.8.1",
     "bare-events": "^2.9.2",
     "hypercore": "^11.35.2",
-    "passive-core-watcher": "^1.0.1",
     "ready-resource": "^1.2.0",
     "replicator-discovery": "^1.1.2",
     "safety-catch": "^1.0.3",
-    "scope-lock": "^1.2.4",
-    "shuffled-priority-queue": "^2.1.0"
+    "scope-lock": "^1.2.4"
   }
 }

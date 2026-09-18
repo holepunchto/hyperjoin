@@ -76,7 +76,12 @@ module.exports = class Replicator extends ReadyResource {
         port: opts.port
       })
 
-    this.dialer = new Dialer(this, {
+    this.dialer = new Dialer({
+      ondial: (peer) => this._connect(peer),
+      ondialerror: (err) => this.emit('error', err),
+      isConnected: (key) => this.hasConnection(key),
+      isSelf: (publicKey) => b4a.equals(publicKey, this.peerId)
+    }, {
       firewall,
       backoffs: opts.backoffs,
       jitter: opts.jitter,
