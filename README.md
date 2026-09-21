@@ -81,6 +81,14 @@ Fired when a session becomes inactive a.k.a idle.
 
 Fired when a session is removed from the replicator.
 
+#### `rep.on('connected', (connection) => {})`
+
+Fired when a new connection is made.
+
+#### `rep.on('disconnected', (connection) => {})`
+
+Fired when a connection is closed.
+
 #### `rep.on('evicted', (count) => {})`
 
 Fired after GC evicts idle sessions. `count` is the number removed.
