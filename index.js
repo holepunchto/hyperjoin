@@ -441,10 +441,20 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
-  _handleFirewall(remotePublicKey, payload) {
+  async _handleFirewall(remotePublicKey, payload) {
+    // firewall self
     if (b4a.equals(remotePublicKey, this.keyPair.publicKey)) return true
 
-    return this.dialer.handleFirewall(remotePublicKey, payload)
+    const peer = this.dialer.lookup(remotePublicKey)
+    if (peer.isBanned) return true
+
+    const firewalled = await this._firewall(remotePublicKey, payload)
+
+    if (firewalled) {
+      peer.setBanned('firewalled')
+    }
+
+    return firewalled
   }
 
   get _isTearingdown() {
@@ -650,9 +660,7 @@ module.exports = class Replicator extends ReadyResource {
 
     await Promise.all(evictions)
 
-    // GC Peer cache
-
-    this.dialer.collectGarbage()
+    this.dialer._peersTopicsEvicted(sessionsEvicted)
 
     if (sessionsEvicted) this.emit('evicted', sessionsEvicted)
     if (connectionsEvicted) this.emit('dropped', connectionsEvicted)
