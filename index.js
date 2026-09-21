@@ -391,7 +391,7 @@ module.exports = class Replicator extends ReadyResource {
     if (initiator) this.stats.connects.client.opened++
     else this.stats.connects.server.opened++
 
-    this.emit('connected', connection) // testsuite only
+    this.emit('connected', connection)
     this.emit('update')
 
     return connection
