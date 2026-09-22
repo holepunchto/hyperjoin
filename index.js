@@ -76,13 +76,14 @@ module.exports = class Replicator extends ReadyResource {
         port: opts.port
       })
 
+    this._firewall = firewall
+
     this.dialer = new Dialer({
       ondial: (peer) => this._connect(peer),
       ondialerror: (err) => this.emit('error', err),
       isConnected: (key) => this.hasConnection(key),
       isSelf: (publicKey) => b4a.equals(publicKey, this.peerId)
     }, {
-      firewall,
       backoffs: opts.backoffs,
       jitter: opts.jitter,
       suspended,
@@ -163,14 +164,6 @@ module.exports = class Replicator extends ReadyResource {
 
   get connecting() {
     return this._inflight.size
-  }
-
-  // used by backports testsuite
-  get _firewall() {
-    return this.dialer._firewall
-  }
-  set _firewall(callback) {
-    this.dialer._firewall = callback
   }
 
   get connections() {

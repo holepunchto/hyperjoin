@@ -25,10 +25,10 @@
   ],
   "devDependencies": {
     "brittle": "^3.19.1",
-    "corestore": "^7.12.2",
-    "hyperdht": "^6.33.2",
+    "corestore": "^7.12.5",
+    "hyperdht": "^6.34.0",
     "lunte": "^1.8.4",
-    "prettier": "^3.9.6",
+    "prettier": "^3.9.8",
     "prettier-config-holepunch": "^2.0.0"
   },
   "scripts": {
@@ -47,9 +47,9 @@
   },
   "homepage": "https://github.com/holepunchto/replicator",
   "dependencies": {
-    "b4a": "^1.8.1",
+    "b4a": "^1.9.0",
     "bare-events": "^2.9.2",
-    "hypercore": "^11.35.2",
+    "hypercore": "^11.36.1",
     "ready-resource": "^1.2.0",
     "replicator-discovery": "^1.1.2",
     "safety-catch": "^1.0.3",
