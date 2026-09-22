@@ -137,6 +137,8 @@ module.exports = class Replicator extends ReadyResource {
       }
     }
 
+    this._online = true
+
     this.dht.on('network-change', this._handleNetworkChange.bind(this))
     this.dht.on('network-update', this._handleNetworkUpdate.bind(this))
     this.on('update', this._handleUpdate.bind(this))
@@ -758,7 +760,10 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _handleNetworkUpdate() {
-    if (this.dht.online === false) return
+    // Rising edge for being online
+    const networkCameOnline = this.dht.online && !this._online
+    this._online = this.dht.online
+    if (!networkCameOnline) return
     await this._handleNetworkChange()
   }
 
