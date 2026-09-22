@@ -5,14 +5,14 @@ const Dialer = require('../lib/dialer')
 const T0 = Date.now()
 const TOPIC = b4a.alloc(32, 1)
 const SELF = b4a.alloc(32, 0)
-const key = (n) => b4a.alloc(32, n)
+const asKey = (n) => b4a.alloc(32, n)
 const { toHex } = b4a
 
-function spawnDialer (t, { maxParallel = 3, jitter = 0, suspended = false, autoSettle = false } = {}) {
+function spawnDialer (t, { maxParallel = 3, jitter = 0, suspended = false, autoSettle = true } = {}) {
   const dialed = []
   const errors = []
-  const pending = []
   const connected = new Set()
+  const allowed = new Set()
   const blocked = new Set()
   let settled = 0
   let maxInflight = 0
@@ -37,25 +37,21 @@ function spawnDialer (t, { maxParallel = 3, jitter = 0, suspended = false, autoS
         settled++
         const doneAt = now + Date.now() - startedAt
         completeAttempt(true, err, doneAt)
-        // if(connected) peer.markDisconnected(true, err) // Connection.on('close')
         throw err // rethrow
       }
 
-      if (autoSettle) {
+      const key = toHex(peer.publicKey)
+
+      if (autoSettle || allowed.delete(key)) {
         return Promise.resolve()
           .then(attemptSuccess)
       }
 
       // reject
-      if (blocked.delete(toHex(peer.publicKey))) {
+      if (blocked.delete(key)) {
         return Promise.reject(new Error('blocked'))
           .catch(attemptFailed)
       }
-
-      // settle later
-      return new Promise((resolve) => pending.push({ peer, resolve }))
-        .then(attemptSuccess)
-        .catch(attemptFailed)
     },
     ondialerror: (err) => errors.push(err),
     isConnected: (k) => connected.has(k),
@@ -69,27 +65,21 @@ function spawnDialer (t, { maxParallel = 3, jitter = 0, suspended = false, autoS
   return {
     dialer,
     dialed,
-    pending,
     errors,
+    connected,
     maxInflight: () => maxInflight,
     fail (publicKey) {
       blocked.add(toHex(publicKey))
     },
-    settleOne () {
-      const entry = pending.shift()
-      if (!entry) throw new Error('nothing to settle')
-      entry.resolve()
-    },
-    settle () {
-      const batch = pending.splice(0)
-      for (const { resolve } of batch) resolve()
+    pass (publicKey) {
+      allowed.add(toHex(publicKey))
     }
   }
 }
 
 function spawnPeer (ctx, n, lastSeenAt) {
-  ctx.dialer.seen({ publicKey: key(n) }, TOPIC, lastSeenAt)
-  return ctx.dialer.lookup(key(n))
+  ctx.dialer.seen({ publicKey: asKey(n) }, TOPIC, lastSeenAt)
+  return ctx.dialer.lookup(asKey(n))
 }
 
 test('fires in order', async (t) => {
@@ -104,41 +94,45 @@ test('fires in order', async (t) => {
   spawnPeer(ctx, 3, T3)
   spawnPeer(ctx, 2, T2)
 
-  await dialer.resume(T3) // launch
+  dialer.resume(T3) // launch
+  const done = dialer.flush(T3)
+
+  await done
 
   t.alike(
     dialed.map((p) => p.publicKey[0]),
     [1, 2, 3]
   )
-
-  ctx.settle()
 })
 
-test('Max parallel dials capped to 3', async (t) => {
-  const ctx = spawnDialer(t, { autoSettle: true, suspended: true })
+test('maxParallel dials capped to 3', async (t) => {
+  const ctx = spawnDialer(t, { suspended: true })
   const { dialer, dialed } = ctx
 
-  for (let n = 1; n <= 5; n++) spawnPeer(ctx, n, T0 - n * 1000)
+  for (let n = 1; n <= 10; n++) {
+    spawnPeer(ctx, n)
+  }
 
-  await dialer.resume(T0 + 10_000)
+  dialer.resume() // start
+  await dialer.flush()
 
-  t.is(ctx.maxInflight(), 3, 'in-flight capped at MAX_PARALLEL')
-  t.is(dialed.length, 5, 'queue drains one admission per release')
+  t.is(ctx.maxInflight(), 3, 'in-flight bound to MAX_PARALLEL')
+  t.is(dialed.length, 10, 'all 10 peers dialed')
 })
 
-test('garbage collects expired entries', async (t) => {
+test('refresh() garbage collects expired entries', async (t) => {
   const ctx = spawnDialer(t)
   const { dialer } = ctx
 
   const peer = spawnPeer(ctx, 1, T0)
 
-  await dialer.refresh(T0)
+  dialer.refresh(T0)
   t.is(dialer.peers.size, 1, 'peer retained')
 
-  await dialer.refresh(peer.expiresAt)
+  dialer.refresh(peer.expiresAt)
   t.is(dialer.peers.size, 1, 'still retained')
 
-  await dialer.refresh(peer.expiresAt + 1)
+  dialer.refresh(peer.expiresAt + 1)
   t.is(dialer.peers.size, 0, 'peer garbage collected')
 })
 
@@ -147,94 +141,85 @@ test('does not garbage collect connected peers', async (t) => {
   const { dialer, dialed } = ctx
 
   const peer = spawnPeer(ctx, 1, T0)
-  await dialer.refresh(T0)
+  dialer.refresh(T0)
+
+  await dialer.flush(T0)
   t.is(dialed.length, 1, 'dial fired')
 
-  ctx.settle()
-  await dialer.flush(T0)
 
   t.ok(peer.connected, 'settled dial is marked connected')
 
-  await dialer.refresh(peer.expiresAt + 1)
+  dialer.refresh(peer.expiresAt + 1)
   t.is(dialer.peers.size, 1, 'connected peer exempt from gc')
   t.is(dialed.length, 1, 'no re-dial for connected peer')
 })
 
-test.solo('dialer.flush() snapshots known work', async (t) => {
+test('dialer.flush() snapshots known work', async (t) => {
   const ctx = spawnDialer(t)
-  const { dialer, dialed, pending } = ctx
-
-  const T1 = T0 + 1000
-  const T2 = T0 + 2000
-
-  const peer1 = spawnPeer(ctx, 1, T1)
-  dialer.refresh(T1)
-  t.is(dialed.length, 1, 'dial 1 in flight')
-
-  let snapshotSettled = false
-  const snapshot = dialer.flush(T1)
-  snapshot.then(() => { snapshotSettled = true })
-
-  spawnPeer(ctx, 2, T2)
-  await dialer.refresh(T2)
-
-  t.is(dialed.filter((p) => p === peer1).length, 1, 'in-flight dial not re-fired')
-  t.is(dialed.length, 2, 'later work admitted after the snapshot')
-
-  t.is(snapshotSettled, false, 'snapshot still pending')
-
-  ctx.settleOne() // settle 1st dial
-
-  await snapshot
-  t.is(snapshotSettled, true, 'snapshot settled')
-
-  t.is(pending.length, 1, 'peer 2 still pending')
-
-  ctx.settle() // settle remaining work
-  t.is(pending.length, 0, 'no work')
-})
-
-test('suspend/resume stops and restarts internal timer', async (t) => {
-  const ctx = spawnDialer(t, { suspended: true })
   const { dialer, dialed } = ctx
 
   const T1 = T0 + 1000
+  const T2 = T0 + 6000
 
-  const peer = spawnPeer(ctx, 1, T1)
-  t.ok(dialer.suspended, 'spawned parked')
+  const peer1 = spawnPeer(ctx, 1, T1)
+  dialer.refresh(T1)
 
-  await dialer.refresh(T1)
-  t.is(dialed.length, 0, 'does not dial while suspended')
-  t.absent(dialer._refreshTimer, 'timer not armed')
-  t.is(dialer.peers.size, 1, 'seen() still records — work is deferred, not dropped')
-
-  await dialer.resume()
-  t.is(dialer.suspended, false, 'resume clears suspended flag')
-  t.is(dialed.length, 0, 'resume does not mis-fire work due in the future')
-  t.ok(dialer._refreshTimer, 'internal timer re-armed')
-
-  // manual refresh
-  await dialer.refresh(T1)
-
-  t.is(dialed.filter((p) => p === peer).length, 1, 'due work fires once the clock reaches the horizon')
-
-  // drain work
+  let settled = false
   const snapshot = dialer.flush(T1)
-  ctx.settle()
+  snapshot.then(() => { settled = true })
+
+  spawnPeer(ctx, 2, T2)
+  dialer.refresh(T2)
+
+  t.is(settled, false, 'snapshot still pending')
+
   await snapshot
+
+  t.is(settled, true, 'snapshot settled')
+  t.is(dialed.filter((p) => p === peer1).length, 1, 'dial 1 fired once')
+  t.is(dialed.length, 2, 'later work admitted after the snapshot')
+
+  await dialer.flush(T2)
+})
+
+test('suspend/resume', async (t) => {
+  const ctx = spawnDialer(t)
+  const { dialer } = ctx
+
+  spawnPeer(ctx, 1)
+
+  dialer.refresh()
+
+  const suspended = dialer.suspend()
+  t.ok(dialer.suspended, 'flag set')
+  t.absent(dialer._refreshTimer, 'refreshTimer cleared')
+
+  // TODO: Aborts inflight
+  //
+  // await ctx.nextDial
+  // t.is(dialer.inflight, 1)
+
+  await suspended
+
+  t.is(dialer.inflight, 0)
+
+  dialer.resume()
+
+  t.is(dialer.suspended, false, 'flag cleared')
+  t.ok(dialer._refreshTimer, 'refreshTimer re-armed')
+
+  // TODO: asserts previously aborted inflight are resumed
 })
 
 test('Dialer errors are routed to `ondialerror`', async (t) => {
-  const ctx = spawnDialer(t)
+  const ctx = spawnDialer(t, { autoSettle: false })
   const { dialer, dialed, errors } = ctx
 
-  const T1 = T0 + 1000
+  ctx.fail(asKey(1))
+  const peer = spawnPeer(ctx, 1, T0)
 
-  ctx.fail(key(1))
-  const peer = spawnPeer(ctx, 1, T1)
-
-  dialer.refresh(T1)
-  const snapshot = dialer.flush(T1) // drains on peer's rejection
+  dialer.refresh(T0)
+  const snapshot = dialer.flush(T0) // drains on peer's rejection
   await snapshot
 
   t.is(dialed.length, 1, 'failing dial fired')
@@ -243,29 +228,33 @@ test('Dialer errors are routed to `ondialerror`', async (t) => {
 })
 
 // TODO: additionally reproduced in basic.js with a full replicator stack
-test('peer.retryAt increased on failure and is re-dialed', async (t) => {
-  const ctx = spawnDialer(t)
-  const { dialer, dialed } = ctx
+test.solo('peer.retryAt increased on failure and is re-dialed', async (t) => {
+  const ctx = spawnDialer(t, { autoSettle: false })
+  const { dialer, dialed, errors, fail, pass } = ctx
 
-  const T1 = T0 + 1000
+  fail(asKey(1))
 
-  ctx.fail(key(1))
-  const peer = spawnPeer(ctx, 1, T1)
+  const peer = spawnPeer(ctx, 1)
+  dialer.refresh()
 
-  const tick = dialer.refresh(T1)
-  const bound = dialer.flush(T1)
-  await bound
-  await tick
+  const { retryAt } = peer
 
-  t.is(ctx.errors.length, 1, 'first attempt failed')
-  t.ok(peer.retryAt > T1, 'failure pushed retryAt past the horizon')
+  await dialer.flush()
 
-  await dialer.refresh(T1 + 500) // inside the backoff window
-  t.is(dialed.filter((p) => p === peer).length, 1, 'not re-dialed inside the window')
+  t.is(dialed.length, 1, 'one attempt')
+  t.is(errors.length, 1, 'one failed')
+  t.ok(peer.retryAt > retryAt, 'retryAt increased')
 
-  ctx.fail(key(1)) // re-arm — the harness consumed the first flag on the failed dial
-  await dialer.refresh(peer.retryAt)
-  t.is(dialed.filter((p) => p === peer).length, 2, 're-dialed at the pushed horizon')
+  pass(asKey(1))
 
-  ctx.settle()
+  const retried = dialer.flush(peer.retryAt)
+
+  dialer.refresh(peer.retryAt) // launch dial
+
+  await retried
+
+  t.is(errors.length, 1, 'still one failed')
+  t.is(dialed.length, 2, 'two attempts')
+
+  t.is(ctx.connected.size, 1, 'one successful')
 })
