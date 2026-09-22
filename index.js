@@ -126,10 +126,10 @@ module.exports = class Replicator extends ReadyResource {
     this._nomad = nomad
     this._lastConnectionEvict = 0
 
+    this.slots = slots
     this._autoswarm = autoswarm
     this._autoRefreshInterval = interval
     this._gcIdleTime = gcIdleTime
-    this.slots = slots
     this._autoStartupDelay = autoStartupDelay
     this._minActiveTime = minActiveTime
 
