@@ -95,6 +95,22 @@ module.exports = class Replicator extends ReadyResource {
       this._onincoming.bind(this)
     )
 
+    this.stats = {
+      updates: 0,
+      bannedPeers: 0,
+      connects: {
+        client: {
+          attempted: 0,
+          opened: 0,
+          closed: 0
+        },
+        server: {
+          opened: 0,
+          closed: 0
+        }
+      }
+    }
+
     this.destroyed = false
     this.suspended = suspended
     this._suspending = Promise.resolve()
@@ -120,22 +136,6 @@ module.exports = class Replicator extends ReadyResource {
     this._defaultDiscoveryTimeout = defaultDiscoveryTimeout
     this._updatedDiscoveryTimeout = updatedDiscoveryTimeout
     this._discoveryStartupDelay = discoveryStartupDelay
-
-    this.stats = {
-      updates: 0,
-      bannedPeers: 0,
-      connects: {
-        client: {
-          attempted: 0,
-          opened: 0,
-          closed: 0
-        },
-        server: {
-          opened: 0,
-          closed: 0
-        }
-      }
-    }
 
     this._online = true
 
