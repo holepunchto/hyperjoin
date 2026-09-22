@@ -108,8 +108,8 @@ module.exports = class Replicator extends ReadyResource {
     this.sessions = new Map() // hex(discoveryKey) -> Session
     this.inbound = new Map() // hex(peerId) -> Connection
     this.outbound = new Map() // hex(peerId) -> Connection
-    this._inflight = new Set() // hex(peerId) -> dedup in-flight dials
-
+    this._inflight = new Set() // hex(peerId), dedup in-flight dials
+    this._inflightCancel = new Set() // cancelCallbacks
     this._minPeers = minPeers
     this._maxPeers = maxPeers
     this._wanderlust = wanderlust
@@ -242,9 +242,13 @@ module.exports = class Replicator extends ReadyResource {
 
   async _beginSuspension({ log = noop } = {}) {
     if (this._presuspending) await this._presuspending
+    this._cancelInflight()
 
     const pending = []
-    const suspending = [this.server.suspend({ log })]
+    const suspending = [
+      this.server.suspend({ log }),
+      this.dialer.suspend({ log })
+    ]
 
     for (const session of this.sessions.values()) {
       suspending.push(session.suspend({ log }))
@@ -253,8 +257,6 @@ module.exports = class Replicator extends ReadyResource {
     for (const connection of this.connections) {
       pending.push(this._evictConnection(connection, ERR_SUSPEND))
     }
-
-    this.dialer.suspend({ log })
 
     this._inflight.clear()
     this._stopAutoRefresh()
@@ -489,13 +491,15 @@ module.exports = class Replicator extends ReadyResource {
       if (firewalled) this._inflight.delete(hex)
     }
 
-    if (firewalled) {
+    if (firewalled || this._isTearingdown) {
       return
     }
 
+    const attemptDone = peer.markAttempt(true, { canRelay: !!this.relayThrough })
+
     let stream
-    let error = null // TODO !!! Value controls forceRelay; needs to use peer.ondisconnect
-    const attemptDone = peer.markAttempt(true, { canRelay: !!this.relayThrough }) // dial start: firewall + holepunch + handshake
+    let error = null
+    let cancelCallback = null
 
     const opened = await new Promise((resolve) => {
       const onerror = (err) => {
@@ -523,11 +527,15 @@ module.exports = class Replicator extends ReadyResource {
       stream.once('close', onclose)
       stream.once('open', onopen)
 
+      cancelCallback = () => stream.destroy('suspending'); console
+      this._inflightCancel.add(cancelCallback)
+
       this.stats.connects.client.attempted++
       this.emit('update')
     })
 
     this._inflight.delete(hex)
+    this._inflightCancel.delete(cancelCallback)
 
     // opened after teardown
     if (this._isTearingdown) {
@@ -817,6 +825,10 @@ module.exports = class Replicator extends ReadyResource {
     this._refreshInterval.unref()
   }
 
+  _cancelInflight() {
+    for (const cancel of this._inflightCancel) cancel()
+  }
+
   async _close() {
     this.destroyed = true
 
@@ -840,6 +852,7 @@ module.exports = class Replicator extends ReadyResource {
     this.inbound.clear()
     this.outbound.clear()
 
+    this._cancelInflight()
     this._inflight.clear()
     this.dialer.destroy()
 

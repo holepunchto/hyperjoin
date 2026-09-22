@@ -4,6 +4,7 @@ const Dialer = require('../lib/dialer')
 
 const T0 = Date.now()
 const EXPIRE_DURATION = 60_000 * 15 // mirror of lib/peer.js (module-private)
+const TOPIC = b4a.alloc(32, 1)
 const SELF = b4a.alloc(32, 0)
 const key = (n) => b4a.alloc(32, n)
 const hex = (buf) => b4a.toString(buf, 'hex')
@@ -22,7 +23,8 @@ function spawnDialer (t, { maxParallel = 3, jitter = 0, suspended = false, autoS
       dialed.push(peer)
       maxInflight = Math.max(maxInflight, dialed.length - settled)
       if (autoSettle) {
-        settled++
+        // deferred to a microtask so the in-flight window is honestly observable
+        queueMicrotask(() => { settled++ })
         return Promise.resolve()
       }
       if (failing.delete(hex(peer.publicKey))) return Promise.reject(new Error('connect failed'))
@@ -62,21 +64,21 @@ function spawnDialer (t, { maxParallel = 3, jitter = 0, suspended = false, autoS
   }
 }
 
-function seed (ctx, n, lastSeenAt) {
-  const peer = ctx.dialer.lookup(key(n))
-  peer.lastSeenAt = lastSeenAt
-  return peer
+function spawnPeer (ctx, n, lastSeenAt) {
+  // peers are introduced through the dialer API — lastSeenAt is seen()-driven
+  ctx.dialer.seen({ publicKey: key(n) }, TOPIC, lastSeenAt)
+  return ctx.dialer.lookup(key(n))
 }
 
 test('fires in order', async (t) => {
-  const ctx = spawnDialer(t)
+  const ctx = spawnDialer(t, { suspended: true })
   const { dialer, dialed } = ctx
 
-  seed(ctx, 1, T0 - 1000)
-  seed(ctx, 3, T0 - 3000)
-  seed(ctx, 2, T0 - 2000)
+  spawnPeer(ctx, 1, T0 - 1000)
+  spawnPeer(ctx, 3, T0 - 3000)
+  spawnPeer(ctx, 2, T0 - 2000)
 
-  await dialer.refresh(T0)
+  await dialer.resume() // single refresh pass, stalest first
 
   t.alike(
     dialed.map((p) => hex(p.publicKey)),
@@ -86,28 +88,24 @@ test('fires in order', async (t) => {
   ctx.settle()
 })
 
-test('dials capped to 3 (MAX_PARALLEL)', async (t) => {
-  const ctx = spawnDialer(t, { autoSettle: true })
+test('Max parallel dials capped to 3', async (t) => {
+  const ctx = spawnDialer(t, { autoSettle: true, suspended: true })
   const { dialer, dialed } = ctx
 
-  for (let n = 1; n <= 5; n++) seed(ctx, n, T0 - n * 1000)
+  for (let n = 1; n <= 5; n++) spawnPeer(ctx, n, T0 - n * 1000)
 
-  const flushing = dialer.refresh(T0)
-  const bound = dialer.flush() // bound to max _nextAt — the last queued dial
+  await dialer.resume()
 
-  await bound
   t.is(ctx.maxInflight(), 3, 'in-flight capped at MAX_PARALLEL')
   t.is(dialed.length, 5, 'queue drains one admission per release')
-
-  await flushing
 })
 
 test('garbage collects expired entries', async (t) => {
   const ctx = spawnDialer(t)
   const { dialer } = ctx
 
-  seed(ctx, 1, T0)
-  seed(ctx, 2, T0 - EXPIRE_DURATION - 1)
+  spawnPeer(ctx, 1, T0)
+  spawnPeer(ctx, 2, T0 - EXPIRE_DURATION - 1)
 
   await dialer.refresh(T0)
 
@@ -120,15 +118,19 @@ test('dialer.flush() returns bound promise to currently known dials', async (t) 
   const ctx = spawnDialer(t)
   const { dialer, dialed, pending } = ctx
 
-  seed(ctx, 1, T0 - 1000)
+  spawnPeer(ctx, 1, T0 - 1000)
   await dialer.refresh(T0)
   t.is(dialed.length, 1, 'dial in flight')
 
+  let settledEarly = false
   const bound = dialer.flush()
+  bound.then(() => { settledEarly = true })
 
-  seed(ctx, 2, T0 - 1000)
+  spawnPeer(ctx, 2, T0 - 1000)
   await dialer.refresh(T0 + 1)
-  t.is(dialed.length, 2, 'in-flight dial not re-fired; new dial fired') // not implemented
+  t.is(dialed.length, 2, 'in-flight dial not re-fired; new dial fired')
+
+  t.is(settledEarly, false, 'bind, not no-op: promise holds while its dial is unsettled')
 
   ctx.settleOne()
   await bound
@@ -141,7 +143,7 @@ test('suspend/resume stops and restarts internal timer', async (t) => {
   const ctx = spawnDialer(t, { suspended: true })
   const { dialer, dialed } = ctx
 
-  seed(ctx, 1, T0 - 1000)
+  spawnPeer(ctx, 1, T0 - 1000)
 
   t.ok(dialer.suspended, 'spawned parked')
   await dialer.refresh(T0)
@@ -161,17 +163,17 @@ test('failed connect does not abort interal timer', async (t) => {
   const { dialer, dialed, errors } = ctx
 
   ctx.fail(key(1))
-  seed(ctx, 1, T0 - 1000)
-  seed(ctx, 2, T0 - 1000)
+  spawnPeer(ctx, 1, T0 - 1000)
+  spawnPeer(ctx, 2, T0 - 1000)
 
-  await dialer.refresh(T0)
+  await dialer.flush() // k1 rejects and settles; k2 stays in flight
   t.is(dialed.length, 2, 'both dials fired')
   t.is(errors.length, 1, 'failure routed to ondialerror, not thrown')
 
   ctx.settle()
 
-  seed(ctx, 3, T0 - 1000)
+  spawnPeer(ctx, 3, T0 - 1000)
   await dialer.refresh(T0 + 1)
-  t.is(dialed.length, 3, 'timer admits work after a failure — failed peer backed off, settled peer connected') // not implemented
+  t.is(dialed.length, 3, 'timer admits work after a failure — failed peer backed off, settled peer connected')
   ctx.settle()
 })
