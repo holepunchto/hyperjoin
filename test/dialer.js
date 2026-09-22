@@ -18,24 +18,26 @@ function spawnDialer (t, { maxParallel = 3, jitter = 0, suspended = false, autoS
   let maxInflight = 0
 
   const handlers = {
-    ondial: (peer) => {
+    ondial: (peer, now) => {
       dialed.push(peer)
-
-      const completeAttempt = peer.markAttempt(true)
+      const startedAt = Date.now()
+      const completeAttempt = peer.markAttempt(true, { now })
 
       maxInflight = Math.max(maxInflight, dialed.length - settled)
 
       const attemptSuccess = () => {
         settled++
-        completeAttempt()
+        const doneAt = now + Date.now() - startedAt
+        completeAttempt(false, null, doneAt)
         connected.add(toHex(peer.publicKey))
-        peer.markConnected(true) // Connection.on('open')
+        peer.markConnected(true, doneAt) // Connection.on('open')
       }
 
       const attemptFailed = (err) => {
         settled++
-        completeAttempt(true, err)
-        // peer.markDisconnected(true, err) // Connection.on('close')
+        const doneAt = now + Date.now() - startedAt
+        completeAttempt(true, err, doneAt)
+        // if(connected) peer.markDisconnected(true, err) // Connection.on('close')
         throw err // rethrow
       }
 
@@ -166,7 +168,7 @@ test.solo('dialer.flush() snapshots known work', async (t) => {
   const T2 = T0 + 2000
 
   const peer1 = spawnPeer(ctx, 1, T1)
-  await dialer.refresh(T1)
+  dialer.refresh(T1)
   t.is(dialed.length, 1, 'dial 1 in flight')
 
   let snapshotSettled = false
