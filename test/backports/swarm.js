@@ -358,9 +358,9 @@ test('GC dedupes connections', async (t) => {
   const p1Connections = waitForEvents(p1.replicator, 'connected', 2)
   const p2Connections = waitForEvents(p2.replicator, 'connected', 2)
 
-  let peerInfo  = p1.replicator.dialer.lookup(p2.replicator.peerId)
+  let peerInfo = p1.replicator.dialer.lookup(p2.replicator.peerId)
   p1.replicator._connect(peerInfo, s1.discoveryKey)
-  peerInfo  = p2.replicator.dialer.lookup(p1.replicator.peerId)
+  peerInfo = p2.replicator.dialer.lookup(p1.replicator.peerId)
   p2.replicator._connect(peerInfo, s2.discoveryKey)
 
   await Promise.all([p1Connections, p2Connections])

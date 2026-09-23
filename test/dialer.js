@@ -8,7 +8,10 @@ const SELF = b4a.alloc(32, 0)
 const asKey = (n) => b4a.alloc(32, n)
 const { toHex } = b4a
 
-function spawnDialer (t, { maxParallel = 3, jitter = 0, suspended = false, autoSettle = true } = {}) {
+function spawnDialer(
+  t,
+  { maxParallel = 3, jitter = 0, suspended = false, autoSettle = true } = {}
+) {
   const dialed = []
   const errors = []
   const connected = new Set()
@@ -43,14 +46,12 @@ function spawnDialer (t, { maxParallel = 3, jitter = 0, suspended = false, autoS
       const key = toHex(peer.publicKey)
 
       if (autoSettle || allowed.delete(key)) {
-        return Promise.resolve()
-          .then(attemptSuccess)
+        return Promise.resolve().then(attemptSuccess)
       }
 
       // reject
       if (blocked.delete(key)) {
-        return Promise.reject(new Error('blocked'))
-          .catch(attemptFailed)
+        return Promise.reject(new Error('blocked')).catch(attemptFailed)
       }
     },
     ondialerror: (err) => errors.push(err),
@@ -68,16 +69,16 @@ function spawnDialer (t, { maxParallel = 3, jitter = 0, suspended = false, autoS
     errors,
     connected,
     maxInflight: () => maxInflight,
-    fail (publicKey) {
+    fail(publicKey) {
       blocked.add(toHex(publicKey))
     },
-    pass (publicKey) {
+    pass(publicKey) {
       allowed.add(toHex(publicKey))
     }
   }
 }
 
-function spawnPeer (ctx, n, lastSeenAt) {
+function spawnPeer(ctx, n, lastSeenAt) {
   ctx.dialer.seen({ publicKey: asKey(n) }, TOPIC, lastSeenAt)
   return ctx.dialer.lookup(asKey(n))
 }
@@ -146,7 +147,6 @@ test('does not garbage collect connected peers', async (t) => {
   await dialer.flush(T0)
   t.is(dialed.length, 1, 'dial fired')
 
-
   t.ok(peer.connected, 'settled dial is marked connected')
 
   dialer.refresh(peer.expiresAt + 1)
@@ -166,7 +166,9 @@ test('dialer.flush() snapshots known work', async (t) => {
 
   let settled = false
   const snapshot = dialer.flush(T1)
-  snapshot.then(() => { settled = true })
+  snapshot.then(() => {
+    settled = true
+  })
 
   spawnPeer(ctx, 2, T2)
   dialer.refresh(T2)

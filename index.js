@@ -78,17 +78,20 @@ module.exports = class Replicator extends ReadyResource {
 
     this._firewall = firewall
 
-    this.dialer = new Dialer({
-      ondial: (peer) => this._connect(peer),
-      ondialerror: (err) => this.emit('error', err),
-      isConnected: (key) => this.hasConnection(key),
-      isSelf: (publicKey) => b4a.equals(publicKey, this.peerId)
-    }, {
-      backoffs: opts.backoffs,
-      jitter: opts.jitter,
-      suspended,
-      maxParallel
-    })
+    this.dialer = new Dialer(
+      {
+        ondial: (peer) => this._connect(peer),
+        ondialerror: (err) => this.emit('error', err),
+        isConnected: (key) => this.hasConnection(key),
+        isSelf: (publicKey) => b4a.equals(publicKey, this.peerId)
+      },
+      {
+        backoffs: opts.backoffs,
+        jitter: opts.jitter,
+        suspended,
+        maxParallel
+      }
+    )
 
     this.relayThrough = relayThrough && toRelaySelector(relayThrough)
 
@@ -238,10 +241,7 @@ module.exports = class Replicator extends ReadyResource {
     this._cancelInflight()
 
     const pending = []
-    const suspending = [
-      this.server.suspend({ log }),
-      this.dialer.suspend({ log })
-    ]
+    const suspending = [this.server.suspend({ log }), this.dialer.suspend({ log })]
 
     for (const session of this.sessions.values()) {
       suspending.push(session.suspend({ log }))
@@ -908,7 +908,7 @@ class Connection {
 
   isIdle(now = Date.now()) {
     // TODO: is there a signal for protomuxSession opened?
-    if ((now - this.connectedAt) < 5000) return false
+    if (now - this.connectedAt < 5000) return false
 
     if (this._protomuxSessions() === 0) return true
 

@@ -275,7 +275,11 @@ test('attempt failed w/ HOLEPUNCH_ABORTED: forceRelaying armed, attempts reset',
 
   // the holepunch refusal verdict
   const done = p.markAttempt(true, { now: T0 + 5000, canRelay: true })
-  done(true, Object.assign(new Error('holepunch aborted'), { code: 'HOLEPUNCH_ABORTED' }), T0 + 5000)
+  done(
+    true,
+    Object.assign(new Error('holepunch aborted'), { code: 'HOLEPUNCH_ABORTED' }),
+    T0 + 5000
+  )
 
   t.is(p.forceRelaying, true, 'relay fast-connect armed')
   t.is(p.dials, 0, 'attempts reset for the instant relay redial')
