@@ -8,81 +8,6 @@ const SELF = b4a.alloc(32, 0)
 const asKey = (n) => b4a.alloc(32, n)
 const { toHex } = b4a
 
-function spawnDialer(
-  t,
-  { maxParallel = 3, jitter = 0, suspended = false, autoSettle = true } = {}
-) {
-  const dialed = []
-  const errors = []
-  const connected = new Set()
-  const allowed = new Set()
-  const blocked = new Set()
-  let settled = 0
-  let maxInflight = 0
-
-  const handlers = {
-    ondial: (peer, now) => {
-      dialed.push(peer)
-      const startedAt = Date.now()
-      const completeAttempt = peer.markAttempt(true, { now })
-
-      maxInflight = Math.max(maxInflight, dialed.length - settled)
-
-      const attemptSuccess = () => {
-        settled++
-        const doneAt = now + Date.now() - startedAt
-        completeAttempt(false, null, doneAt)
-        connected.add(toHex(peer.publicKey))
-        peer.markConnected(true, doneAt) // Connection.on('open')
-      }
-
-      const attemptFailed = (err) => {
-        settled++
-        const doneAt = now + Date.now() - startedAt
-        completeAttempt(true, err, doneAt)
-        throw err // rethrow
-      }
-
-      const key = toHex(peer.publicKey)
-
-      if (autoSettle || allowed.delete(key)) {
-        return Promise.resolve().then(attemptSuccess)
-      }
-
-      // reject
-      if (blocked.delete(key)) {
-        return Promise.reject(new Error('blocked')).catch(attemptFailed)
-      }
-    },
-    ondialerror: (err) => errors.push(err),
-    isConnected: (k) => connected.has(k),
-    isSelf: (publicKey) => b4a.equals(publicKey, SELF)
-  }
-
-  const dialer = new Dialer(handlers, { maxParallel, jitter, suspended })
-
-  t.teardown(() => dialer.destroy())
-
-  return {
-    dialer,
-    dialed,
-    errors,
-    connected,
-    maxInflight: () => maxInflight,
-    fail(publicKey) {
-      blocked.add(toHex(publicKey))
-    },
-    pass(publicKey) {
-      allowed.add(toHex(publicKey))
-    }
-  }
-}
-
-function spawnPeer(ctx, n, lastSeenAt) {
-  ctx.dialer.seen({ publicKey: asKey(n) }, TOPIC, lastSeenAt)
-  return ctx.dialer.lookup(asKey(n))
-}
-
 test('fires in order', async (t) => {
   const ctx = spawnDialer(t, { suspended: true })
   const { dialer, dialed } = ctx
@@ -210,7 +135,7 @@ test('suspend/resume', async (t) => {
   t.is(dialer.suspended, false, 'flag cleared')
   t.ok(dialer._refreshTimer, 'refreshTimer re-armed')
 
-  // TODO: asserts previously aborted inflight are resumed
+  // TODO: assert previously aborted inflight are resumed
 })
 
 test('Dialer errors are routed to `ondialerror`', async (t) => {
@@ -229,7 +154,7 @@ test('Dialer errors are routed to `ondialerror`', async (t) => {
   t.is(dialed.filter((p) => p === peer).length, 1, 'fired exactly once')
 })
 
-// TODO: additionally reproduced in basic.js with a full replicator stack
+// TODO: reproduce in basic.js with a full replicator stack
 test('peer.retryAt increased on failure and is re-dialed', async (t) => {
   const ctx = spawnDialer(t, { autoSettle: false })
   const { dialer, dialed, errors, fail, pass } = ctx
@@ -260,3 +185,78 @@ test('peer.retryAt increased on failure and is re-dialed', async (t) => {
 
   t.is(ctx.connected.size, 1, 'one successful')
 })
+
+function spawnDialer(
+  t,
+  { maxParallel = 3, jitter = 0, suspended = false, autoSettle = true } = {}
+) {
+  const dialed = []
+  const errors = []
+  const connected = new Set()
+  const allowed = new Set()
+  const blocked = new Set()
+  let settled = 0
+  let maxInflight = 0
+
+  const handlers = {
+    ondial: (peer, now) => {
+      dialed.push(peer)
+      const startedAt = Date.now()
+      const completeAttempt = peer.markAttempt(true, { now })
+
+      maxInflight = Math.max(maxInflight, dialed.length - settled)
+
+      const attemptSuccess = () => {
+        settled++
+        const doneAt = now + Date.now() - startedAt
+        completeAttempt(false, null, doneAt)
+        connected.add(toHex(peer.publicKey))
+        peer.markConnected(true, doneAt) // Connection.on('open')
+      }
+
+      const attemptFailed = (err) => {
+        settled++
+        const doneAt = now + Date.now() - startedAt
+        completeAttempt(true, err, doneAt)
+        throw err // rethrow
+      }
+
+      const key = toHex(peer.publicKey)
+
+      if (autoSettle || allowed.delete(key)) {
+        return Promise.resolve().then(attemptSuccess)
+      }
+
+      // reject
+      if (blocked.delete(key)) {
+        return Promise.reject(new Error('blocked')).catch(attemptFailed)
+      }
+    },
+    ondialerror: (err) => errors.push(err),
+    isConnected: (k) => connected.has(k),
+    isSelf: (publicKey) => b4a.equals(publicKey, SELF)
+  }
+
+  const dialer = new Dialer(handlers, { maxParallel, jitter, suspended })
+
+  t.teardown(() => dialer.destroy())
+
+  return {
+    dialer,
+    dialed,
+    errors,
+    connected,
+    maxInflight: () => maxInflight,
+    fail(publicKey) {
+      blocked.add(toHex(publicKey))
+    },
+    pass(publicKey) {
+      allowed.add(toHex(publicKey))
+    }
+  }
+}
+
+function spawnPeer(ctx, n, lastSeenAt) {
+  ctx.dialer.seen({ publicKey: asKey(n) }, TOPIC, lastSeenAt)
+  return ctx.dialer.lookup(asKey(n))
+}
