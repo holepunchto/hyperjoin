@@ -80,19 +80,18 @@ module.exports = class Replicator extends ReadyResource {
     this._firewall = firewall
 
     const handlers = {
-        ondial: (peer) => this._connect(peer),
-        ondialerror: (err) => this.emit('error', err),
-        isConnected: (key) => this.hasConnection(key),
-        isSelf: (publicKey) => b4a.equals(publicKey, this.peerId)
+      ondial: (peer) => this._connect(peer),
+      ondialerror: (err) => this.emit('error', err),
+      isConnected: (key) => this.hasConnection(key),
+      isSelf: (publicKey) => b4a.equals(publicKey, this.peerId)
     }
 
     this.dialer = new Dialer(handlers, {
-        backoffs: opts.backoffs,
-        jitter: opts.jitter,
-        suspended,
-        maxParallel
-      }
-    )
+      backoffs: opts.backoffs,
+      jitter: opts.jitter,
+      suspended,
+      maxParallel
+    })
 
     this.relayThrough = relayThrough && toRelaySelector(relayThrough)
 
