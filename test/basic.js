@@ -156,7 +156,7 @@ test('GC preserves stable connections over rookies', async (t) => {
 
   await timeout(30)
 
-  const p3Connected = onceEvent(p1.replicator, 'connected')
+  const p3Connected = onceEvent(p1.replicator, 'replicating')
   const remote3 = await joinRemote(p3, p1)
   await remote3[0].get(0)
   await p3Connected

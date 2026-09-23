@@ -228,7 +228,7 @@ test('Dialer errors are routed to `ondialerror`', async (t) => {
 })
 
 // TODO: additionally reproduced in basic.js with a full replicator stack
-test.solo('peer.retryAt increased on failure and is re-dialed', async (t) => {
+test('peer.retryAt increased on failure and is re-dialed', async (t) => {
   const ctx = spawnDialer(t, { autoSettle: false })
   const { dialer, dialed, errors, fail, pass } = ctx
 

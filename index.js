@@ -275,7 +275,7 @@ module.exports = class Replicator extends ReadyResource {
     if (this._presuspending) {
       await this._presuspending
       this._presuspending = null
-      this.dialer._attemptClientConnections()
+      this.dialer.refresh()
     }
 
     if (!this.suspended) return
@@ -403,6 +403,17 @@ module.exports = class Replicator extends ReadyResource {
     this.emit('connected', connection) // testsuite only
     this.emit('update')
 
+    // TODO: need protomux channel-opened signal for 'replicating'-event
+    const pollReplicationStart = (n) => {
+      if (n > 7 || connection._protomuxSessions() > 0) {
+        this.emit('replicating', connection)
+        return
+      }
+
+      setTimeout(() => pollReplicationStart(++n), n * 10)
+    }
+    pollReplicationStart(0)
+
     return connection
   }
 
@@ -447,6 +458,8 @@ module.exports = class Replicator extends ReadyResource {
 
     if (firewalled) {
       peer.setBanned('firewalled')
+      this.stats.bannedPeers++
+      this.emit('ban', peer, peer.banReason)
     }
 
     return firewalled
@@ -520,7 +533,7 @@ module.exports = class Replicator extends ReadyResource {
       stream.once('close', onclose)
       stream.once('open', onopen)
 
-      cancelCallback = () => stream.destroy('suspending'); console
+      cancelCallback = () => stream.destroy('suspending')
       this._inflightCancel.add(cancelCallback)
 
       this.stats.connects.client.attempted++
@@ -610,6 +623,7 @@ module.exports = class Replicator extends ReadyResource {
         }
       }
 
+      // TODO: move to [lib|test]/heuristics.js
       // Heuristic evict if still over max-cap
       const nHeuristicEvict = nEvict - connectionsEvicted
 
@@ -627,7 +641,7 @@ module.exports = class Replicator extends ReadyResource {
             if (aRookie !== bRookie) return aRookie ? -1 : 1
 
             // Evict newest, comparing 2 rookies.
-            if (aRookie) return b.connectedTime - a.connectedTime
+            if (aRookie) return b.connectedAt - a.connectedAt
 
             // Evict stale, comparing 2 established
             return a.lastActivity - b.lastActivity
@@ -693,6 +707,8 @@ module.exports = class Replicator extends ReadyResource {
     await Promise.all(done)
 
     await this._gc(now)
+
+    this.dialer.refresh(now)
   }
 
   // @deprecated, legacy compat (dht + connection queue, done)
@@ -886,11 +902,14 @@ class Connection {
     return this.replicator.dialer.lookup(this.peerId)
   }
 
-  get connectedTime() {
-    return this.info.connectedTime
+  get connectedAt() {
+    return this.info.connectedAt
   }
 
-  isIdle() {
+  isIdle(now = Date.now()) {
+    // TODO: is there a signal for protomuxSession opened?
+    if ((now - this.connectedAt) < 5000) return false
+
     if (this._protomuxSessions() === 0) return true
 
     return false
