@@ -2,10 +2,11 @@ const ReadyResource = require('ready-resource')
 const DHT = require('hyperdht')
 const safetyCatch = require('safety-catch')
 const Hypercore = require('hypercore')
-const b4a = require('b4a')
 const Dialer = require('./lib/dialer')
 const Session = require('./lib/session')
 const { getStreamError } = require('streamx')
+const b4a = require('b4a')
+const { toHex } = b4a
 
 const AUTO_REFRESH_INTERVAL = 5000
 
@@ -78,14 +79,14 @@ module.exports = class Replicator extends ReadyResource {
 
     this._firewall = firewall
 
-    this.dialer = new Dialer(
-      {
+    const handlers = {
         ondial: (peer) => this._connect(peer),
         ondialerror: (err) => this.emit('error', err),
         isConnected: (key) => this.hasConnection(key),
         isSelf: (publicKey) => b4a.equals(publicKey, this.peerId)
-      },
-      {
+    }
+
+    this.dialer = new Dialer(handlers, {
         backoffs: opts.backoffs,
         jitter: opts.jitter,
         suspended,
@@ -119,16 +120,19 @@ module.exports = class Replicator extends ReadyResource {
     this._wanderlust = wanderlust
     this._lastConnectionEvict = 0
 
+    this.slots = slots
     this._autoswarm = autoswarm
     this._autoRefreshInterval = interval
     this._gcIdleTime = gcIdleTime
-    this.slots = slots
+
     this._autoStartupDelay = autoStartupDelay
     this._minActiveTime = minActiveTime
 
     this._defaultDiscoveryTimeout = defaultDiscoveryTimeout
     this._updatedDiscoveryTimeout = updatedDiscoveryTimeout
     this._discoveryStartupDelay = discoveryStartupDelay
+
+    this._online = false
 
     this.stats = {
       updates: 0,
@@ -805,7 +809,11 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _handleNetworkUpdate() {
-    if (this.dht.online === false) return
+    // Rising edge for being online
+    const networkCameOnline = this.dht.online && !this._online
+    this._online = this.dht.online
+    if (!networkCameOnline) return
+
     await this._handleNetworkChange()
   }
 
@@ -976,10 +984,6 @@ class Connection {
 }
 
 function noop() {}
-
-function toHex(buffer) {
-  return b4a.toString(buffer, 'hex')
-}
 
 function allowAll() {
   return false
