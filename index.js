@@ -82,8 +82,7 @@ module.exports = class Replicator extends ReadyResource {
     const handlers = {
       ondial: (peer) => this._connect(peer),
       ondialerror: (err) => this.emit('error', err),
-      isConnected: (key) => this.hasConnection(key),
-      isSelf: (publicKey) => b4a.equals(publicKey, this.peerId)
+      isConnected: (key) => this.hasConnection(key)
     }
 
     this.dialer = new Dialer(handlers, {
@@ -387,7 +386,7 @@ module.exports = class Replicator extends ReadyResource {
     this._initConnection(false, peerId, conn)
   }
 
-  // stream param expected opened stream
+  // `stream` expected to be fully opened
   _initConnection(initiator, peerId, stream) {
     const hex = toHex(peerId)
 
