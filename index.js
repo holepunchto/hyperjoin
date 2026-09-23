@@ -307,7 +307,6 @@ module.exports = class Replicator extends ReadyResource {
     {
       priority = 0,
       pin = false,
-      active = false /* deprecated TODO: REMOVE PRE 1.5*/,
       discover = false,
       deferSwarming
     } = {}
@@ -318,7 +317,6 @@ module.exports = class Replicator extends ReadyResource {
     const session = new Session(this, store, topic, {
       priority,
       pin,
-      active,
       discover,
       deferSwarming
     })
