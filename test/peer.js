@@ -1,6 +1,7 @@
 const test = require('brittle')
 const b4a = require('b4a')
 const Peer = require('../lib/peer')
+const Dialer = require('../lib/dialer')
 
 const T0 = Date.now()
 const TOPIC = b4a.alloc(32, 1)
@@ -213,4 +214,33 @@ test('A peer that holds a stable connection and then drops is re-dialed', (t) =>
 
   t.is(peer._outboundAttempts, 0, 'stable session reset the ladder')
   t.ok(peer.shouldDial(disconnectedAt), 're-dialable on drop')
+})
+
+test('Inbound peer gets banned for hammering', (t) => {
+  const { peer: a } = spawnPeer(1)
+  const { peer: b } = spawnPeer(2)
+
+  const attempts = 20
+
+  const backoffA = 10000
+  const backoffB = 50
+
+  for (let n = 0; n < attempts; n++) {
+    let now = T0 + n * backoffA
+    a.markAttempt(false, { now })(false, null, now)
+    a.markConnected(false, now)
+    a.markDisconnected(false, null, now + backoffA)
+
+    now = T0 + n * backoffB // linear reconnect every 50ms
+    b.markAttempt(false, { now })(false, null, now)
+    b.markConnected(false, now)
+    b.markDisconnected(false, null, now + backoffB)
+  }
+
+  t.is(a._inboundSuccess, attempts)
+  t.ok(!a.isBanned, 'A not banned')
+
+  t.is(b._inboundSuccess, attempts)
+  t.ok(b.isBanned, 'B is banned')
+  t.is(b.banReason, 'hammering')
 })

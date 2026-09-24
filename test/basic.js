@@ -194,3 +194,37 @@ test('root close closes replicator', async (t) => {
 
   await testnet.destroy()
 })
+
+test('inbound peer gets banned for hammering', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+
+  const p1Key = p1.replicator.peerId
+  const target = p2.replicator.dialer.lookup(p1Key)
+  const attempts = 8
+
+  for (let n = 0; n < attempts; n++) {
+    await p2.replicator._connect(target)
+
+    const connection = p2.replicator.getConnection(toHex(p1Key))
+    if (!connection) break
+
+    connection.stream.destroy()
+    await onceEvent(connection.stream, 'close')
+  }
+
+  const peer = p1.replicator.dialer.peers.get(toHex(p2.replicator.peerId))
+
+  t.ok(peer, 'p1 knows p2')
+  t.ok(peer.isBanned, 'p2 is banned')
+  t.is(peer.banReason, 'hammering')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
+function noop() {}
