@@ -198,3 +198,19 @@ test('gc: banned peer retained longer', (t) => {
   t.ok(!banned.shouldDial(T0), 'banned peers are not dialed')
   t.ok(banned.isExpired(banned.expiresAt + 1), 'expired')
 })
+
+test('A peer that holds a stable connection and then drops is re-dialed', (t) => {
+  const { peer } = spawnPeer()
+
+  peer.observe(TOPIC, T0)
+
+  const connectedAt = T0 + 5000
+  const disconnectedAt = connectedAt + 10 * 1000 + 1
+
+  peer.markAttempt(true, { now: connectedAt })()
+  peer.markConnected(true, connectedAt)
+  peer.markDisconnected(true, null, disconnectedAt)
+
+  t.is(peer._outboundAttempts, 0, 'stable session reset the ladder')
+  t.ok(peer.shouldDial(disconnectedAt), 're-dialable on drop')
+})

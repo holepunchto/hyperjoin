@@ -126,16 +126,20 @@ test('suspend/resume', async (t) => {
   // await ctx.nextDial
   // t.is(dialer.inflight, 1)
 
-  await suspended
+  await suspended // inflight work settled
 
   t.is(dialer.inflight, 0)
+  t.is(ctx.dialed.length, 0, 'aborted before it fired')
 
   dialer.resume()
 
   t.is(dialer.suspended, false, 'flag cleared')
-  t.ok(dialer._refreshTimer, 'refreshTimer re-armed')
 
-  // TODO: assert previously aborted inflight are resumed
+  await dialer.flush()
+
+  t.is(ctx.dialed.length, 1, 'aborted dial resumed')
+  t.is(ctx.connected.size, 1, 'peer connected')
+  t.ok(dialer._refreshTimer, 'refreshTimer re-armed')
 })
 
 test('Dialer errors are routed to `ondialerror`', async (t) => {
@@ -208,6 +212,32 @@ test('dialer does not dial peers without an active topic', async (t) => {
   t.is(dialed.length, 1, 'topic enabled: dials')
   t.is(errors.length, 0)
   t.is(dialed.filter((p) => p === peer).length, 1, 'fired exactly once')
+})
+
+test('A peer that holds a stable connection and then drops is re-dialed', async (t) => {
+  const ctx = spawnDialer(t)
+  const { dialer, dialed } = ctx
+
+  const peer = spawnPeer(ctx, 1, T0 - 5000)
+
+  dialer.refresh()
+  await dialer.flush()
+
+  t.is(dialed.length, 1, 'first dial fired')
+  t.ok(peer.connected, 'connected')
+
+  const disconnectedAt = Date.now() + 10 * 1000 + 1
+
+  ctx.connected.delete(toHex(peer.publicKey))
+  peer.markDisconnected(true, null, disconnectedAt)
+
+  t.is(peer._outboundAttempts, 0, 'stable session reset the ladder')
+  t.ok(peer.shouldDial(disconnectedAt), 'peer says re-dial me')
+
+  dialer.refresh(disconnectedAt)
+  await dialer.flush(disconnectedAt)
+
+  t.is(dialed.length, 2, 're-dialed after the drop')
 })
 
 function spawnDialer(
