@@ -130,3 +130,24 @@ test('attempt failed w/ HOLEPUNCH_ABORTED: forceRelaying armed, attempts immedia
   t.is(peer.retryAt, peer.lastSeenAt, 'attempts reset')
   t.ok(peer.shouldDial(T0), 'immediate re-dial')
 })
+
+test('gc expires a peer by its own clock', (t) => {
+  const { peer: fresh } = spawnPeer(1)
+  t.ok(!fresh.isExpired(T0), 'no clock: retained while young')
+
+  const { peer: live } = spawnPeer(2)
+  live.markConnected(false, T0)
+  t.ok(!live.isExpired(T0 + EXPIRE_DURATION + 1), 'connected peers are retained')
+
+  const { peer: dropped } = spawnPeer(3)
+  dropped.markConnected(false, T0)
+  dropped.markDisconnected(false, null, T0 + 100)
+  t.ok(!dropped.isExpired(T0 + 100 + EXPIRE_DURATION), 'disconnect clock retained')
+  t.ok(dropped.isExpired(T0 + 101 + EXPIRE_DURATION), 'disconnect clock expired')
+
+  const { peer: banned } = spawnPeer(4)
+  banned.observe(TOPIC, T0)
+  banned.setBanned('hammering', T0)
+  t.ok(!banned.isExpired(T0 + BAN_DURATION), 'ban clock retained')
+  t.ok(banned.isExpired(T0 + BAN_DURATION + 1), 'ban clock expired')
+})
