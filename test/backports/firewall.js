@@ -1,9 +1,6 @@
 const test = require('brittle')
 const createTestnet = require('hyperdht/testnet')
 const { timeout, spawnPeer, seedA, seedB } = require('../helpers/backports')
-const Peer = require('../../lib/peer')
-Peer.backoffDuration = (n) => [100, 200, 300, 400][n] || 30_000 // faster tests
-
 
 test('firewalled server - bad client is rejected', async (t) => {
   const testnet = await createTestnet()
