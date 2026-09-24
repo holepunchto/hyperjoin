@@ -91,7 +91,7 @@ test('GC connections with no active mux sessions', async (t) => {
     'p3 connection has no protomux sessions'
   )
 
-  await p1.replicator._gc(() => Date.now())
+  await p1.replicator._gc()
 
   t.is(
     p1.replicator.connectionCount,

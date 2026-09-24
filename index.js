@@ -329,6 +329,9 @@ module.exports = class Replicator extends ReadyResource {
 
     store.on('close', session.close.bind(session))
 
+    // TODO: Do not dial peers with no active topic.
+    // this.dialer._peersTopicEnable(session.topic)
+
     this.emit('join', session)
 
     return session
@@ -380,7 +383,7 @@ module.exports = class Replicator extends ReadyResource {
 
     attemptDone()
 
-    // When reaching here, the connection will always be 'opened' next tick
+    // connection 'opened' on next tick
     this._initConnection(false, peerId, conn)
   }
 
@@ -403,7 +406,7 @@ module.exports = class Replicator extends ReadyResource {
     this.emit('connected', connection) // testsuite only
     this.emit('update')
 
-    // TODO: need protomux channel-opened signal for 'replicating'-event
+    // TODO: need protomux channel-opened signal for robust 'replicating'-event
     const pollReplicationStart = (n) => {
       if (n > 7 || connection._protomuxSessions() > 0) {
         this.emit('replicating', connection)
@@ -675,9 +678,8 @@ module.exports = class Replicator extends ReadyResource {
 
     await Promise.all(evictions)
 
-    this.dialer._peersTopicsEvicted(sessionsEvicted)
-
     if (sessionsEvicted) this.emit('evicted', sessionsEvicted)
+
     if (connectionsEvicted) this.emit('dropped', connectionsEvicted)
   }
 
