@@ -329,9 +329,6 @@ module.exports = class Replicator extends ReadyResource {
 
     store.on('close', session.close.bind(session))
 
-    // TODO: Do not dial peers with no active topic.
-    // this.dialer._peersTopicEnable(session.topic)
-
     this.emit('join', session)
 
     return session
