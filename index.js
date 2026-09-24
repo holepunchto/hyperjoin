@@ -447,6 +447,11 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
+  _handleBan(peer) {
+    this.stats.bannedPeers++
+    this.emit('ban', peer, peer.banReason)
+  }
+
   async _handleFirewall(remotePublicKey, payload) {
     // firewall self
     if (b4a.equals(remotePublicKey, this.keyPair.publicKey)) return true
@@ -458,8 +463,9 @@ module.exports = class Replicator extends ReadyResource {
 
     if (firewalled) {
       peer.setBanned('firewalled')
-      this.stats.bannedPeers++
-      this.emit('ban', peer, peer.banReason)
+
+      const { banned } = this.dialer.checkBans()
+      for (const p of banned) this._handleBan(p)
     }
 
     return firewalled
@@ -708,6 +714,9 @@ module.exports = class Replicator extends ReadyResource {
     await this._gc(now)
 
     this.dialer.refresh(now)
+
+    const { banned } = this.dialer.checkBans()
+    for (const p of banned) this._handleBan(p)
   }
 
   // @deprecated, legacy compat (dht + connection queue, done)
