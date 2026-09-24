@@ -955,6 +955,7 @@ class Connection {
     }
 
     this.info.markDisconnected(this.initiator, err)
+    rep.dialer.refresh() // reschedule fast-reconnects
 
     rep.emit('disconnected', this)
     rep.emit('update')
