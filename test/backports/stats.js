@@ -2,14 +2,13 @@ const test = require('brittle')
 const createTestnet = require('hyperdht/testnet')
 const { onceEvent, spawnPeer, seedA, seedB } = require('../helpers/backports')
 
-const BACKOFFS = [100, 200, 300, 400]
 
 test('connectionsOpened and connectionsClosed stats', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, backoffs: BACKOFFS, jitter: 0 })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, backoffs: BACKOFFS, jitter: 0 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, jitter: 0 })
 
   const tOpen = t.test('Open connection')
   tOpen.plan(3)

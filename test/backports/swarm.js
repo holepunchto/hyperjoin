@@ -15,8 +15,8 @@ const {
 } = require('../helpers/backports')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('../..')
+const Peer = require('../../lib/peer')
 
-const BACKOFFS = [100, 200, 300, 400]
 
 async function joinPinned(replicator, store, topic) {
   const session = replicator.join(store, topic, { pin: true })
@@ -148,8 +148,8 @@ test('one server, one client - maximum reconnects', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, backoffs: BACKOFFS, jitter: 0 })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, backoffs: BACKOFFS, jitter: 0 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, jitter: 0 })
 
   let connections = 0
   p2.replicator.on('connected', (connection) => {
@@ -159,7 +159,7 @@ test('one server, one client - maximum reconnects', async (t) => {
 
   await joinPinned(p2.replicator, p2.store.session(), p1.cores[0].discoveryKey)
 
-  await timeout(BACKOFFS[2] * 4)
+  await timeout(Peer.backoffDuration(1) + 500)
 
   t.ok(connections > 1)
   t.ok(connections < 5)
@@ -173,8 +173,8 @@ test('one server, one client - banned peer does not reconnect', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, backoffs: BACKOFFS, jitter: 0 })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, backoffs: BACKOFFS, jitter: 0 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, jitter: 0 })
 
   let connections = 0
   p2.replicator.on('connected', (connection) => {
@@ -185,7 +185,7 @@ test('one server, one client - banned peer does not reconnect', async (t) => {
 
   await joinPinned(p2.replicator, p2.store.session(), p1.cores[0].discoveryKey)
 
-  await timeout(BACKOFFS[2] * 2)
+  await timeout(600)
 
   t.is(connections, 1)
 
@@ -235,8 +235,8 @@ test('two servers, two clients - simple deduplication', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, backoffs: BACKOFFS, jitter: 0 })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, backoffs: BACKOFFS, jitter: 0 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, jitter: 0 })
 
   p1.replicator.on('connected', () => {
     connection1Test.pass('p1 connection')
@@ -263,8 +263,8 @@ test('one server, two clients - topic multiplexing', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, backoffs: BACKOFFS, jitter: 0 })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, backoffs: BACKOFFS, jitter: 0 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, jitter: 0 })
 
   let clientConnections = 0
   let peerInfo = null
@@ -536,13 +536,12 @@ test('one server, two clients - if a second client joins after the server leaves
 })
 
 test('two servers, one client - refreshing a peer discovery instance discovers new server', async (t) => {
-  const BACKOFFS = [100, 200, 300, 400]
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, backoffs: BACKOFFS, jitter: 0 })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, backoffs: BACKOFFS, jitter: 0 })
-  const p3 = await spawnPeer(t, { bootstrap, seed: seedC, backoffs: BACKOFFS, jitter: 0 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, jitter: 0 })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seedC, jitter: 0 })
 
   let clientConnections = 0
   p3.replicator.on('connected', () => {
@@ -576,8 +575,8 @@ test('one server, one client - correct deduplication when a client connection is
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, backoffs: BACKOFFS, jitter: 0 })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, backoffs: BACKOFFS, jitter: 0 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, jitter: 0 })
 
   let clientConnections = 0
   let serverConnections = 0
@@ -872,14 +871,12 @@ test('firewall for server connections results in peer ban', async (t) => {
   const p1 = await spawnPeer(t, {
     bootstrap,
     seed: seedA,
-    backoffs: BACKOFFS,
     jitter: 0,
     firewall
   })
   const p2 = await spawnPeer(t, {
     bootstrap,
     seed: seedB,
-    backoffs: BACKOFFS,
     jitter: 0
   })
 
@@ -926,14 +923,12 @@ test('ban stat and event', async (t) => {
   const p1 = await spawnPeer(t, {
     bootstrap,
     seed: seedA,
-    backoffs: BACKOFFS,
     jitter: 0
   })
   const p2 = await spawnPeer(t, {
     bootstrap,
     seed: seedB,
     firewall,
-    backoffs: BACKOFFS,
     jitter: 0
   })
 

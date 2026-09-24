@@ -2,6 +2,9 @@ const Corestore = require('corestore')
 const b4a = require('b4a')
 const Replicator = require('../..')
 
+const Peer = require('../../lib/peer')
+Peer.backoffDuration = (n) => [100, 200, 300, 400][n] || 35_000 // faster & safer tests
+
 const seedA = Buffer.alloc(32, 0xa)
 const seedB = Buffer.alloc(32, 0xb)
 const seedC = Buffer.alloc(32, 0xc)
