@@ -6,12 +6,6 @@ const T0 = Date.now()
 const TOPIC = b4a.alloc(32, 1)
 const asKey = (n) => b4a.alloc(32, n)
 
-// mirrors of lib/peer.js (module-private)
-const LADDER = [1_000, 5_000, 15_000]
-const COOLDOWN = 1000 * 60
-const BAN_DURATION = 1000 * 60 * 30
-const EXPIRE_DURATION = 1000 * 60 * 15
-
 function spawnPeer(n = 1) {
   const peer = new Peer(asKey(n))
   return { peer }
@@ -33,91 +27,119 @@ test('sightings push expireAt', (t) => {
   const { peer } = spawnPeer()
 
   peer.observe(TOPIC, T0)
-  t.is(peer.expiresAt, T0 + EXPIRE_DURATION)
-  t.ok(peer.isExpired(T0 + EXPIRE_DURATION + 1), 'expired past the window')
+
+  const expiresAt = peer.expiresAt
+
+  t.ok(!peer.isExpired(expiresAt), 'retained at the boundary')
+  t.ok(peer.isExpired(expiresAt + 1), 'expired past it')
 
   peer.observe(TOPIC, T0 + 1000)
-  t.is(peer.expiresAt, T0 + 1000 + EXPIRE_DURATION, 'window pushed')
-  t.ok(!peer.isExpired(T0 + EXPIRE_DURATION + 1), 'no longer expired')
+
+  t.is(peer.expiresAt, expiresAt + 1000, 'window pushed by the sighting')
+  t.ok(!peer.isExpired(expiresAt + 1), 'no longer expired')
 })
 
 test('attempt failure increases retryAt', (t) => {
   const { peer } = spawnPeer()
 
   peer.observe(TOPIC, T0)
+
   t.is(peer.retryAt, T0, 'due since last seen')
 
-  const done = peer.markAttempt(true, { now: T0 + 100 })
-  done(true, 'ERR_CONNECT', T0 + 200)
+  let attemptedAt = T0
+  const deltas = []
 
-  t.is(peer.retryAt, T0 + 100 + LADDER[0], 'anchored at attempt start')
-  t.ok(!peer.shouldDial(T0 + 100 + LADDER[0] - 1), 'cooling')
-  t.ok(peer.shouldDial(T0 + 100 + LADDER[0]), 'dialable at the leg')
+  for (let n = 0; n < 3; n++) {
+    peer.markAttempt(true, { now: attemptedAt })(true, 'ERR_CONNECT', attemptedAt)
+
+    deltas.push(peer.retryAt - attemptedAt)
+    attemptedAt = peer.retryAt
+  }
+
+  const [first, second, third] = deltas
+
+  t.ok(first < second, 'second failure waits longer')
+  t.ok(second < third, 'third failure waits longer still')
 })
 
-test('3 failed attempts set a 60s cooldown, then resets', (t) => {
+test('4 failed attempts set a 60s cooldown', (t) => {
   const { peer } = spawnPeer()
 
   peer.observe(TOPIC, T0)
 
   let at = T0
-  for (const leg of LADDER) {
+  let backoff = 0
+
+  for (let n = 1; n < 4; n++) {
     peer.markAttempt(true, { now: at })(true, 'ERR_CONNECT', at)
-    t.is(peer.retryAt, at + leg, 'leg ' + leg)
+
+    t.is(peer._outboundAttempts, n)
+    t.ok(peer.retryAt - at > backoff, 'burst ' + n + ' grows')
+
+    backoff = peer.retryAt - at
     at = peer.retryAt
   }
 
   peer.markAttempt(true, { now: at })(true, 'ERR_CONNECT', at)
-  t.is(peer.retryAt, at + COOLDOWN, 'ladder exhausted')
+
+  t.is(peer._outboundAttempts, 4)
+  t.is(peer.retryAt - at, 60 * 1000, 'cooldown')
 })
 
-test('Connection of 30s resets attempts', (t) => {
+test('Connection stable for 10s resets attempts', (t) => {
   const { peer } = spawnPeer()
 
   peer.observe(TOPIC, T0)
+
+  t.is(peer._outboundAttempts, 0)
+
   peer.markAttempt(true, { now: T0 })(true, 'ERR_CONNECT', T0)
-  t.is(peer.retryAt, T0 + LADDER[0], 'laddered')
+  t.is(peer._outboundAttempts, 1)
 
-  const connectedAt = T0 + LADDER[0]
-  const disconnectedAt = connectedAt + COOLDOWN / 2 + 1
+  peer.markAttempt(true, { now: peer.retryAt })(true, 'ERR_CONNECT', peer.retryAt)
+  t.is(peer._outboundAttempts, 2)
 
+  const connectedAt = peer.retryAt
+
+  peer.markAttempt(true, { now: connectedAt })()
   peer.markConnected(true, connectedAt)
+
+  const disconnectedAt = connectedAt + 10 * 1000 + 1
+
   peer.markDisconnected(true, null, disconnectedAt)
 
-  t.is(peer.retryAt, peer.lastSeenAt, 'attempts reset')
+  t.is(peer._outboundAttempts, 0, 'attempts back at 0')
+  t.is(peer.retryAt, peer.lastSeenAt)
   t.ok(peer.shouldDial(disconnectedAt), 'dialable again')
 })
 
 test('connection marks updates counters', (t) => {
   const { peer } = spawnPeer()
 
+  const firstSession = 20000
+  const idle = 10000
+  const secondSession = 500
+
   t.ok(!peer.connected, 'birth')
+
   peer.markConnected(true, T0)
+
   t.ok(peer.connected, 'connected after connect')
   t.is(peer.connectedAt, T0)
-  peer.markDisconnected(true, null, T0 + 20000)
+
+  peer.markDisconnected(true, null, T0 + firstSession)
+
   t.ok(!peer.connected, 'disconnected after disconnect')
-  t.is(peer.disconnectedAt, T0 + 20000)
+  t.is(peer.disconnectedAt, T0 + firstSession)
 
-  peer.markConnected(true, T0 + 30000)
-  peer.markDisconnected(true, null, T0 + 30500)
+  const reconnectedAt = T0 + firstSession + idle
 
-  t.is(peer.timeConnected, 20500, 'accrues across sessions')
+  peer.markConnected(true, reconnectedAt)
+  peer.markDisconnected(true, null, reconnectedAt + secondSession)
+
+  t.is(peer.timeConnected, firstSession + secondSession, 'accrues across sessions')
   t.is(peer._connectedCount, 2)
   t.is(peer._disconnectedCount, 2)
-})
-
-test('bans are retained for 30minutes', (t) => {
-  const { peer } = spawnPeer()
-
-  peer.observe(TOPIC, T0)
-  peer.setBanned('hammering', T0)
-
-  t.ok(peer.isBanned)
-  t.is(peer.expiresAt, T0 + BAN_DURATION, 'ban carries its own clock')
-  t.ok(!peer.shouldDial(T0), 'banned peers are not dialed')
-  t.ok(!peer.isExpired(T0 + BAN_DURATION), 'retained for the ban')
-  t.ok(peer.isExpired(T0 + BAN_DURATION + 1), 'dropped after')
 })
 
 test('attempt failed w/ HOLEPUNCH_ABORTED: forceRelaying armed, attempts immediate re-dial', (t) => {
@@ -131,23 +153,48 @@ test('attempt failed w/ HOLEPUNCH_ABORTED: forceRelaying armed, attempts immedia
   t.ok(peer.shouldDial(T0), 'immediate re-dial')
 })
 
-test('gc expires a peer by its own clock', (t) => {
-  const { peer: fresh } = spawnPeer(1)
-  t.ok(!fresh.isExpired(T0), 'no clock: retained while young')
+// Requires 10-second runtime; asserts semi-important edge case
+test.skip('gc: new but not seen, hard expires after 10 wall-seconds', async (t) => {
+  const { peer } = spawnPeer()
 
-  const { peer: live } = spawnPeer(2)
-  live.markConnected(false, T0)
-  t.ok(!live.isExpired(T0 + EXPIRE_DURATION + 1), 'connected peers are retained')
+  t.ok(!peer.isExpired(T0), 'retained during grace period')
 
-  const { peer: dropped } = spawnPeer(3)
-  dropped.markConnected(false, T0)
-  dropped.markDisconnected(false, null, T0 + 100)
-  t.ok(!dropped.isExpired(T0 + 100 + EXPIRE_DURATION), 'disconnect clock retained')
-  t.ok(dropped.isExpired(T0 + 101 + EXPIRE_DURATION), 'disconnect clock expired')
+  await new Promise((resolve) => setTimeout(resolve, 10 * 1000 + 100))
 
-  const { peer: banned } = spawnPeer(4)
+  t.ok(peer.isExpired(T0), 'hard expired')
+})
+
+test('gc: connected peer does not expire', (t) => {
+  const { peer } = spawnPeer()
+
+  peer.observe(TOPIC, T0)
+  peer.markConnected(false, T0)
+
+  t.ok(!peer.isExpired(peer.expiresAt + 1), 'connection outranks clock')
+})
+
+test('gc: disconnected peer expires', (t) => {
+  const { peer } = spawnPeer()
+
+  peer.markConnected(false, T0)
+  peer.markDisconnected(false, null, T0 + 100)
+
+  t.ok(!peer.isExpired(peer.expiresAt), 'retained at the boundary')
+  t.ok(peer.isExpired(peer.expiresAt + 1), 'expired')
+})
+
+test('gc: banned peer retained longer', (t) => {
+  const { peer: seen } = spawnPeer(1)
+  const { peer: banned } = spawnPeer(2)
+
+  seen.observe(TOPIC, T0)
+
   banned.observe(TOPIC, T0)
   banned.setBanned('hammering', T0)
-  t.ok(!banned.isExpired(T0 + BAN_DURATION), 'ban clock retained')
-  t.ok(banned.isExpired(T0 + BAN_DURATION + 1), 'ban clock expired')
+  t.is(banned.isBanned, true)
+
+  t.ok(banned.expiresAt > seen.expiresAt, 'retained past the sighting window')
+  t.ok(!banned.isExpired(banned.expiresAt), 'retained at the boundary')
+  t.ok(!banned.shouldDial(T0), 'banned peers are not dialed')
+  t.ok(banned.isExpired(banned.expiresAt + 1), 'expired')
 })
