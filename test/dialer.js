@@ -186,6 +186,31 @@ test('peer.retryAt increased on failure and is re-dialed', async (t) => {
   t.is(ctx.connected.size, 1, 'one successful')
 })
 
+
+test('dialer does not dial peers without an active topic', async (t) => {
+  const ctx = spawnDialer(t)
+  const { dialer, dialed, errors } = ctx
+
+  dialer.topicDisable(TOPIC)
+
+  const peer = spawnPeer(ctx, 1, T0)
+
+  dialer.refresh()
+  await dialer.flush()
+
+  t.is(dialed.length, 0, 'topic disabled: no dials')
+  t.is(errors.length, 0)
+
+  dialer.topicEnable(TOPIC)
+
+  dialer.refresh()
+  await dialer.flush() // drains on peer's rejection
+
+  t.is(dialed.length, 1, 'topic enabled: dials')
+  t.is(errors.length, 0)
+  t.is(dialed.filter((p) => p === peer).length, 1, 'fired exactly once')
+})
+
 function spawnDialer(
   t,
   { maxParallel = 3, jitter = 0, suspended = false, autoSettle = true } = {}
@@ -238,6 +263,7 @@ function spawnDialer(
   }
 
   const dialer = new Dialer(handlers, { maxParallel, jitter, suspended })
+  dialer.topicEnable(TOPIC)
 
   t.teardown(() => dialer.destroy())
 
