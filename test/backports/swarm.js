@@ -15,6 +15,7 @@ const {
 } = require('../helpers/backports')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('../..')
+const Peer = require('../../lib/peer')
 
 async function joinPinned(replicator, store, topic) {
   const session = replicator.join(store, topic, { pin: true })
