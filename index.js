@@ -301,16 +301,7 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._manual) this._startAutoRefresh()
   }
 
-  join(
-    store,
-    topic,
-    {
-      priority = 0,
-      pin = false,
-      discover = false,
-      deferSwarming
-    } = {}
-  ) {
+  join(store, topic, { priority = 0, pin = false, discover = false, deferSwarming } = {}) {
     const dk = toHex(topic)
     if (this.sessions.has(dk)) throw new Error('session exists')
 
@@ -326,6 +317,15 @@ module.exports = class Replicator extends ReadyResource {
       this.sessions.delete(dk)
       this.emit('remove', session)
     })
+
+    session.on('state', () => {
+      if (session.active) {
+        this.dialer.topicEnable(dk)
+      } else {
+        this.dialer.topicDisable(dk)
+      }
+    })
+    if (session.active) this.dialer.topicEnable(dk)
 
     store.on('close', session.close.bind(session))
 

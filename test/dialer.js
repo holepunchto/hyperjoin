@@ -186,7 +186,6 @@ test('peer.retryAt increased on failure and is re-dialed', async (t) => {
   t.is(ctx.connected.size, 1, 'one successful')
 })
 
-
 test('dialer does not dial peers without an active topic', async (t) => {
   const ctx = spawnDialer(t)
   const { dialer, dialed, errors } = ctx
