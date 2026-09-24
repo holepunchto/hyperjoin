@@ -8,6 +8,7 @@ async function runTests() {
   test.pause()
 
   await import('./dialer.js')
+  await import('./peer.js')
   await import('./basic.js')
   await import('./autoswarm.js')
   await import('./presuspend.js')
