@@ -116,6 +116,7 @@ test('suspend/resume', async (t) => {
   spawnPeer(ctx, 1)
 
   dialer.refresh()
+  t.is(dialer._slots.n, 2, 'dial slots in use')
 
   const suspended = dialer.suspend()
   t.ok(dialer.suspended, 'flag set')
@@ -129,6 +130,7 @@ test('suspend/resume', async (t) => {
   await suspended // inflight work settled
 
   t.is(dialer.inflight, 0)
+  t.is(dialer._slots.n, 3, 'slots released')
   t.is(ctx.dialed.length, 0, 'aborted before it fired')
 
   dialer.resume()
