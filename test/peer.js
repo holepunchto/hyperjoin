@@ -1,7 +1,6 @@
 const test = require('brittle')
 const b4a = require('b4a')
 const Peer = require('../lib/peer')
-const Dialer = require('../lib/dialer')
 
 const T0 = Date.now()
 const TOPIC = b4a.alloc(32, 1)

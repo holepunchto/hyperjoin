@@ -226,5 +226,3 @@ test('inbound peer gets banned for hammering', async (t) => {
   await p2.destroy()
   await testnet.destroy()
 })
-
-function noop() {}

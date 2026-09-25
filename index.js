@@ -31,7 +31,12 @@ const ERR_DESTROYED = 'ReplicatorDestroyed'
 const ERR_SUSPEND = 'SuspendDrop'
 const ERR_MAXPEERS = 'MaxPeersCap'
 
+let __debugCounter = 0
+
 module.exports = class Replicator extends ReadyResource {
+
+  #debugInstanceId = __debugCounter++
+
   constructor(rootStore, opts = {}) {
     super()
 
@@ -132,10 +137,11 @@ module.exports = class Replicator extends ReadyResource {
 
     this._online = false
 
+
     this.stats = {
       updates: 0,
       bannedPeers: 0,
-      connects: {
+      connects: { // TODO: nit, flatten and 'connections'
         client: {
           attempted: 0,
           opened: 0,
@@ -849,6 +855,32 @@ module.exports = class Replicator extends ReadyResource {
   _cancelInflight() {
     for (const cancel of this._inflightCancel) cancel()
   }
+
+  info() {
+    const info = {
+      instance: this.#debugInstanceId,
+      dialerPeers: this.dialer.peers.size,
+      dialerActiveTopics: Array.from(this.dialer._activeTopics).map(shortHash),
+      sessions: [],
+      stats: this.stats
+    }
+
+    for (const [key, session] of this.sessions) {
+      info.sessions.push({
+        key: shortHash(key),
+        state: session.state,
+        priority: session.priority
+      })
+    }
+
+    return info
+
+    function shortHash(key) {
+      if (typeof key !== 'string') key = toHex(key)
+      return key.slice(0, 6)
+    }
+  }
+
 
   async _close() {
     this.destroyed = true
