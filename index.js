@@ -34,7 +34,6 @@ const ERR_MAXPEERS = 'MaxPeersCap'
 let __debugCounter = 0
 
 module.exports = class Replicator extends ReadyResource {
-
   #debugInstanceId = __debugCounter++
 
   constructor(rootStore, opts = {}) {
@@ -137,11 +136,11 @@ module.exports = class Replicator extends ReadyResource {
 
     this._online = false
 
-
     this.stats = {
       updates: 0,
       bannedPeers: 0,
-      connects: { // TODO: nit, flatten and 'connections'
+      connects: {
+        // TODO: nit, flatten and 'connections'
         client: {
           attempted: 0,
           opened: 0,
@@ -880,7 +879,6 @@ module.exports = class Replicator extends ReadyResource {
       return key.slice(0, 6)
     }
   }
-
 
   async _close() {
     this.destroyed = true
