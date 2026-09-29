@@ -10,9 +10,10 @@ const {
   seedB,
   seedC,
   spawnPeer,
-  timeout,
-  toHex
+  timeout, // TODO: banned outside of `backports/`
 } = require('./helpers/backports')
+
+const { toHex } = b4a
 
 test('Default keypair from corestore', async (t) => {
   const testnet = await createTestnet()
@@ -221,6 +222,62 @@ test('inbound peer gets banned for hammering', async (t) => {
   t.ok(peer, 'p1 knows p2')
   t.ok(peer.isBanned, 'p2 is banned')
   t.is(peer.banReason, 'hammering')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
+test('regression: presuspend() during async firewall leaked _inflight', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
+  const p1Hex = toHex(p1.replicator.keyPair.publicKey)
+
+  let releaseTrap = null
+  const trapped = new Promise((resolve) => {
+    releaseTrap = resolve
+  })
+
+  let resolveFirewall = null
+  const firewall = new Promise((resolve) => {
+    resolveFirewall = resolve
+  })
+
+  const p2 = await spawnPeer(t, {
+    bootstrap,
+    seed: seedB,
+    jitter: 0,
+    firewall: () => {
+      releaseTrap()
+      return firewall
+    }
+  })
+
+  const p2session = p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey, {
+    discover: true
+  })
+
+  await p2session.ready()
+  await p2session.refresh()
+
+  await trapped // pending async firewall
+
+  p2.replicator.presuspend()
+  t.ok(p2.replicator.isPresuspended, 'presuspended')
+
+  resolveFirewall(false) // release
+
+  // TODO: rep.on('dial-start') & rep.on('dial-end')
+  await new Promise((resolve) => setImmediate(resolve))
+  await new Promise((resolve) => setImmediate(resolve))
+
+  await p2.replicator.resume()
+
+  t.is(p2.replicator._inflight.has(p1Hex), false, '_inflight cleared')
+  t.is(p2.replicator.hasConnection(p1Hex), false, 'hasConnection(p1) is cleared')
+  t.is(p2.replicator.connecting, 0, 'zero connections')
 
   await p1.destroy()
   await p2.destroy()

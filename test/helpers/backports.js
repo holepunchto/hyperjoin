@@ -1,6 +1,7 @@
 const Corestore = require('corestore')
 const b4a = require('b4a')
 const Replicator = require('../..')
+const { toHex } = b4a
 
 const Peer = require('../../lib/peer')
 Peer.backoffDuration = (n) => [100, 200, 300, 400][n] || 35_000 // faster & safer tests
@@ -36,10 +37,6 @@ exports.waitForEvents = function waitForEvents(emitter, event, count) {
 
     emitter.on(event, onevent)
   })
-}
-
-exports.toHex = function toHex(buffer) {
-  return b4a.toString(buffer, 'hex')
 }
 
 exports.joinRemote = async function joinRemote(peer, remotePeer) {
@@ -89,7 +86,7 @@ exports.spawnPeer = async function spawnPeer(t, opts = {}) {
     await store.close()
   }
 
-  const peerId = exports.toHex(replicator.peerId)
+  const peerId = toHex(replicator.peerId)
 
   return { store, replicator, session, peerId, destroy, cores: [one, two] }
 }

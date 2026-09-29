@@ -1,6 +1,7 @@
 const test = require('brittle')
 const b4a = require('b4a')
 const { spawnSwarm } = require('./helpers')
+const { toHex } = b4a
 
 test('autoswarm: all topics pinned (hyperswarm mode)', async (t) => {
   const swarm = await spawnSwarm(t)
@@ -321,7 +322,3 @@ test('autoswarm: can be disabled', async (t) => {
 
   await swarm.destroy()
 })
-
-function toHex(buffer) {
-  return b4a.toString(buffer, 'hex')
-}

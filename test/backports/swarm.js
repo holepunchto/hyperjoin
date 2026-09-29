@@ -10,12 +10,12 @@ const {
   seedB,
   seedC,
   timeout,
-  toHex,
   waitForEvents
 } = require('../helpers/backports')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('../..')
 const Peer = require('../../lib/peer')
+const { toHex } = b4a
 
 async function joinPinned(replicator, store, topic) {
   const session = replicator.join(store, topic, { pin: true })

@@ -508,7 +508,10 @@ module.exports = class Replicator extends ReadyResource {
       if (firewalled) this._inflight.delete(hex)
     }
 
-    if (firewalled || this._isTearingdown) {
+    if (firewalled) return
+
+    if (this._isTearingdown) {
+      this._inflight.delete(hex)
       return
     }
 
@@ -552,7 +555,7 @@ module.exports = class Replicator extends ReadyResource {
     })
 
     this._inflight.delete(hex)
-    this._inflightCancel.delete(cancelCallback)
+    if (cancelCallback) this._inflightCancel.delete(cancelCallback)
 
     // opened after teardown
     if (this._isTearingdown) {
