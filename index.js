@@ -2,10 +2,11 @@ const ReadyResource = require('ready-resource')
 const DHT = require('hyperdht')
 const safetyCatch = require('safety-catch')
 const Hypercore = require('hypercore')
-const b4a = require('b4a')
 const Dialer = require('./lib/dialer')
 const Session = require('./lib/session')
 const { getStreamError } = require('streamx')
+const b4a = require('b4a')
+const { toHex } = b4a
 
 const AUTO_REFRESH_INTERVAL = 5000
 
@@ -22,7 +23,7 @@ const MIN_ACTIVE_TIME = 30 * 1000
 // connections
 const MIN_PEERS = 20
 const MAX_PEERS = 40
-const NOMAD_THRESHOLD = 60 * 1000
+const WANDERLUST_THRESHOLD = 60 * 1000
 
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
@@ -30,7 +31,11 @@ const ERR_DESTROYED = 'ReplicatorDestroyed'
 const ERR_SUSPEND = 'SuspendDrop'
 const ERR_MAXPEERS = 'MaxPeersCap'
 
+let __debugCounter = 0
+
 module.exports = class Replicator extends ReadyResource {
+  #debugInstanceId = __debugCounter++
+
   constructor(rootStore, opts = {}) {
     super()
 
@@ -41,7 +46,7 @@ module.exports = class Replicator extends ReadyResource {
       minPeers = MIN_PEERS,
       maxPeers = MAX_PEERS,
       maxParallel,
-      nomad = NOMAD_THRESHOLD,
+      wanderlust = WANDERLUST_THRESHOLD,
       firewall = allowAll,
       suspended,
       autoswarm = true,
@@ -76,8 +81,15 @@ module.exports = class Replicator extends ReadyResource {
         port: opts.port
       })
 
-    this.dialer = new Dialer(this, {
-      firewall,
+    this._firewall = firewall
+
+    const handlers = {
+      ondial: (peer) => this._connect(peer),
+      ondialerror: (err) => this.emit('error', err),
+      isConnected: (key) => this.hasConnection(key)
+    }
+
+    this.dialer = new Dialer(handlers, {
       backoffs: opts.backoffs,
       jitter: opts.jitter,
       suspended,
@@ -103,17 +115,18 @@ module.exports = class Replicator extends ReadyResource {
     this.sessions = new Map() // hex(discoveryKey) -> Session
     this.inbound = new Map() // hex(peerId) -> Connection
     this.outbound = new Map() // hex(peerId) -> Connection
-    this._inflight = new Set() // hex(peerId) -> dedup in-flight dials
-
+    this._inflight = new Set() // hex(peerId), dedup in-flight dials
+    this._inflightCancel = new Set() // cancelCallbacks
     this._minPeers = minPeers
     this._maxPeers = maxPeers
-    this._nomad = nomad
+    this._wanderlust = wanderlust
     this._lastConnectionEvict = 0
 
+    this.slots = slots
     this._autoswarm = autoswarm
     this._autoRefreshInterval = interval
     this._gcIdleTime = gcIdleTime
-    this.slots = slots
+
     this._autoStartupDelay = autoStartupDelay
     this._minActiveTime = minActiveTime
 
@@ -121,10 +134,13 @@ module.exports = class Replicator extends ReadyResource {
     this._updatedDiscoveryTimeout = updatedDiscoveryTimeout
     this._discoveryStartupDelay = discoveryStartupDelay
 
+    this._online = false
+
     this.stats = {
       updates: 0,
       bannedPeers: 0,
       connects: {
+        // TODO: nit, flatten and 'connections'
         client: {
           attempted: 0,
           opened: 0,
@@ -158,14 +174,6 @@ module.exports = class Replicator extends ReadyResource {
 
   get connecting() {
     return this._inflight.size
-  }
-
-  // used by backports testsuite
-  get _firewall() {
-    return this.dialer._firewall
-  }
-  set _firewall(callback) {
-    this.dialer._firewall = callback
   }
 
   get connections() {
@@ -237,9 +245,10 @@ module.exports = class Replicator extends ReadyResource {
 
   async _beginSuspension({ log = noop } = {}) {
     if (this._presuspending) await this._presuspending
+    this._cancelInflight()
 
     const pending = []
-    const suspending = [this.server.suspend({ log })]
+    const suspending = [this.server.suspend({ log }), this.dialer.suspend({ log })]
 
     for (const session of this.sessions.values()) {
       suspending.push(session.suspend({ log }))
@@ -248,8 +257,6 @@ module.exports = class Replicator extends ReadyResource {
     for (const connection of this.connections) {
       pending.push(this._evictConnection(connection, ERR_SUSPEND))
     }
-
-    this.dialer.suspend({ log })
 
     this._inflight.clear()
     this._stopAutoRefresh()
@@ -275,7 +282,7 @@ module.exports = class Replicator extends ReadyResource {
     if (this._presuspending) {
       await this._presuspending
       this._presuspending = null
-      this.dialer._attemptClientConnections()
+      this.dialer.refresh()
     }
 
     if (!this.suspended) return
@@ -299,24 +306,13 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._manual) this._startAutoRefresh()
   }
 
-  join(
-    store,
-    topic,
-    {
-      priority = 0,
-      pin = false,
-      active = false /* deprecated */,
-      discover = false,
-      deferSwarming
-    } = {}
-  ) {
+  join(store, topic, { priority = 0, pin = false, discover = false, deferSwarming } = {}) {
     const dk = toHex(topic)
     if (this.sessions.has(dk)) throw new Error('session exists')
 
     const session = new Session(this, store, topic, {
       priority,
       pin,
-      active,
       discover,
       deferSwarming
     })
@@ -327,7 +323,18 @@ module.exports = class Replicator extends ReadyResource {
       this.emit('remove', session)
     })
 
+    session.on('state', () => {
+      if (session.active) {
+        this.dialer.topicEnable(dk)
+      } else {
+        this.dialer.topicDisable(dk)
+      }
+    })
+    if (session.active) this.dialer.topicEnable(dk)
+
     store.on('close', session.close.bind(session))
+
+    this.emit('join', session)
 
     return session
   }
@@ -341,6 +348,10 @@ module.exports = class Replicator extends ReadyResource {
     const peerId = conn.remotePublicKey
     const hex = toHex(peerId)
 
+    const peerInfo = this.dialer.lookup(peerId)
+    const initiator = false
+    const attemptDone = peerInfo.markAttempt(initiator)
+
     if (this.inbound.has(hex)) {
       const existing = this.inbound.get(hex).stream
       // If both connections are from the same peer,
@@ -349,10 +360,14 @@ module.exports = class Replicator extends ReadyResource {
       const keepNew = existing.rawBytesRead > 0 && existing.rawBytesWritten > 0
 
       if (keepNew === false) {
+        attemptDone(true, ERR_DUPLICATE)
+
         existing.sendKeepAlive()
         conn.on('error', noop)
         conn.destroy(new Error(ERR_DUPLICATE))
       } else {
+        attemptDone()
+
         existing.on('error', noop)
         existing.destroy(new Error(ERR_DUPLICATE))
         this._handleServerConnectionSwap(existing, conn)
@@ -363,16 +378,18 @@ module.exports = class Replicator extends ReadyResource {
 
     // Hard limit max-drop
     if (this.connectionCount >= this._maxPeers + 5) {
+      attemptDone(true, ERR_MAXPEERS)
       conn.on('error', noop)
       return conn.destroy(ERR_MAXPEERS)
     }
 
-    // When reaching here, the connection will always be 'opened' next tick
+    attemptDone()
 
+    // connection 'opened' on next tick
     this._initConnection(false, peerId, conn)
   }
 
-  // stream param expected opened stream
+  // `stream` expected to be fully opened
   _initConnection(initiator, peerId, stream) {
     const hex = toHex(peerId)
 
@@ -381,9 +398,6 @@ module.exports = class Replicator extends ReadyResource {
     if (map.has(hex)) throw new Error('unreachable: connection leak') // sanity check
 
     const connection = new Connection(this, stream, peerId, initiator)
-
-    connection.info._connected()
-    connection.info.client = initiator
 
     map.set(hex, connection)
     this.root.replicate(stream)
@@ -394,11 +408,25 @@ module.exports = class Replicator extends ReadyResource {
     this.emit('connected', connection) // testsuite only
     this.emit('update')
 
+    // TODO: need protomux channel-opened signal for robust 'replicating'-event
+    const pollReplicationStart = (n) => {
+      if (n > 7 || connection._protomuxSessions() > 0) {
+        this.emit('replicating', connection)
+        return
+      }
+
+      setTimeout(() => pollReplicationStart(++n), n * 10)
+    }
+    pollReplicationStart(0)
+
     return connection
   }
 
   async _evictConnection(connection, err) {
     if (connection.stream.closed) return
+
+    this.emit('_evictConnection', connection.peerId, /* reason */ err)
+
     const closed = new Promise((resolve) => connection.stream.once('close', resolve))
     connection.destroy(err)
     await closed
@@ -424,10 +452,28 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
-  _handleFirewall(remotePublicKey, payload) {
+  _handleBan(peer) {
+    this.stats.bannedPeers++
+    this.emit('ban', peer, peer.banReason)
+  }
+
+  async _handleFirewall(remotePublicKey, payload) {
+    // firewall self
     if (b4a.equals(remotePublicKey, this.keyPair.publicKey)) return true
 
-    return this.dialer.handleFirewall(remotePublicKey, payload)
+    const peer = this.dialer.lookup(remotePublicKey)
+    if (peer.isBanned) return true
+
+    const firewalled = await this._firewall(remotePublicKey, payload)
+
+    if (firewalled) {
+      peer.setBanned('firewalled')
+
+      const { banned } = this.dialer.checkBans()
+      for (const p of banned) this._handleBan(p)
+    }
+
+    return firewalled
   }
 
   get _isTearingdown() {
@@ -462,12 +508,19 @@ module.exports = class Replicator extends ReadyResource {
       if (firewalled) this._inflight.delete(hex)
     }
 
-    if (firewalled) {
+    if (firewalled) return
+
+    if (this._isTearingdown) {
+      this._inflight.delete(hex)
       return
     }
 
+    const attemptDone = peer.markAttempt(true, { canRelay: !!this.relayThrough })
+
     let stream
     let error = null
+    let cancelCallback = null
+
     const opened = await new Promise((resolve) => {
       const onerror = (err) => {
         error = err
@@ -494,21 +547,28 @@ module.exports = class Replicator extends ReadyResource {
       stream.once('close', onclose)
       stream.once('open', onopen)
 
+      cancelCallback = () => stream.destroy('suspending')
+      this._inflightCancel.add(cancelCallback)
+
       this.stats.connects.client.attempted++
       this.emit('update')
     })
 
     this._inflight.delete(hex)
+    if (cancelCallback) this._inflightCancel.delete(cancelCallback)
 
     // opened after teardown
     if (this._isTearingdown) {
       stream.once('error', noop)
-      stream.destroy(new Error(ERR_DESTROYED))
+      const e = new Error(ERR_DESTROYED)
+      stream.destroy(e)
+      attemptDone(true, ERR_DESTROYED)
       return
     }
 
+    attemptDone(!opened, error)
+
     if (!opened) {
-      this.dialer.connectFailed(peer.publicKey, error)
       this.emit('update')
       return
     }
@@ -577,6 +637,7 @@ module.exports = class Replicator extends ReadyResource {
         }
       }
 
+      // TODO: move to [lib|test]/heuristics.js
       // Heuristic evict if still over max-cap
       const nHeuristicEvict = nEvict - connectionsEvicted
 
@@ -594,7 +655,7 @@ module.exports = class Replicator extends ReadyResource {
             if (aRookie !== bRookie) return aRookie ? -1 : 1
 
             // Evict newest, comparing 2 rookies.
-            if (aRookie) return b.connectedTime - a.connectedTime
+            if (aRookie) return b.connectedAt - a.connectedAt
 
             // Evict stale, comparing 2 established
             return a.lastActivity - b.lastActivity
@@ -607,7 +668,7 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     // Force peer rotation when fully saturated over extend period of time.
-    const treshold = this._nomad + Math.random() * Math.max(this._nomad, 10000)
+    const treshold = this._wanderlust + Math.random() * Math.max(this._wanderlust, 10000)
     if (
       !connectionsEvicted && // nothing evicted
       this.connectionCount === this._maxPeers && // at max cap
@@ -628,11 +689,8 @@ module.exports = class Replicator extends ReadyResource {
 
     await Promise.all(evictions)
 
-    // GC Peer cache
-
-    this.dialer.collectGarbage()
-
     if (sessionsEvicted) this.emit('evicted', sessionsEvicted)
+
     if (connectionsEvicted) this.emit('dropped', connectionsEvicted)
   }
 
@@ -662,6 +720,11 @@ module.exports = class Replicator extends ReadyResource {
     await Promise.all(done)
 
     await this._gc(now)
+
+    this.dialer.refresh(now)
+
+    const { banned } = this.dialer.checkBans()
+    for (const p of banned) this._handleBan(p)
   }
 
   // @deprecated, legacy compat (dht + connection queue, done)
@@ -758,7 +821,11 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _handleNetworkUpdate() {
-    if (this.dht.online === false) return
+    // Rising edge for being online
+    const networkCameOnline = this.dht.online && !this._online
+    this._online = this.dht.online
+    if (!networkCameOnline) return
+
     await this._handleNetworkChange()
   }
 
@@ -787,6 +854,35 @@ module.exports = class Replicator extends ReadyResource {
     this._refreshInterval.unref()
   }
 
+  _cancelInflight() {
+    for (const cancel of this._inflightCancel) cancel()
+  }
+
+  info() {
+    const info = {
+      instance: this.#debugInstanceId,
+      dialerPeers: this.dialer.peers.size,
+      dialerActiveTopics: Array.from(this.dialer._activeTopics).map(shortHash),
+      sessions: [],
+      stats: this.stats
+    }
+
+    for (const [key, session] of this.sessions) {
+      info.sessions.push({
+        key: shortHash(key),
+        state: session.state,
+        priority: session.priority
+      })
+    }
+
+    return info
+
+    function shortHash(key) {
+      if (typeof key !== 'string') key = toHex(key)
+      return key.slice(0, 6)
+    }
+  }
+
   async _close() {
     this.destroyed = true
 
@@ -810,6 +906,7 @@ module.exports = class Replicator extends ReadyResource {
     this.inbound.clear()
     this.outbound.clear()
 
+    this._cancelInflight()
     this._inflight.clear()
     this.dialer.destroy()
 
@@ -838,6 +935,8 @@ class Connection {
     this.lastActivity = -1
     this.refresh()
     this._survived = 0 // incremented on gc
+
+    this.info.markConnected(this.initiator)
   }
 
   get protomux() {
@@ -848,11 +947,14 @@ class Connection {
     return this.replicator.dialer.lookup(this.peerId)
   }
 
-  get connectedTime() {
-    return this.info.connectedTime
+  get connectedAt() {
+    return this.info.connectedAt
   }
 
-  isIdle() {
+  isIdle(now = Date.now()) {
+    // TODO: is there a signal for protomuxSession opened?
+    if (now - this.connectedAt < 5000) return false
+
     if (this._protomuxSessions() === 0) return true
 
     return false
@@ -894,7 +996,8 @@ class Connection {
       rep.stats.connects.server.closed++
     }
 
-    this.replicator.dialer.disconnected(this.peerId, err)
+    this.info.markDisconnected(this.initiator, err)
+    rep.dialer.refresh() // reschedule fast-reconnects
 
     rep.emit('disconnected', this)
     rep.emit('update')
@@ -919,10 +1022,6 @@ class Connection {
 }
 
 function noop() {}
-
-function toHex(buffer) {
-  return b4a.toString(buffer, 'hex')
-}
 
 function allowAll() {
   return false

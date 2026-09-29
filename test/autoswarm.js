@@ -1,6 +1,7 @@
 const test = require('brittle')
 const b4a = require('b4a')
 const { spawnSwarm } = require('./helpers')
+const { toHex } = b4a
 
 test('autoswarm: all topics pinned (hyperswarm mode)', async (t) => {
   const swarm = await spawnSwarm(t)
@@ -220,6 +221,81 @@ test('autoswarm: replicator activates sessions', async (t) => {
   await swarm.destroy()
 })
 
+test('autoswarm: replicator evicts sessions that idle above threshold', async (t) => {
+  const swarm = await spawnSwarm(t)
+  const gcIdleTime = 100
+  const slots = 4
+
+  const topics = new Array(10).fill(null).map((_, i) => b4a.alloc(32, i))
+
+  const p1 = await swarm.spawnPeer({ slots, gcIdleTime, autoStartupDelay: 0 })
+
+  const joins = []
+  for (const topic of topics) {
+    joins.push(p1.join(topic))
+  }
+  await swarm.propagateWriters()
+  await Promise.all(joins)
+
+  let nEvicted = 0
+  p1.replicator.on('evicted', (n) => (nEvicted += n))
+
+  await p1.replicator.refresh()
+  t.is(p1.replicator.sessions.size, topics.length, 'all topics pooled')
+  t.is(p1.replicator.activeSessions.length, slots, 'topics auto activate')
+
+  await p1.replicator.refresh(Date.now() + gcIdleTime + 1)
+
+  t.is(nEvicted, topics.length - slots, 'idle sessions evicted')
+  t.is(p1.replicator.sessions.size, slots, 'active topics retained')
+  t.is(p1.replicator.activeSessions.length, slots, 'topics still active')
+
+  await swarm.destroy()
+})
+
+test('autoswarm: replicator evicts session on direct session.destroy()', async (t) => {
+  const swarm = await spawnSwarm(t)
+  const p1 = await swarm.spawnPeer({ autoStartupDelay: 0 })
+
+  const topic = b4a.alloc(32, 0x1)
+  const session = await p1.join(topic)
+
+  await p1.replicator.refresh()
+  t.is(p1.replicator.sessions.size, 1, 'topic pooled')
+  t.is(p1.replicator.activeSessions.length, 1, 'topic active')
+
+  const removed = new Promise((resolve) => p1.replicator.once('remove', resolve))
+
+  await session.destroy()
+
+  t.is(await removed, session, 'remove event')
+  t.is(p1.replicator.sessions.size, 0, 'session evicted')
+
+  await swarm.destroy()
+})
+
+test('autoswarm: replicator evicts session on indirect storeSession.closed()', async (t) => {
+  const swarm = await spawnSwarm(t)
+  const p1 = await swarm.spawnPeer({ autoStartupDelay: 0 })
+
+  const topic = b4a.alloc(32, 0x1)
+  const session = await p1.join(topic)
+
+  await p1.replicator.refresh()
+  t.is(p1.replicator.sessions.size, 1, 'topic pooled')
+  t.is(p1.replicator.activeSessions.length, 1, 'topic active')
+
+  const removed = new Promise((resolve) => p1.replicator.once('remove', resolve))
+
+  await session.store.close()
+
+  t.is(await removed, session, 'remove event')
+  t.is(session.closed, true, 'session closed')
+  t.is(p1.replicator.sessions.size, 0, 'session evicted')
+
+  await swarm.destroy()
+})
+
 test('autoswarm: can be disabled', async (t) => {
   const swarm = await spawnSwarm(t)
   const peer = await swarm.spawnPeer({ autoStartupDelay: 0 })
@@ -246,7 +322,3 @@ test('autoswarm: can be disabled', async (t) => {
 
   await swarm.destroy()
 })
-
-function toHex(buffer) {
-  return b4a.toString(buffer, 'hex')
-}

@@ -7,12 +7,12 @@ async function runTests() {
 
   test.pause()
 
+  await import('./dialer.js')
+  await import('./peer.js')
   await import('./basic.js')
   await import('./autoswarm.js')
   await import('./presuspend.js')
-  await import('./backports/bulk-timer.js')
   await import('./backports/firewall.js')
-  await import('./backports/retry-timer.js')
   await import('./backports/stats.js')
   await import('./backports/suspend.js')
   await import('./backports/swarm.js')

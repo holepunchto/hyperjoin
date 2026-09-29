@@ -2,17 +2,14 @@ const test = require('brittle')
 const createTestnet = require('hyperdht/testnet')
 const { timeout, spawnPeer, seedA, seedB } = require('../helpers/backports')
 
-const BACKOFFS = [100, 200, 300, 400]
-
 test('firewalled server - bad client is rejected', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, backoffs: BACKOFFS, jitter: 0 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
   const p2 = await spawnPeer(t, {
     bootstrap,
     seed: seedB,
-    backoffs: BACKOFFS,
     jitter: 0,
     firewall: (remotePublicKey) => remotePublicKey.equals(p1.replicator.keyPair.publicKey)
   })
@@ -44,11 +41,10 @@ test('firewalled client - bad server is rejected', async (t) => {
   const { bootstrap } = testnet
   t.plan(2)
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, backoffs: BACKOFFS, jitter: 0 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
   const p2 = await spawnPeer(t, {
     bootstrap,
     seed: seedB,
-    backoffs: BACKOFFS,
     jitter: 0,
     firewall: (remotePublicKey) => {
       const firewalled = remotePublicKey.equals(p1.replicator.keyPair.publicKey)
@@ -80,11 +76,10 @@ test('async firewall - client allows good server', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, backoffs: BACKOFFS, jitter: 0 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
   const p2 = await spawnPeer(t, {
     bootstrap,
     seed: seedB,
-    backoffs: BACKOFFS,
     jitter: 0,
     firewall: () => false
   })
@@ -112,11 +107,10 @@ test('async firewall - server allows good client', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, backoffs: BACKOFFS, jitter: 0 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
   const p2 = await spawnPeer(t, {
     bootstrap,
     seed: seedB,
-    backoffs: BACKOFFS,
     jitter: 0,
     firewall: () => false
   })
@@ -147,13 +141,12 @@ test('firewalled server - rejection does not trigger retry cascade', async (t) =
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, backoffs: BACKOFFS, jitter: 0 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
 
   let firewallCalls = 0
   const p2 = await spawnPeer(t, {
     bootstrap,
     seed: seedB,
-    backoffs: BACKOFFS,
     jitter: 0,
     firewall: (remotePublicKey) => {
       firewallCalls++
@@ -173,7 +166,7 @@ test('firewalled server - rejection does not trigger retry cascade', async (t) =
   await client.ready()
   await client.refresh()
 
-  await timeout(BACKOFFS[2] * 5)
+  await timeout(1500)
 
   t.alike(serverConnections, 0, 'server did not receive an incoming connection')
   t.alike(firewallCalls, 1, 'client retried mulitple times but server cached it')

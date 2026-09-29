@@ -3,6 +3,7 @@ const Corestore = require('corestore')
 const ReadyResource = require('ready-resource')
 const b4a = require('b4a')
 const Replicator = require('../..')
+const { toHex } = b4a
 
 module.exports = { spawnSwarm }
 
@@ -150,8 +151,4 @@ class TestPeer extends ReadyResource {
   destroy() {
     return this.close()
   }
-}
-
-function toHex(buffer) {
-  return b4a.toString(buffer, 'hex')
 }

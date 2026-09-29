@@ -10,9 +10,10 @@ const {
   seedB,
   seedC,
   spawnPeer,
-  timeout,
-  toHex
+  timeout // TODO: banned outside of `backports/`
 } = require('./helpers/backports')
+
+const { toHex } = b4a
 
 test('Default keypair from corestore', async (t) => {
   const testnet = await createTestnet()
@@ -91,7 +92,7 @@ test('GC connections with no active mux sessions', async (t) => {
     'p3 connection has no protomux sessions'
   )
 
-  await p1.replicator._gc(() => Date.now())
+  await p1.replicator._gc()
 
   t.is(
     p1.replicator.connectionCount,
@@ -156,7 +157,7 @@ test('GC preserves stable connections over rookies', async (t) => {
 
   await timeout(30)
 
-  const p3Connected = onceEvent(p1.replicator, 'connected')
+  const p3Connected = onceEvent(p1.replicator, 'replicating')
   const remote3 = await joinRemote(p3, p1)
   await remote3[0].get(0)
   await p3Connected
@@ -192,5 +193,93 @@ test('root close closes replicator', async (t) => {
 
   t.is(replicator.destroyed, true)
 
+  await testnet.destroy()
+})
+
+test('inbound peer gets banned for hammering', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+
+  const p1Key = p1.replicator.peerId
+  const target = p2.replicator.dialer.lookup(p1Key)
+  const attempts = 8
+
+  for (let n = 0; n < attempts; n++) {
+    await p2.replicator._connect(target)
+
+    const connection = p2.replicator.getConnection(toHex(p1Key))
+    if (!connection) break
+
+    connection.stream.destroy()
+    await onceEvent(connection.stream, 'close')
+  }
+
+  const peer = p1.replicator.dialer.peers.get(toHex(p2.replicator.peerId))
+
+  t.ok(peer, 'p1 knows p2')
+  t.ok(peer.isBanned, 'p2 is banned')
+  t.is(peer.banReason, 'hammering')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
+test('regression: presuspend() during async firewall leaked _inflight', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
+  const p1Hex = toHex(p1.replicator.keyPair.publicKey)
+
+  let releaseTrap = null
+  const trapped = new Promise((resolve) => {
+    releaseTrap = resolve
+  })
+
+  let resolveFirewall = null
+  const firewall = new Promise((resolve) => {
+    resolveFirewall = resolve
+  })
+
+  const p2 = await spawnPeer(t, {
+    bootstrap,
+    seed: seedB,
+    jitter: 0,
+    firewall: () => {
+      releaseTrap()
+      return firewall
+    }
+  })
+
+  const p2session = p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey, {
+    discover: true
+  })
+
+  await p2session.ready()
+  await p2session.refresh()
+
+  await trapped // pending async firewall
+
+  p2.replicator.presuspend()
+  t.ok(p2.replicator.isPresuspended, 'presuspended')
+
+  resolveFirewall(false) // release
+
+  // TODO: rep.on('dial-start') & rep.on('dial-end')
+  await new Promise((resolve) => setImmediate(resolve))
+  await new Promise((resolve) => setImmediate(resolve))
+
+  await p2.replicator.resume()
+
+  t.is(p2.replicator._inflight.has(p1Hex), false, '_inflight cleared')
+  t.is(p2.replicator.hasConnection(p1Hex), false, 'hasConnection(p1) is cleared')
+  t.is(p2.replicator.connecting, 0, 'zero connections')
+
+  await p1.destroy()
+  await p2.destroy()
   await testnet.destroy()
 })
