@@ -10,7 +10,7 @@ const {
   seedB,
   seedC,
   spawnPeer,
-  timeout, // TODO: banned outside of `backports/`
+  timeout // TODO: banned outside of `backports/`
 } = require('./helpers/backports')
 
 const { toHex } = b4a
