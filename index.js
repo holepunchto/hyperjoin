@@ -407,12 +407,13 @@ module.exports = class Replicator extends ReadyResource {
     const connection = new Connection(this, stream, peerId, initiator)
 
     map.set(hex, connection)
-    this.root.replicate(stream)
+    this.root.replicate(connection.stream)
+    connection._watchChannels()
 
     if (initiator) this.stats.connects.client.opened++
     else this.stats.connects.server.opened++
 
-    this.emit('connected', connection) // testsuite only
+    this.emit('connected', connection)
     this.emit('update')
 
     // TODO: need protomux channel-opened signal for robust 'replicating'-event
@@ -936,6 +937,7 @@ class Connection {
     this.stream = stream
     this.peerId = peerId
     this._onclose = this._onclose.bind(this)
+    this._onchannelopen = this._onchannelopen.bind(this)
     stream.on('close', this._onclose)
 
     this._evicted = false
@@ -946,6 +948,11 @@ class Connection {
     this._survived = 0 // incremented on gc
 
     this.info.markConnected(this.initiator)
+
+    this._setReplicating = null
+    this.replicating = new Promise((resolve) => {
+      this._setReplicating = resolve
+    })
   }
 
   get protomux() {
@@ -1010,6 +1017,22 @@ class Connection {
 
     rep.emit('disconnected', this)
     rep.emit('update')
+  }
+
+  _watchChannels() {
+    this.protomux.watch({ protocol: 'hypercore/alpha' }, this._onchannelopen)
+  }
+
+  _onchannelopen(channel) {
+    const dkey = toHex(channel.id)
+
+    channel.fullyClosed().then(this._onchannelclose.bind(this, dkey))
+
+    this._setReplicating()
+  }
+
+  _onchannelclose(discoveryKey) {
+    // console.log('channel-closed', discoveryKey)
   }
 
   refresh(now = Date.now()) {
