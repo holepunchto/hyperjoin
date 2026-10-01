@@ -1012,6 +1012,11 @@ class Connection {
       rep.stats.connects.server.closed++
     }
 
+    if (this._setReplicating) {
+      this._setReplicating() // settle
+      this._setReplicating = null
+    }
+
     this.info.markDisconnected(this.initiator, err)
     rep.dialer.refresh() // reschedule fast-reconnects
 
@@ -1028,7 +1033,10 @@ class Connection {
 
     channel.fullyClosed().then(this._onchannelclose.bind(this, dkey))
 
-    this._setReplicating()
+    if (this._setReplicating) {
+      this._setReplicating()
+      this._setReplicating = null
+    }
   }
 
   _onchannelclose(discoveryKey) {
