@@ -969,11 +969,13 @@ class Connection {
     // TODO: is there a signal for protomuxSession opened?
     if (now - this.connectedAt < 5000) return false
 
-    if (this._protomuxSessions() === 0) return true
+    this.replicator.coredex.isActive(this)
+    // if (this._protomuxSessions() === 0) return true
 
     return false
   }
 
+  // @deprecated
   _protomuxSessions() {
     const mux = this.protomux
 
@@ -1032,7 +1034,7 @@ class Connection {
     channel.fullyClosed().then(this._onchannelclose.bind(this, channelId))
 
     console.log(this.replicator.debugInstanceId, 'ch-open', channelId.slice(0, 6))
-    this.replicator.coredex.repStart(channelId)
+    this.replicator.coredex.opened(this, channelId)
 
     if (this._setReplicating) {
       this._setReplicating()
@@ -1041,7 +1043,7 @@ class Connection {
   }
 
   _onchannelclose(channelId) {
-    this.replicator.coredex.repEnd(channelId)
+    this.replicator.coredex.closed(this, channelId)
     // console.log('channel-closed', discoveryKey)
   }
 
