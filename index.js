@@ -4,6 +4,8 @@ const safetyCatch = require('safety-catch')
 const Hypercore = require('hypercore')
 const Dialer = require('./lib/dialer')
 const Session = require('./lib/session')
+const CoreIndex = require('./lib/core-index.js')
+
 const { getStreamError } = require('streamx')
 const b4a = require('b4a')
 const { toHex } = b4a
@@ -115,9 +117,12 @@ module.exports = class Replicator extends ReadyResource {
     this._suspending = Promise.resolve()
     this._presuspending = null
 
+    this.coredex = new CoreIndex() // index of global set
+
     this.sessions = new Map() // hex(discoveryKey) -> Session
     this.inbound = new Map() // hex(peerId) -> Connection
     this.outbound = new Map() // hex(peerId) -> Connection
+
     this._inflight = new Set() // hex(peerId), dedup in-flight dials
     this._inflightCancel = new Set() // cancelCallbacks
     this._minPeers = minPeers
@@ -329,6 +334,7 @@ module.exports = class Replicator extends ReadyResource {
 
     session.on('close', () => {
       this.sessions.delete(dk)
+      this.coredex.unsubscribe(dk, session)
       this.emit('remove', session)
     })
 
@@ -340,6 +346,8 @@ module.exports = class Replicator extends ReadyResource {
       }
     })
     if (session.active) this.dialer.topicEnable(dk)
+
+    this.coredex.subscribe(dk, session)
 
     this.emit('join', session)
 
@@ -415,17 +423,6 @@ module.exports = class Replicator extends ReadyResource {
 
     this.emit('connected', connection)
     this.emit('update')
-
-    // TODO: need protomux channel-opened signal for robust 'replicating'-event
-    const pollReplicationStart = (n) => {
-      if (n > 7 || connection._protomuxSessions() > 0) {
-        this.emit('replicating', connection)
-        return
-      }
-
-      setTimeout(() => pollReplicationStart(++n), n * 10)
-    }
-    pollReplicationStart(0)
 
     return connection
   }
@@ -864,6 +861,7 @@ module.exports = class Replicator extends ReadyResource {
     this._refreshInterval.unref()
   }
 
+  // TODO: redesign
   _cancelInflight() {
     for (const cancel of this._inflightCancel) cancel()
   }
@@ -1029,9 +1027,11 @@ class Connection {
   }
 
   _onchannelopen(channel) {
-    const dkey = toHex(channel.id)
+    const channelId = toHex(channel.id)
 
-    channel.fullyClosed().then(this._onchannelclose.bind(this, dkey))
+    channel.fullyClosed().then(this._onchannelclose.bind(this, channelId))
+
+    this.replicator.coredex.repStart(channelId)
 
     if (this._setReplicating) {
       this._setReplicating()
@@ -1039,7 +1039,8 @@ class Connection {
     }
   }
 
-  _onchannelclose(discoveryKey) {
+  _onchannelclose(channelId) {
+    this.replicator.coredex.repEnd(channelId)
     // console.log('channel-closed', discoveryKey)
   }
 
