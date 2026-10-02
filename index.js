@@ -38,7 +38,7 @@ const ERR_MAXPEERS = 'MaxPeersCap'
 let __debugCounter = 0
 
 module.exports = class Replicator extends ReadyResource {
-  #debugInstanceId = __debugCounter++
+  debugInstanceId = __debugCounter++ // TODO: remove
 
   constructor(rootStore, opts = {}) {
     super()
@@ -334,7 +334,7 @@ module.exports = class Replicator extends ReadyResource {
 
     session.on('close', () => {
       this.sessions.delete(dk)
-      this.coredex.unsubscribe(dk, session)
+      this.coredex.unsubscribe(dk, session, this.debugInstanceId)
       this.emit('remove', session)
     })
 
@@ -347,7 +347,7 @@ module.exports = class Replicator extends ReadyResource {
     })
     if (session.active) this.dialer.topicEnable(dk)
 
-    this.coredex.subscribe(dk, session)
+    this.coredex.subscribe(dk, session, this.debugInstanceId)
 
     this.emit('join', session)
 
@@ -868,7 +868,7 @@ module.exports = class Replicator extends ReadyResource {
 
   info() {
     const info = {
-      instance: this.#debugInstanceId,
+      instance: this.debugInstanceId,
       dialerPeers: this.dialer.peers.size,
       dialerActiveTopics: Array.from(this.dialer._activeTopics).map(shortHash),
       sessions: [],
@@ -1031,6 +1031,7 @@ class Connection {
 
     channel.fullyClosed().then(this._onchannelclose.bind(this, channelId))
 
+    console.log(this.replicator.debugInstanceId, 'ch-open', channelId.slice(0, 6))
     this.replicator.coredex.repStart(channelId)
 
     if (this._setReplicating) {
