@@ -974,7 +974,7 @@ class Connection {
     return false
   }
 
-  // @deprecated
+  // @deprecated - reference
   _protomuxSessions() {
     const mux = this.protomux
 
@@ -983,7 +983,10 @@ class Connection {
     for (const ch of mux) {
       if (ch.protocol !== 'hypercore/alpha') continue
 
-      // TODO: continue if not fully opened or fully closed.
+      // BUG! need to know if ch.opened on remote
+      // all local known channels are eagerly opened
+      // on corestore.replicate() and never closed
+      // or marked as in-use.
 
       const dkeystr = toHex(ch.id)
 
@@ -991,7 +994,7 @@ class Connection {
         if (!session.active) continue
 
         if (session.hasCore(dkeystr)) {
-          console.log('_protomuxSessions', dkeystr.slice(0, 6))
+          console.log('_protomuxSessions', dkeystr.slice(0, 6), ch.opened, ch.closed, ch.drained)
           opened++
           break
         }
