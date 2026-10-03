@@ -1,6 +1,7 @@
 const test = require('brittle')
 const b4a = require('b4a')
 const { spawnSwarm } = require('./helpers')
+const { toHex } = b4a
 
 test('core-index: maps connections to sessions', async (t) => {
   const swarm = await spawnSwarm(t)
@@ -12,49 +13,53 @@ test('core-index: maps connections to sessions', async (t) => {
   const topicA = b4a.alloc(32, 0xA)
   const topicB = b4a.alloc(32, 0xB)
 
-  p1.replicator.slots = 1
 
   await Promise.all([
     p1.join(topicA, { pin: true }),
     p2.join(topicA, { pin: true }),
   ])
 
-  await Promise.all([
-    p1.join(topicB),
-    p3.join(topicA, { pin: true })
-  ])
+  const passive = await p1.join(topicB, { pin: true })
+  await p3.join(topicB, { pin: true })
 
   console.log('pre-propagate')
   await swarm.propagateWriters()
   console.log('propagate')
 
-  await swarm.refresh()
-  await swarm.refresh()
-  await swarm.flush()
+  await swarm.refresh() // announce
+  await swarm.refresh() // connect
+  await swarm.flush() // wait for dials
+  await swarm.refresh() // dedupes
 
   const { replicator } = p1
 
-  t.is(replicator.sessions.size, 2, '2 session')
-  t.is(replicator.activeSessions.length, 1, '1 active')
-
-  const activeSessions = Array.from(p1.replicator.sessions.keys()).length
-  t.comment(activeSessions)
+  t.is(replicator.activeSessions.length, 2, 'active sessions')
   t.is(p1.replicator.connectionCount, 2, 'p1 connected to topic A & B')
 
-  const [c1, c2] = replicator.connections
+  let [c1, c2] = replicator.connections
+  if (!b4a.equals(c1.peerId, p2.replicator.peerId)) {
+    [c1, c2] = [c2, c1]
+  }
 
-  /*
-  let sessions = p1.replicator.coreIndex._ident(c1)
-  t.is(sessions.length, 2)
-  t.is(sessions.filter(i => i.active).length, 1)
+  t.is(toHex(c1.peerId), toHex(p2.replicator.peerId), 'P2 @ C1')
+  t.is(toHex(c2.peerId), toHex(p3.replicator.peerId), 'P3 @ C2')
+  t.is(c1.isIdle(), false)
+  t.is(c2.isIdle(), false)
+  t.is(c2.stream.destroyed, false)
 
-  sessions = p1.replicator.coreIndex._identify(c2)
-  t.is(sessions.length, 1)
-  t.is(sessions.filter(i => i.active).length, 0)
-  */
+  // de-prio topic B on first peer
+  replicator.slots = 1
+  passive.unpin()
+  swarm.refresh().catch(t.fail) // apply
+
+  t.is(p1.replicator.connectionCount, 2, 'p1 connected to topic A & B')
 
   t.is(c1.isIdle(), false)
-  t.is(c2.isIdle(), true)
+  t.is(c2.isIdle(), true, 'idle connection detected')
+
+  await swarm.flush()
+
+  t.is(c2.stream.destroyed, true, 'garbage collected')
 
   await swarm.destroy()
 })

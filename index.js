@@ -966,11 +966,10 @@ class Connection {
   }
 
   isIdle(now = Date.now()) {
-    // TODO: is there a signal for protomuxSession opened?
-    if (now - this.connectedAt < 5000) return false
+    if (this._setReplicating && now - this.connectedAt < 5000) return false
 
-    this.replicator.coredex.isActive(this)
-    // if (this._protomuxSessions() === 0) return true
+    // return !this.replicator.coredex.isActive(this)
+    if (this._protomuxSessions() === 0) return true
 
     return false
   }
@@ -980,15 +979,19 @@ class Connection {
     const mux = this.protomux
 
     let opened = 0
-
+    console.log(this.replicator.debugInstanceId, '_protomuxSessions start()')
     for (const ch of mux) {
       if (ch.protocol !== 'hypercore/alpha') continue
+
+      // TODO: continue if not fully opened or fully closed.
+
       const dkeystr = toHex(ch.id)
 
       for (const session of this.replicator.sessions.values()) {
         if (!session.active) continue
 
         if (session.hasCore(dkeystr)) {
+          console.log('_protomuxSessions', dkeystr.slice(0, 6))
           opened++
           break
         }
