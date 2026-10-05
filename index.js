@@ -150,6 +150,11 @@ module.exports = class Replicator extends ReadyResource {
           opened: 0,
           closed: 0
         }
+      },
+      dht: {
+        lookup: 0,
+        announce: 0,
+        unannounce: 0
       }
     }
 

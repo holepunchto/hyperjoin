@@ -11,6 +11,7 @@ async function runTests() {
   await import('./peer.js')
   await import('./basic.js')
   await import('./autoswarm.js')
+  await import('./stats.js')
   await import('./presuspend.js')
   await import('./backports/firewall.js')
   await import('./backports/stats.js')
