@@ -332,8 +332,6 @@ module.exports = class Replicator extends ReadyResource {
     })
     if (session.active) this.dialer.topicEnable(dk)
 
-    store.on('close', session.close.bind(session))
-
     this.emit('join', session)
 
     return session
