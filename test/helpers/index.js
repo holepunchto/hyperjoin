@@ -109,6 +109,7 @@ class TestPeer extends ReadyResource {
     this.replicator = new Replicator(this.store, {
       manual: true,
       autoswarm: true,
+      dhtFastRetry: 100,
       ...this._opts
     })
   }

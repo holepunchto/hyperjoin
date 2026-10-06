@@ -20,6 +20,8 @@ const DISCOVERY_STARTUP_DELAY = 5 * 1000 // 5s
 const AUTO_STARTUP_DELAY = 5 * 1000 // 5s
 const MIN_ACTIVE_TIME = 30 * 1000
 
+const DHT_FAST_RETRY = 3 * 1000 // 3s
+
 // connections
 const MIN_PEERS = 20
 const MAX_PEERS = 40
@@ -58,6 +60,7 @@ module.exports = class Replicator extends ReadyResource {
       defaultDiscoveryTimeout = DEFAULT_DISCOVERY_TIMEOUT,
       updatedDiscoveryTimeout = UPDATED_DISCOVERY_TIMEOUT,
       discoveryStartupDelay = DISCOVERY_STARTUP_DELAY,
+      dhtFastRetry = DHT_FAST_RETRY,
 
       // Idle
       gcIdleTime = DEFAULT_SWARM_GC_IDLE_TIME,
@@ -133,6 +136,7 @@ module.exports = class Replicator extends ReadyResource {
     this._defaultDiscoveryTimeout = defaultDiscoveryTimeout
     this._updatedDiscoveryTimeout = updatedDiscoveryTimeout
     this._discoveryStartupDelay = discoveryStartupDelay
+    this._dhtFastRetry = dhtFastRetry
 
     this._online = false
 
@@ -816,11 +820,13 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
+  // @deprecated
   async setAutoswarm(enabled) {
     if (this._autoswarm === enabled) return
 
     this._autoswarm = enabled
     await this.refresh()
+    await this.flush()
   }
 
   async _handleNetworkUpdate() {
