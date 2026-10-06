@@ -17,7 +17,7 @@ test('connectionsOpened and connectionsClosed stats', async (t) => {
   const p1Connected = onceEvent(p1.replicator, 'connected')
   const p2Connected = onceEvent(p2.replicator, 'connected')
 
-  p2.replicator.on('connected', (connection) => {
+  p2.replicator.once('connected', (connection) => {
     tOpen.is(p2.replicator.stats.connects.client.opened, 1, 'opened connection is in stats')
     tOpen.is(p2.replicator.stats.connects.client.attempted, 1, 'attemped connection is in stats')
     tClose.is(p2.replicator.stats.connects.client.closed, 0, 'sanity check')
@@ -30,7 +30,7 @@ test('connectionsOpened and connectionsClosed stats', async (t) => {
     connection.stream.end()
   })
 
-  p1.replicator.on('connected', (connection) => {
+  p1.replicator.once('connected', (connection) => {
     tOpen.is(p1.replicator.stats.connects.server.opened, 1, 'opened server connection is in stats')
     tClose.is(p1.replicator.stats.connects.server.closed, 0, 'sanity check')
 

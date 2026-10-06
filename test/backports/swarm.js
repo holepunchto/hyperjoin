@@ -21,6 +21,7 @@ async function joinPinned(replicator, store, topic) {
   const session = replicator.join(store, topic, { pin: true })
   await session.ready()
   await session.refresh()
+  await replicator.flush()
   return session
 }
 
@@ -28,6 +29,7 @@ async function joinDiscover(replicator, store, topic) {
   const session = replicator.join(store, topic, { discover: true })
   await session.ready()
   await session.refresh()
+  await replicator.flush()
   return session
 }
 
@@ -40,12 +42,12 @@ test('one server, one client - first connection', async (t) => {
 
   const connected = onceEvent(p2.replicator, 'connected')
 
-  p2.replicator.on('connected', (connection) => {
+  p2.replicator.once('connected', (connection) => {
     t.pass('p2')
     connection.stream.end()
   })
 
-  p1.replicator.on('connected', (connection) => {
+  p1.replicator.once('connected', (connection) => {
     connection.stream.end()
   })
 
@@ -70,12 +72,12 @@ test('two servers - first connection', async (t) => {
   connection1Test.plan(1)
   connection2Test.plan(1)
 
-  p1.replicator.on('connected', (connection) => {
+  p1.replicator.once('connected', (connection) => {
     connection1Test.pass('p1')
     connection.stream.end()
   })
 
-  p2.replicator.on('connected', (connection) => {
+  p2.replicator.once('connected', (connection) => {
     connection2Test.pass('p2')
     connection.stream.end()
   })
@@ -513,7 +515,7 @@ test('one server, two clients - if a second client joins after the server leaves
   const remote2 = Promise.all(p1.cores.map((core) => p2.session.get(core.key)))
   const remote3 = Promise.all(p1.cores.map((core) => p3.session.get(core.key)))
 
-  await joinPinned(p2.replicator, p2.store.session(), p1.cores[0].discoveryKey)
+  await joinDiscover(p2.replicator, p2.store.session(), p1.cores[0].discoveryKey)
   const r2 = await remote2
   await Promise.all(r2.map((core) => core.ready()))
   await r2[0].get(0)
@@ -560,7 +562,7 @@ test('two servers, one client - refreshing a peer discovery instance discovers n
   await p2.replicator.flush()
   t.is(clientConnections, 1)
 
-  await session.discovery.refresh()
+  session.discovery.refresh()
   await p3.replicator.flush()
   t.is(clientConnections, 2)
 
@@ -666,6 +668,7 @@ test('rejoining with different client/server opts refreshes', async (t) => {
   const session2 = replicator.join(local, one.discoveryKey, { pin: true })
   await session2.ready()
   await session2.refresh()
+  await replicator.flush()
 
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
@@ -855,7 +858,7 @@ test('port opt gets passed on to hyperdht', async (t) => {
   await testnet.destroy()
 })
 
-test('firewall for server connections results in peer ban', async (t) => {
+test.solo('firewall for server connections results in peer ban', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 

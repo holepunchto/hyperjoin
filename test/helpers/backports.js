@@ -48,6 +48,7 @@ exports.joinRemote = async function joinRemote(peer, remotePeer) {
   })
   await repSession.ready()
   await repSession.refresh()
+  await peer.replicator.flush()
 
   return remote
 }
@@ -62,6 +63,7 @@ exports.spawnPeer = async function spawnPeer(t, opts = {}) {
     manual: true,
     autoswarm: false,
     discoveryStartupDelay: 0,
+    dhtFastRetry: 50,
     ...opts
   })
 
@@ -76,6 +78,7 @@ exports.spawnPeer = async function spawnPeer(t, opts = {}) {
   const repSession = replicator.join(session, one.discoveryKey, { pin: true })
   await repSession.ready()
   await repSession.refresh()
+  await replicator.flush()
 
   const two = session.get({ name: 'two' })
   await two.ready()

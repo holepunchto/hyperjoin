@@ -14,14 +14,14 @@ test('DHT Stats', async (t) => {
 
   await swarm.propagateWriters()
   await swarm.refresh()
-  await swarm.refresh()
   await swarm.flush()
 
-  t.alike(p1.replicator.stats.dht, { lookup: 0, announce: 1, unannounce: 0 })
-  t.alike(p2.replicator.stats.dht, { lookup: 1, announce: 0, unannounce: 0 })
+  // 2 because of one-time 'dhtFastRetry'
+  t.alike(p1.replicator.stats.dht, { lookup: 0, announce: 2, unannounce: 0 })
+  t.alike(p2.replicator.stats.dht, { lookup: 2, announce: 0, unannounce: 0 })
 
   await swarm.destroy()
 
-  t.alike(p1.replicator.stats.dht, { lookup: 0, announce: 1, unannounce: 1 })
-  t.alike(p2.replicator.stats.dht, { lookup: 1, announce: 0, unannounce: 0 })
+  t.alike(p1.replicator.stats.dht, { lookup: 0, announce: 2, unannounce: 1 })
+  t.alike(p2.replicator.stats.dht, { lookup: 2, announce: 0, unannounce: 0 })
 })
