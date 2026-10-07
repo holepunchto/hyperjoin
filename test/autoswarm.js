@@ -111,7 +111,7 @@ test('autoswarm: manually activated instances', async (t) => {
   // A re-activates, C validates
 
   session1.pin()
-  const remoteConnected = new Promise(resolve => c.replicator.on('connected', resolve))
+  const remoteConnected = new Promise((resolve) => c.replicator.on('connected', resolve))
 
   await swarm.refresh()
   await swarm.flush() // dht-query + dials

@@ -251,7 +251,9 @@ test('a retry due during a dial is re-scheduled', async (t) => {
   })
 
   let settle = null
-  const done = new Promise((resolve) => { settle = resolve })
+  const done = new Promise((resolve) => {
+    settle = resolve
+  })
 
   let dials = 0
 
