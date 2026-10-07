@@ -1,6 +1,7 @@
 const test = require('brittle')
 const b4a = require('b4a')
 const Dialer = require('../lib/dialer')
+const Peer = require('../lib/peer')
 
 const T0 = Date.now()
 const TOPIC = b4a.alloc(32, 1)
@@ -240,6 +241,50 @@ test('A peer that holds a stable connection and then drops is re-dialed', async 
   await dialer.flush(disconnectedAt)
 
   t.is(dialed.length, 2, 're-dialed after the drop')
+})
+
+test('a retry due during a dial is re-scheduled', async (t) => {
+  const backoffDuration = Peer.backoffDuration
+  Peer.backoffDuration = () => 5
+  t.teardown(() => {
+    Peer.backoffDuration = backoffDuration
+  })
+
+  let settle = null
+  const done = new Promise((resolve) => { settle = resolve })
+
+  let dials = 0
+
+  const dialer = new Dialer(
+    {
+      async ondial(peer, now) {
+        const complete = peer.markAttempt(true, { now })
+
+        if (dials++ == 0) {
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          complete(true)
+        } else {
+          complete()
+          settle()
+        }
+      },
+      ondialerror: () => {},
+      isConnected: () => false
+    },
+    { jitter: 0 }
+  )
+  t.teardown(() => dialer.destroy())
+
+  dialer.topicEnable(TOPIC)
+  dialer.seen({ publicKey: asKey(1) }, TOPIC)
+
+  await dialer.flush()
+  t.is(dials, 1, 'first retry')
+  t.ok(dialer._refreshTimer, 'due retry is re-scheduled')
+
+  await done
+  t.is(dials, 2, 'second retry')
+  t.ok(!dialer._refreshTimer, 'no more work scheduled')
 })
 
 function spawnDialer(

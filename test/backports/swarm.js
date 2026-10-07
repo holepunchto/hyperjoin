@@ -858,7 +858,7 @@ test('port opt gets passed on to hyperdht', async (t) => {
   await testnet.destroy()
 })
 
-test.solo('firewall for server connections results in peer ban', async (t) => {
+test('firewall for server connections results in peer ban', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -891,6 +891,7 @@ test.solo('firewall for server connections results in peer ban', async (t) => {
 
   await p1.session.close()
   await joinPinned(p2.replicator, p2.store.session(), p1.cores[0].discoveryKey)
+
   await timeout(500)
 
   t.is(firewallRan, true, 'sanity check')
