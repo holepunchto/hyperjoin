@@ -560,7 +560,7 @@ test('two servers, one client - refreshing a peer discovery instance discovers n
   await p2.replicator.flush()
   t.is(clientConnections, 1)
 
-  await session.discovery.refresh()
+  session.discovery.refresh()
   await p3.replicator.flush()
   t.is(clientConnections, 2)
 
