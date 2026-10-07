@@ -301,13 +301,9 @@ module.exports = class Replicator extends ReadyResource {
       pending.push(session.resume({ log }))
     }
 
-    const results = await Promise.allSettled(pending)
+    await Promise.all(pending)
 
-    if (!this._manual && !this.suspended && !this.closing) this._startAutoRefresh()
-
-    for (const result of results) {
-      if (result.status === 'rejected') throw result.reason
-    }
+    if (!this._manual) this._startAutoRefresh()
   }
 
   join(store, topic, { priority = 0, pin = false, discover = false, deferSwarming } = {}) {
