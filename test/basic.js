@@ -3,7 +3,6 @@ const Corestore = require('corestore')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('..')
-const { spawnSwarm } = require('./helpers')
 const {
   joinRemote,
   onceEvent,
@@ -283,28 +282,4 @@ test('regression: presuspend() during async firewall leaked _inflight', async (t
   await p1.destroy()
   await p2.destroy()
   await testnet.destroy()
-})
-
-test('Session close removes the store listener', async (t) => {
-  const swarm = await spawnSwarm(t)
-  t.teardown(() => swarm.close())
-  const peer = await swarm.spawnPeer()
-  const store = peer.store.session()
-  const baseline = store.listenerCount('close')
-  const topic = b4a.alloc(32, 1)
-
-  for (let i = 0; i < 3; i++) {
-    const session = peer.replicator.join(store, topic)
-    await session.ready()
-    t.is(store.listenerCount('close'), baseline + 1, 'session adds one store listener')
-    await session.close()
-    t.is(store.listenerCount('close'), baseline, 'session close removes its store listener')
-  }
-
-  const session = peer.replicator.join(store, topic)
-  await session.ready()
-  const closed = onceEvent(session, 'close')
-  await store.close()
-  await closed
-  t.ok(session.closed, 'closing the store still closes the live session')
 })

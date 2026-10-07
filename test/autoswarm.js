@@ -322,3 +322,27 @@ test('autoswarm: can be disabled', async (t) => {
 
   await swarm.destroy()
 })
+
+test('Session close removes the store listener', async (t) => {
+  const swarm = await spawnSwarm(t)
+  t.teardown(() => swarm.close())
+  const peer = await swarm.spawnPeer()
+  const store = peer.store.session()
+  const baseline = store.listenerCount('close')
+  const topic = b4a.alloc(32, 1)
+
+  for (let i = 0; i < 3; i++) {
+    const session = peer.replicator.join(store, topic)
+    await session.ready()
+    t.is(store.listenerCount('close'), baseline + 1, 'session adds one store listener')
+    await session.close()
+    t.is(store.listenerCount('close'), baseline, 'session close removes its store listener')
+  }
+
+  const session = peer.replicator.join(store, topic)
+  await session.ready()
+  const closed = new Promise((resolve) => session.once('close', resolve))
+  await store.close()
+  await closed
+  t.ok(session.closed, 'closing the store still closes the live session')
+})
