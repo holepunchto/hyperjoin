@@ -774,7 +774,7 @@ module.exports = class Replicator extends ReadyResource {
 
     // weight prio by lexical order
     const order = new Map()
-    const priorities = pool.map((i) => i.priority).sort()
+    const priorities = pool.map((i) => i.priority).sort((a, b) => a - b)
     for (let i = 0; i < priorities.length; i++) {
       order.set(priorities[i], i)
     }
