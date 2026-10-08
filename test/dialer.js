@@ -262,7 +262,7 @@ test('a retry due during a dial is re-scheduled', async (t) => {
       async ondial(peer, now) {
         const complete = peer.markAttempt(true, { now })
 
-        if (dials++ == 0) {
+        if (dials++ === 0) {
           await new Promise((resolve) => setTimeout(resolve, 20))
           complete(true)
         } else {
