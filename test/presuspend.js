@@ -26,8 +26,6 @@ test('presuspend() enters background mode', async (t) => {
   await swarm.propagateWriters()
   await swarm.refresh()
   await swarm.flush()
-  await swarm.refresh()
-  await swarm.flush()
 
   await connected
   t.ok('connected')

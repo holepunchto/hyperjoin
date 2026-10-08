@@ -13,7 +13,6 @@ test('autoswarm: all topics pinned (hyperswarm mode)', async (t) => {
 
   await swarm.propagateWriters()
   await swarm.refresh()
-  await swarm.refresh()
   await swarm.flush()
   await swarm.gc()
 
@@ -23,8 +22,7 @@ test('autoswarm: all topics pinned (hyperswarm mode)', async (t) => {
   await swarm.destroy()
 })
 
-// replicator mode
-
+// (replicator mode)
 test('autoswarm: two new instances do not swarm without intent (sanity test)', async (t) => {
   const swarm = await spawnSwarm(t)
 
@@ -37,6 +35,7 @@ test('autoswarm: two new instances do not swarm without intent (sanity test)', a
   await swarm.propagateWriters()
   await swarm.refresh()
 
+  // setTimeout sanctioned for sanity
   await new Promise((resolve) => setTimeout(resolve, 2000))
 
   t.is(p1.replicator.connectionCount, 0)
@@ -58,8 +57,7 @@ test('autoswarm: deferSwarming disabled', async (t) => {
   ])
 
   await swarm.propagateWriters()
-  await swarm.refresh() // lookup then commit announce
-  await swarm.refresh() // lookup
+  await swarm.refresh() // announce & lookup
   await swarm.flush() // dht-query + dials
 
   t.is(p1.replicator.announcedSessions.length, 1, 'autoswarm announce')
@@ -87,9 +85,8 @@ test('autoswarm: manually activated instances', async (t) => {
   session2.pin()
 
   await swarm.propagateWriters()
-  await swarm.refresh() // lookup then commit announce
-  await swarm.refresh() // lookup
-  await swarm.flush() // dht-query + dials
+  await swarm.refresh()
+  await swarm.flush()
   await swarm.gc() // de-dupe
 
   t.is(a.replicator.connectionCount, 1)
@@ -105,8 +102,8 @@ test('autoswarm: manually activated instances', async (t) => {
   session3.pin() // TODO: use discover()
 
   await swarm.propagateWriters()
-  await swarm.refresh() // lookup
-  await swarm.flush() // dht-query + dials
+  await swarm.refresh()
+  await swarm.flush()
 
   t.is(c.replicator.peers.size, 0, 'A, B unannounced')
   t.is(c.replicator.connectionCount, 0, 'C has no connections')
@@ -114,10 +111,11 @@ test('autoswarm: manually activated instances', async (t) => {
   // A re-activates, C validates
 
   session1.pin()
+  const remoteConnected = new Promise((resolve) => c.replicator.on('connected', resolve))
 
   await swarm.refresh()
-  await swarm.refresh()
   await swarm.flush() // dht-query + dials
+  await remoteConnected
 
   t.is(c.replicator.peers.size, 1, 'A re-activated')
 
@@ -150,7 +148,7 @@ test('autoswarm: can enable discovery swarming', async (t) => {
   session2.bump(99)
   session2.pin()
   await p2.replicator.refresh()
-  await p2.replicator.refresh()
+  await p2.replicator.flush()
 
   t.is(p1.replicator.connectionCount, 0)
   t.is(p2.replicator.connectionCount, 0)
@@ -163,6 +161,7 @@ test('autoswarm: can enable discovery swarming', async (t) => {
 
   t.is(session1.isDiscovering, true)
   await p1.replicator.refresh()
+  await p1.replicator.flush()
 
   t.is(session1.seen, 99, 'prop seen')
   t.is(await evSeen, 99, 'bump event')
@@ -174,6 +173,7 @@ test('autoswarm: can enable discovery swarming', async (t) => {
 
   session1.bump()
   await p1.replicator.refresh()
+  await p1.replicator.flush()
 
   t.is(p1.replicator.sessions.get(toHex(topic)), session1, 'still open')
   t.is(session1.announce, false, 'still not listening')
@@ -183,6 +183,7 @@ test('autoswarm: can enable discovery swarming', async (t) => {
 
   const now = session1._startTime + session1._discoveryTimeout + 1
   await p1.replicator.refresh(now)
+  await p1.replicator.flush()
 
   t.is(session1.isDiscovering, false)
   t.is(nEvDiscovered, 1)
@@ -306,7 +307,6 @@ test('autoswarm: can be disabled', async (t) => {
   await peer.join(topic)
 
   await swarm.propagateWriters()
-  await swarm.refresh()
   await swarm.refresh()
   await swarm.flush()
 

@@ -243,3 +243,13 @@ test('Inbound peer gets banned for hammering', (t) => {
   t.ok(b.isBanned, 'B is banned')
   t.is(b.banReason, 'hammering')
 })
+
+test('next retryAt must not occur before previous attempt finish', (t) => {
+  const { peer } = spawnPeer()
+  const attemptedAt = T0
+  const settledAt = attemptedAt + Peer.backoffDuration(1) + 1
+
+  peer.markAttempt(true, { now: attemptedAt })(true, 'ERR_CONNECT', settledAt)
+
+  t.ok(peer.retryAt > settledAt, 'retry remains in the future after a slow failure')
+})
