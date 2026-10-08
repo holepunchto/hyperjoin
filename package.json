@@ -5,6 +5,7 @@
   "main": "index.js",
   "exports": {
     "./package": "./package.json",
+    "./package.json": "./package.json",
     ".": {
       "types": "./index.d.ts",
       "default": "./index.js"
