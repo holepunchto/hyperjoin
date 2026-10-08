@@ -27,7 +27,6 @@ test('core-index: maps connections to sessions', async (t) => {
   console.log('propagate')
 
   await swarm.refresh() // announce
-  await swarm.refresh() // connect
   await swarm.flush() // wait for dials
   await swarm.refresh() // dedupes
 
@@ -49,9 +48,11 @@ test('core-index: maps connections to sessions', async (t) => {
 
   // de-prio topic B on first peer
   replicator.slots = 1
-  passive.unpin()
+  passive.unpin() // deactivates replicator session; not store.session.
+  await passive.store.close()
   swarm.refresh().catch(t.fail) // apply
 
+  t.is(replicator.activeSessions.length, 1, 'session deactivated')
   t.is(p1.replicator.connectionCount, 2, 'p1 connected to topic A & B')
 
   t.is(c1.isIdle(), false)
