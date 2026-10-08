@@ -286,7 +286,7 @@ test('a retry due during a dial is re-scheduled', async (t) => {
 
   await done
   t.is(dials, 2, 'second retry')
-  t.ok(!dialer._refreshTimer, 'no more work scheduled')
+  t.absent(dialer._refreshTimer, 'no more work scheduled')
 })
 
 function spawnDialer(
