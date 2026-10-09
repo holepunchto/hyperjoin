@@ -274,10 +274,11 @@ test('regression: presuspend() during async firewall leaked _inflight', async (t
   await new Promise((resolve) => setImmediate(resolve))
 
   await p2.replicator.resume()
+  await p2.replicator.flush()
 
   t.is(p2.replicator._inflight.has(p1Hex), false, '_inflight cleared')
-  t.is(p2.replicator.hasConnection(p1Hex), false, 'hasConnection(p1) is cleared')
   t.is(p2.replicator.connecting, 0, 'zero connections')
+  t.ok(p2.replicator.hasConnection(p1Hex), 'aborted dial is redialed after resume')
 
   await p1.destroy()
   await p2.destroy()

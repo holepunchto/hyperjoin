@@ -193,6 +193,32 @@ test('peer.retryAt increased on failure and is re-dialed', async (t) => {
   t.is(ctx.connected.size, 1, 'one successful')
 })
 
+test('peer switched to relaying is redialed on the next refresh', async (t) => {
+  const dialed = []
+  const dialer = new Dialer(
+    {
+      ondial: async (peer, now) => {
+        dialed.push(peer.forceRelaying)
+        peer.markAttempt(true, { canRelay: true, now })(true, 'HOLEPUNCH_ABORTED', now)
+      },
+      ondialerror: () => {}
+    },
+    { jitter: 0 }
+  )
+  dialer.topicEnable(TOPIC)
+  t.teardown(() => dialer.destroy())
+
+  dialer.seen({ publicKey: asKey(1) }, TOPIC, T0)
+  await dialer.flush(T0)
+
+  t.alike(dialed, [false], 'direct dial failed')
+
+  dialer.refresh(T0 + 1000)
+  await dialer.flush(T0 + 1000)
+
+  t.alike(dialed, [false, true], 'redialed through a relay')
+})
+
 test('dialer does not dial peers without an active topic', async (t) => {
   const ctx = spawnDialer(t)
   const { dialer, dialed, errors } = ctx
