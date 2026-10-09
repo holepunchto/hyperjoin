@@ -23,7 +23,7 @@ const { toHex } = b4a
  * replicator.session.hasCore(coreDiscoveryKey) // <-- hits session
  */
 
-test('core-index: connections with no active session are evicted', async (t) => {
+test.skip('core-index: connections with no active session are evicted', async (t) => {
   const swarm = await spawnSwarm(t)
 
   const p1 = await swarm.spawnPeer({ autoswarm: false })

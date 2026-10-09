@@ -297,7 +297,7 @@ test('autoswarm: replicator evicts session on indirect storeSession.closed()', a
   await swarm.destroy()
 })
 
-test.solo('autoswarm: rotation refills freed slots', async (t) => {
+test('autoswarm: rotation refills freed slots', async (t) => {
   const swarm = await spawnSwarm(t)
   const peer = await swarm.spawnPeer({ slots: 2, autoStartupDelay: 0, minActiveTime: 0 })
   const now = Date.now()

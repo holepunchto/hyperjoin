@@ -408,7 +408,9 @@ module.exports = class Replicator extends ReadyResource {
     const connection = new Connection(this, stream, peerId, initiator)
 
     map.set(hex, connection)
+
     this.root.replicate(connection.stream)
+    connection._watchChannels()
 
     if (initiator) this.stats.connects.client.opened++
     else this.stats.connects.server.opened++
@@ -802,9 +804,12 @@ module.exports = class Replicator extends ReadyResource {
     if (active >= slots) return // no-op
 
     // autostart
-    const limit = Math.min(slots - active, pool.length)
-    for (let i = 0; i < limit; i++) {
-      pool[i]._autoStart(now)
+    for (const session of pool) {
+      if (active >= slots) break
+      if (session.active) continue
+
+      session._autoStart(now)
+      active++
     }
   }
 
