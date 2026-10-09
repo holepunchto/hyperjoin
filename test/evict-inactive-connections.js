@@ -4,21 +4,23 @@ const { spawnSwarm } = require('./helpers')
 const { toHex } = b4a
 
 /*
- * Test retained; use-case is legit
- * but blocked by following two issues:
+ * Test retained for future, use-case is legit
+ * but blocked by following issue:
  *
- * 1) Corestore session utils proxy to root store
- *
- * const root = new Corestore()
- * root.session().cores // <-- hits root not session.
- * root.session().watch(fn) // <-- hits root not session.
- *
- * 2) Protomux channels closure depends on remote
+ * # Protomux channels closure depends on remote
  *
  * A topic cannot be departed unless both peers leave.
  *
  * https://github.com/holepunchto/corestore/pull/176
  *
+ *
+ * Note: Corestore session-utils proxy to root store
+ *
+ * const root = new Corestore()
+ * root.session().cores // <-- hits root not session.
+ * root.session().watch(fn) // <-- hits root not session.
+ *
+ * replicator.session.hasCore(coreDiscoveryKey) // <-- hits session
  */
 
 test('core-index: connections with no active session are evicted', async (t) => {
@@ -44,7 +46,7 @@ test('core-index: connections with no active session are evicted', async (t) => 
   await swarm.propagateWriters()
 
   await swarm.refresh() // announce
-  await swarm.flush() // wait for dials & dedupes
+  await swarm.flush() // wait for dials
 
   const { replicator } = p1
 
@@ -75,7 +77,10 @@ test('core-index: connections with no active session are evicted', async (t) => 
 
   await swarm.flush()
 
-  t.is(c2.stream.destroyed, true, 'garbage collected')
+  // await swarm.refresh(Date.now() + CONNECTION_MAX_IDLE)
+  // await swarm.flush()
+
+  t.is(c2.stream.destroyed, true, 'evicted')
   t.is(replicator.connectionCount, 1, 'P1 connected only to topic A')
 
   await swarm.destroy()

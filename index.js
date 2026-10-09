@@ -4,7 +4,6 @@ const safetyCatch = require('safety-catch')
 const Dialer = require('./lib/dialer')
 const Connection = require('./lib/connection')
 const Session = require('./lib/session')
-const CoreIndex = require('./lib/core-index.js')
 
 const b4a = require('b4a')
 const { toHex } = b4a
@@ -115,8 +114,6 @@ module.exports = class Replicator extends ReadyResource {
     this.suspended = suspended
     this._suspending = Promise.resolve()
     this._presuspending = null
-
-    this.coredex = new CoreIndex() // index of global set
 
     this.sessions = new Map() // hex(discoveryKey) -> Session
     this.inbound = new Map() // hex(peerId) -> Connection
@@ -333,7 +330,6 @@ module.exports = class Replicator extends ReadyResource {
 
     session.on('close', () => {
       this.sessions.delete(dk)
-      this.coredex.unsubscribe(dk, session, this.debugInstanceId)
       this.emit('remove', session)
     })
 
@@ -345,8 +341,6 @@ module.exports = class Replicator extends ReadyResource {
       }
     })
     if (session.active) this.dialer.topicEnable(dk)
-
-    this.coredex.subscribe(dk, session, this.debugInstanceId)
 
     this.emit('join', session)
 
@@ -415,7 +409,6 @@ module.exports = class Replicator extends ReadyResource {
 
     map.set(hex, connection)
     this.root.replicate(connection.stream)
-    connection._watchChannels()
 
     if (initiator) this.stats.connects.client.opened++
     else this.stats.connects.server.opened++
@@ -731,7 +724,6 @@ module.exports = class Replicator extends ReadyResource {
     for (const p of banned) this._handleBan(p)
   }
 
-  // @deprecated, legacy compat (dht + connection queue, done)
   async flush() {
     const pending = []
     for (const sess of this.sessions.values()) {
@@ -772,7 +764,6 @@ module.exports = class Replicator extends ReadyResource {
 
     slots = Math.max(slots, 0) // `slots` reduced during runtime.
 
-    // weight prio by lexical order
     const order = new Map()
     const priorities = pool.map((i) => i.priority).sort((a, b) => a - b)
     for (let i = 0; i < priorities.length; i++) {
