@@ -30,14 +30,11 @@ test.skip('core-index: connections with no active session are evicted', async (t
   const p2 = await swarm.spawnPeer({ autoswarm: false })
   const p3 = await swarm.spawnPeer({ autoswarm: false })
 
-  const topicA = b4a.alloc(32, 0xA)
-  const topicB = b4a.alloc(32, 0xB)
+  const topicA = b4a.alloc(32, 0xa)
+  const topicB = b4a.alloc(32, 0xb)
 
   // topicA = P1 & P2
-  await Promise.all([
-    p1.join(topicA, { pin: true }),
-    p2.join(topicA, { pin: true }),
-  ])
+  await Promise.all([p1.join(topicA, { pin: true }), p2.join(topicA, { pin: true })])
 
   // topicB = P1 & P3
   const passive = await p1.join(topicB, { pin: true })
@@ -56,7 +53,7 @@ test.skip('core-index: connections with no active session are evicted', async (t
   // P1's connections
   let [c1, c2] = replicator.connections
   if (!b4a.equals(c1.peerId, p2.replicator.peerId)) {
-    [c1, c2] = [c2, c1]
+    ;[c1, c2] = [c2, c1]
   }
 
   t.is(toHex(c1.peerId), toHex(p2.replicator.peerId), 'P2 @ C1')
