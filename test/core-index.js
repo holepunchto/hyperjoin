@@ -3,7 +3,25 @@ const b4a = require('b4a')
 const { spawnSwarm } = require('./helpers')
 const { toHex } = b4a
 
-test('core-index: maps connections to sessions', async (t) => {
+/*
+ * Test retained; use-case is legit
+ * but blocked by following two issues:
+ *
+ * 1) Corestore session utils proxy to root store
+ *
+ * const root = new Corestore()
+ * root.session().cores // <-- hits root not session.
+ * root.session().watch(fn) // <-- hits root not session.
+ *
+ * 2) Protomux channels closure depends on remote
+ *
+ * A topic cannot be departed unless both peers leave.
+ *
+ * https://github.com/holepunchto/corestore/pull/176
+ *
+ */
+
+test('core-index: connections with no active session are evicted', async (t) => {
   const swarm = await spawnSwarm(t)
 
   const p1 = await swarm.spawnPeer({ autoswarm: false })
@@ -13,28 +31,27 @@ test('core-index: maps connections to sessions', async (t) => {
   const topicA = b4a.alloc(32, 0xA)
   const topicB = b4a.alloc(32, 0xB)
 
-
+  // topicA = P1 & P2
   await Promise.all([
     p1.join(topicA, { pin: true }),
     p2.join(topicA, { pin: true }),
   ])
 
+  // topicB = P1 & P3
   const passive = await p1.join(topicB, { pin: true })
   await p3.join(topicB, { pin: true })
 
-  console.log('pre-propagate')
   await swarm.propagateWriters()
-  console.log('propagate')
 
   await swarm.refresh() // announce
-  await swarm.flush() // wait for dials
-  await swarm.refresh() // dedupes
+  await swarm.flush() // wait for dials & dedupes
 
   const { replicator } = p1
 
   t.is(replicator.activeSessions.length, 2, 'active sessions')
-  t.is(p1.replicator.connectionCount, 2, 'p1 connected to topic A & B')
+  t.is(replicator.connectionCount, 2, 'P1 connected to topic A & B')
 
+  // P1's connections
   let [c1, c2] = replicator.connections
   if (!b4a.equals(c1.peerId, p2.replicator.peerId)) {
     [c1, c2] = [c2, c1]
@@ -46,14 +63,12 @@ test('core-index: maps connections to sessions', async (t) => {
   t.is(c2.isIdle(), false)
   t.is(c2.stream.destroyed, false)
 
-  // de-prio topic B on first peer
-  replicator.slots = 1
-  passive.unpin() // deactivates replicator session; not store.session.
+  // P1 leaves topicB
   await passive.store.close()
   swarm.refresh().catch(t.fail) // apply
 
   t.is(replicator.activeSessions.length, 1, 'session deactivated')
-  t.is(p1.replicator.connectionCount, 2, 'p1 connected to topic A & B')
+  t.is(replicator.connectionCount, 2, 'P1 connected to topic A & B')
 
   t.is(c1.isIdle(), false)
   t.is(c2.isIdle(), true, 'idle connection detected')
@@ -61,6 +76,7 @@ test('core-index: maps connections to sessions', async (t) => {
   await swarm.flush()
 
   t.is(c2.stream.destroyed, true, 'garbage collected')
+  t.is(replicator.connectionCount, 1, 'P1 connected only to topic A')
 
   await swarm.destroy()
 })

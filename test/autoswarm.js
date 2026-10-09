@@ -297,6 +297,25 @@ test('autoswarm: replicator evicts session on indirect storeSession.closed()', a
   await swarm.destroy()
 })
 
+test.solo('autoswarm: rotation refills freed slots', async (t) => {
+  const swarm = await spawnSwarm(t)
+  const peer = await swarm.spawnPeer({ slots: 2, autoStartupDelay: 0, minActiveTime: 0 })
+  const now = Date.now()
+
+  const high = await peer.join(b4a.alloc(32, 3), { priority: 3 })
+  const middle = await peer.join(b4a.alloc(32, 2), { priority: 2 })
+  const low = await peer.join(b4a.alloc(32, 1), { priority: 1 })
+
+  high._autoStart(now)
+  low._autoStart(now)
+  peer.replicator._autoselect(now)
+
+  t.is(peer.replicator.activeSessions.length, 2, 'rotation keeps all slots filled')
+  t.is(middle.isAuto, true, 'middle-ranked inactive session fills the slot')
+
+  await swarm.destroy()
+})
+
 test('autoswarm: can be disabled', async (t) => {
   const swarm = await spawnSwarm(t)
   const peer = await swarm.spawnPeer({ autoStartupDelay: 0 })
