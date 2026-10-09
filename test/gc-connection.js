@@ -85,3 +85,37 @@ test.skip('core-index: connections with no active session are evicted', async (t
 
   await swarm.destroy()
 })
+
+test('connection becomes idle after three minutes without traffic', async (t) => {
+  const IDLE_TIMEOUT = 3 * 60 * 1000 // 3 Minutes
+
+  const swarm = await spawnSwarm(t)
+  const p1 = await swarm.spawnPeer()
+  const p2 = await swarm.spawnPeer()
+  const topic = b4a.alloc(32, 1)
+
+  await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
+  await swarm.propagateWriters()
+  await swarm.refresh()
+  await swarm.flush()
+
+  const [connection] = p1.replicator.connections
+
+  await connection.replicating
+  connection.refresh()
+
+  const now = Date.now()
+
+  t.ok(connection.bytesRead !== 0, 'bytes read')
+  t.ok(connection.bytesRead !== 0, 'bytes written')
+
+  connection.bytesRead = 0
+  connection.bytesWritten = 0
+
+  connection.refresh(now) // samples traffic
+
+  t.is(connection.isIdle(now + IDLE_TIMEOUT - 1), false, 'recent traffic keeps connection active')
+  t.is(connection.isIdle(now + IDLE_TIMEOUT + 1), true, 'stale traffic makes connection idle')
+
+  await swarm.destroy()
+})
