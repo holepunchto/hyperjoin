@@ -33,11 +33,7 @@ const ERR_DESTROYED = 'ReplicatorDestroyed'
 const ERR_SUSPEND = 'SuspendDrop'
 const ERR_MAXPEERS = 'MaxPeersCap'
 
-let __debugCounter = 0
-
 module.exports = class Replicator extends ReadyResource {
-  debugInstanceId = __debugCounter++ // TODO: remove
-
   constructor(rootStore, opts = {}) {
     super()
 
@@ -112,8 +108,8 @@ module.exports = class Replicator extends ReadyResource {
 
     this.destroyed = false
     this.suspended = suspended
+    this._presuspended = false
     this._suspending = Promise.resolve()
-    this._presuspending = null
 
     this.sessions = new Map() // hex(discoveryKey) -> Session
     this.inbound = new Map() // hex(peerId) -> Connection
@@ -195,7 +191,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   get isPresuspended() {
-    return !!this._presuspending
+    return this._presuspended
   }
 
   *_connections() {
@@ -254,8 +250,8 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _beginSuspension({ log = noop } = {}) {
-    if (this._presuspending) await this._presuspending
     this._cancelInflight()
+    await this.flush()
 
     const pending = []
     const suspending = [this.server.suspend({ log }), this.dialer.suspend({ log })]
@@ -278,21 +274,18 @@ module.exports = class Replicator extends ReadyResource {
     await Promise.all(pending)
   }
 
+  // unannounce sessions
   presuspend() {
-    if (this._presuspending) return this._presuspending
+    if (this._presuspended) return
 
-    this._presuspending = Promise.resolve()
-      .then(() => this.refresh())
-      .then(() => this.flush())
-
-    return this._presuspending
+    this._presuspended = true
+    this.refresh().catch(safetyCatch)
   }
 
   async resume({ log = noop } = {}) {
-    if (this._presuspending) {
-      await this._presuspending
-      this._presuspending = null
-      this.dialer.refresh()
+    if (this._presuspended) {
+      this._presuspended = false
+      await this.refresh()
     }
 
     if (!this.suspended) return
@@ -859,31 +852,6 @@ module.exports = class Replicator extends ReadyResource {
   // TODO: redesign
   _cancelInflight() {
     for (const cancel of this._inflightCancel) cancel()
-  }
-
-  info() {
-    const info = {
-      instance: this.debugInstanceId,
-      dialerPeers: this.dialer.peers.size,
-      dialerActiveTopics: Array.from(this.dialer._activeTopics).map(shortHash),
-      sessions: [],
-      stats: this.stats
-    }
-
-    for (const [key, session] of this.sessions) {
-      info.sessions.push({
-        key: shortHash(key),
-        state: session.state,
-        priority: session.priority
-      })
-    }
-
-    return info
-
-    function shortHash(key) {
-      if (typeof key !== 'string') key = toHex(key)
-      return key.slice(0, 6)
-    }
   }
 
   async _close() {
