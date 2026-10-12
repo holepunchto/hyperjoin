@@ -2,6 +2,7 @@ const { test } = require('brittle')
 const Corestore = require('corestore')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
+const HyperDHT = require('hyperdht')
 const Replicator = require('..')
 const {
   joinRemote,
@@ -177,6 +178,37 @@ test('GC preserves stable connections over rookies', async (t) => {
   await p1.destroy()
   await p2.destroy()
   await p3.destroy()
+  await testnet.destroy()
+})
+
+test('does not dial beyond maxPeers', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const topic = b4a.alloc(32, 0x42)
+  const remotes = []
+
+  for (let i = 0; i < 3; i++) {
+    const dht = new HyperDHT({ bootstrap })
+    const keyPair = HyperDHT.keyPair()
+    const server = dht.createServer((conn) => conn.on('error', () => {}))
+    await server.listen(keyPair)
+    await dht.announce(topic, keyPair, server.relayAddresses).finished()
+    remotes.push(dht)
+  }
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minPeers: 0, maxPeers: 2, jitter: 0 })
+
+  const session = p1.replicator.join(p1.store.session(), topic, { pin: true })
+  await session.ready()
+  await session.refresh()
+  await p1.replicator.flush()
+
+  t.is(p1.replicator.stats.connects.client.attempted, 2, 'dials stop at maxPeers')
+  t.is(p1.replicator.connectionCount, 2)
+
+  await p1.destroy()
+  for (const dht of remotes) await dht.destroy()
   await testnet.destroy()
 })
 

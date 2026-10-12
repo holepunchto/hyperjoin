@@ -43,7 +43,7 @@ General
 - `autoswarm`: enables active topic rotation (default: `true`)
 - `suspended`: start suspended
 - `seed`: derive the replicator keypair from a seed
-- `maxPeers`: drop connections above
+- `maxPeers`: max connections, inbound and outbound. No new dials at the cap
 - `minPeers`: minimum connections to keep
 - `maxParallel`: max parallel outbound dials
 - `slots`: auto-rotation slots

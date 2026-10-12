@@ -89,7 +89,8 @@ module.exports = class Replicator extends ReadyResource {
     const handlers = {
       ondial: (peer) => this._connect(peer),
       ondialerror: (err) => this.emit('error', err),
-      isConnected: (key) => this.hasConnection(key)
+      isConnected: (key) => this.hasConnection(key),
+      capacity: () => this._maxPeers - this.connectionCount
     }
 
     this.dialer = new Dialer(handlers, {

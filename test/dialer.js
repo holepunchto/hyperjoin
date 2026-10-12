@@ -193,6 +193,115 @@ test('peer.retryAt increased on failure and is re-dialed', async (t) => {
   t.is(ctx.connected.size, 1, 'one successful')
 })
 
+test('capacity() caps dials, flush() skips peers over budget', async (t) => {
+  let budget = 2
+  const ctx = spawnDialer(t, {
+    suspended: true,
+    capacity: () => budget - ctx.connected.size
+  })
+  const { dialer, dialed } = ctx
+
+  for (let n = 1; n <= 5; n++) {
+    spawnPeer(ctx, n, T0 - 10_000 - n * 100) // newest first, dial order is oldest first
+  }
+
+  dialer.resume()
+  dialer.refresh() // in-flight dials count against the budget
+  await dialer.flush()
+
+  t.is(dialed.length, 2, 'stops at the budget')
+
+  budget = 4
+  const flushed = dialer.flush() // only waits on the 2 peers within budget
+  dialer.refresh()
+  await flushed
+
+  t.alike(
+    dialed.map((p) => p.publicKey[0]),
+    [5, 4, 3, 2],
+    'resumes in order once there is budget'
+  )
+})
+
+test('failed dial frees its budget for the next peer', async (t) => {
+  const ctx = spawnDialer(t, {
+    suspended: true,
+    autoSettle: false,
+    capacity: () => 1 - ctx.connected.size
+  })
+  const { dialer, dialed, fail, pass } = ctx
+
+  fail(asKey(1))
+  pass(asKey(2))
+  spawnPeer(ctx, 1, T0 - 10_000 - 200)
+  spawnPeer(ctx, 2, T0 - 10_000 - 100)
+
+  dialer.resume()
+  await dialer.flush()
+
+  t.is(dialed.length, 2, 'dialed when the failed dial settles')
+
+  await dialer.flush()
+
+  t.alike(
+    dialed.map((p) => p.publicKey[0]),
+    [1, 2]
+  )
+  t.is(ctx.connected.size, 1)
+})
+
+test('capped refresh() still collects expired peers', async (t) => {
+  const ctx = spawnDialer(t, { suspended: true, capacity: () => 0 })
+  const { dialer, dialed } = ctx
+
+  const now = T0 + 20 * 60_000
+  spawnPeer(ctx, 1, now - 10_000) // over budget
+  const expired = spawnPeer(ctx, 2, now - 15 * 60_000 - 1)
+  expired.markAttempt(true, { now: now - 5000 })(false, null, now - 5000) // sorted after 1
+
+  dialer.resume(now)
+
+  t.is(dialed.length, 0)
+  t.absent(dialer.peers.has(toHex(asKey(2))), 'expired peer collected')
+})
+
+test('flush() during an in-flight dial skips peers over budget', async (t) => {
+  let release = null
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  const connected = new Set()
+
+  const dialer = new Dialer(
+    {
+      async ondial(peer, now) {
+        const complete = peer.markAttempt(true, { now })
+        await gate
+        complete()
+        connected.add(toHex(peer.publicKey))
+        peer.markConnected(true)
+      },
+      ondialerror: () => {},
+      capacity: () => 1 - connected.size
+    },
+    { jitter: 0, suspended: true }
+  )
+  t.teardown(() => dialer.destroy())
+
+  dialer.topicEnable(TOPIC)
+  dialer.seen({ publicKey: asKey(1) }, TOPIC, T0 - 10_200)
+  dialer.seen({ publicKey: asKey(2) }, TOPIC, T0 - 10_100)
+
+  dialer.resume()
+  await new Promise(setImmediate) // 1 is dialing
+
+  const flushed = dialer.flush()
+  release()
+  await flushed
+
+  t.is(connected.size, 1)
+})
+
 test('dialer does not dial peers without an active topic', async (t) => {
   const ctx = spawnDialer(t)
   const { dialer, dialed, errors } = ctx
@@ -291,7 +400,7 @@ test('a retry due during a dial is re-scheduled', async (t) => {
 
 function spawnDialer(
   t,
-  { maxParallel = 3, jitter = 0, suspended = false, autoSettle = true } = {}
+  { maxParallel = 3, jitter = 0, suspended = false, autoSettle = true, capacity } = {}
 ) {
   const dialed = []
   const errors = []
@@ -337,7 +446,8 @@ function spawnDialer(
     },
     ondialerror: (err) => errors.push(err),
     isConnected: (k) => connected.has(k),
-    isSelf: (publicKey) => b4a.equals(publicKey, SELF)
+    isSelf: (publicKey) => b4a.equals(publicKey, SELF),
+    capacity
   }
 
   const dialer = new Dialer(handlers, { maxParallel, jitter, suspended })
