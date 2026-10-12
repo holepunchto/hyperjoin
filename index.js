@@ -289,7 +289,7 @@ module.exports = class Replicator extends ReadyResource {
 
   async resume({ log = noop } = {}) {
     if (this._presuspending) {
-      await this._presuspending
+      if (this.suspended) await this._presuspending
       this._presuspending = null
       this.dialer.refresh()
     }
