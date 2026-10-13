@@ -793,7 +793,9 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     // autostart
-    for (let i = 0; i < pool.length && i < slots; i++) {
+    const limit = Math.min(pool.length, slots)
+
+    for (let i = 0; i < limit; i++) {
       pool[i]._autoStart(now)
     }
   }
