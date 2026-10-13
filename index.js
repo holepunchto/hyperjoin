@@ -792,17 +792,9 @@ module.exports = class Replicator extends ReadyResource {
       pool[i]._autoStop(now)
     }
 
-    let active = 0
-    for (const session of pool) if (session.active) active++
-    if (active >= slots) return // no-op
-
     // autostart
-    for (const session of pool) {
-      if (active >= slots) break
-      if (session.active) continue
-
-      session._autoStart(now)
-      active++
+    for (let i = 0; i < pool.length && i < slots; i++) {
+      pool[i]._autoStart(now)
     }
   }
 
