@@ -151,9 +151,9 @@ Wait until current discovery and dial work settles.
 Enable or disable autoswarm topic rotation.
 Disabling un-announces all autostarted topics
 
-### `await rep.presuspend()`
+### `rep.presuspend()`
 
-Enter pre-suspend mode: unannounce and prevent new dials
+Begins unannouncing all topics.
 
 ### `await rep.suspend()` / `await rep.resume()`
 

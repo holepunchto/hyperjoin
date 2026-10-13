@@ -1,10 +1,10 @@
 const ReadyResource = require('ready-resource')
 const DHT = require('hyperdht')
 const safetyCatch = require('safety-catch')
-const Hypercore = require('hypercore')
 const Dialer = require('./lib/dialer')
+const Connection = require('./lib/connection')
 const Session = require('./lib/session')
-const { getStreamError } = require('streamx')
+
 const b4a = require('b4a')
 const { toHex } = b4a
 
@@ -33,11 +33,7 @@ const ERR_DESTROYED = 'ReplicatorDestroyed'
 const ERR_SUSPEND = 'SuspendDrop'
 const ERR_MAXPEERS = 'MaxPeersCap'
 
-let __debugCounter = 0
-
 module.exports = class Replicator extends ReadyResource {
-  #debugInstanceId = __debugCounter++
-
   constructor(rootStore, opts = {}) {
     super()
 
@@ -112,12 +108,13 @@ module.exports = class Replicator extends ReadyResource {
 
     this.destroyed = false
     this.suspended = suspended
+    this._presuspended = false
     this._suspending = Promise.resolve()
-    this._presuspending = null
 
     this.sessions = new Map() // hex(discoveryKey) -> Session
     this.inbound = new Map() // hex(peerId) -> Connection
     this.outbound = new Map() // hex(peerId) -> Connection
+
     this._inflight = new Set() // hex(peerId), dedup in-flight dials
     this._inflightCancel = new Set() // cancelCallbacks
     this._minPeers = minPeers
@@ -194,7 +191,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   get isPresuspended() {
-    return !!this._presuspending
+    return this._presuspended
   }
 
   *_connections() {
@@ -253,8 +250,8 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _beginSuspension({ log = noop } = {}) {
-    if (this._presuspending) await this._presuspending
     this._cancelInflight()
+    await this.flush()
 
     const pending = []
     const suspending = [this.server.suspend({ log }), this.dialer.suspend({ log })]
@@ -277,21 +274,18 @@ module.exports = class Replicator extends ReadyResource {
     await Promise.all(pending)
   }
 
+  // unannounce sessions
   presuspend() {
-    if (this._presuspending) return this._presuspending
+    if (this._presuspended) return
 
-    this._presuspending = Promise.resolve()
-      .then(() => this.refresh())
-      .then(() => this.flush())
-
-    return this._presuspending
+    this._presuspended = true
+    this.refresh().catch(safetyCatch)
   }
 
   async resume({ log = noop } = {}) {
-    if (this._presuspending) {
-      await this._presuspending
-      this._presuspending = null
-      this.dialer.refresh()
+    if (this._presuspended) {
+      this._presuspended = false
+      await this.refresh()
     }
 
     if (!this.suspended) return
@@ -407,24 +401,15 @@ module.exports = class Replicator extends ReadyResource {
     const connection = new Connection(this, stream, peerId, initiator)
 
     map.set(hex, connection)
-    this.root.replicate(stream)
+
+    this.root.replicate(connection.stream)
+    connection._watchChannels()
 
     if (initiator) this.stats.connects.client.opened++
     else this.stats.connects.server.opened++
 
-    this.emit('connected', connection) // testsuite only
+    this.emit('connected', connection)
     this.emit('update')
-
-    // TODO: need protomux channel-opened signal for robust 'replicating'-event
-    const pollReplicationStart = (n) => {
-      if (n > 7 || connection._protomuxSessions() > 0) {
-        this.emit('replicating', connection)
-        return
-      }
-
-      setTimeout(() => pollReplicationStart(++n), n * 10)
-    }
-    pollReplicationStart(0)
 
     return connection
   }
@@ -734,7 +719,6 @@ module.exports = class Replicator extends ReadyResource {
     for (const p of banned) this._handleBan(p)
   }
 
-  // @deprecated, legacy compat (dht + connection queue, done)
   async flush() {
     const pending = []
     for (const sess of this.sessions.values()) {
@@ -775,9 +759,8 @@ module.exports = class Replicator extends ReadyResource {
 
     slots = Math.max(slots, 0) // `slots` reduced during runtime.
 
-    // weight prio by lexical order
     const order = new Map()
-    const priorities = pool.map((i) => i.priority).sort()
+    const priorities = pool.map((i) => i.priority).sort((a, b) => a - b)
     for (let i = 0; i < priorities.length; i++) {
       order.set(priorities[i], i)
     }
@@ -809,12 +792,9 @@ module.exports = class Replicator extends ReadyResource {
       pool[i]._autoStop(now)
     }
 
-    let active = 0
-    for (const session of pool) if (session.active) active++
-    if (active >= slots) return // no-op
-
     // autostart
-    const limit = Math.min(slots - active, pool.length)
+    const limit = Math.min(pool.length, slots)
+
     for (let i = 0; i < limit; i++) {
       pool[i]._autoStart(now)
     }
@@ -863,33 +843,9 @@ module.exports = class Replicator extends ReadyResource {
     this._refreshInterval.unref()
   }
 
+  // TODO: redesign
   _cancelInflight() {
     for (const cancel of this._inflightCancel) cancel()
-  }
-
-  info() {
-    const info = {
-      instance: this.#debugInstanceId,
-      dialerPeers: this.dialer.peers.size,
-      dialerActiveTopics: Array.from(this.dialer._activeTopics).map(shortHash),
-      sessions: [],
-      stats: this.stats
-    }
-
-    for (const [key, session] of this.sessions) {
-      info.sessions.push({
-        key: shortHash(key),
-        state: session.state,
-        priority: session.priority
-      })
-    }
-
-    return info
-
-    function shortHash(key) {
-      if (typeof key !== 'string') key = toHex(key)
-      return key.slice(0, 6)
-    }
   }
 
   async _close() {
@@ -926,107 +882,6 @@ module.exports = class Replicator extends ReadyResource {
 
   async destroy() {
     await this.close()
-  }
-}
-
-class Connection {
-  constructor(replicator, stream, peerId, initiator) {
-    this.replicator = replicator
-    this.initiator = initiator
-    this.stream = stream
-    this.peerId = peerId
-    this._onclose = this._onclose.bind(this)
-    stream.on('close', this._onclose)
-
-    this._evicted = false
-    this.bytesRead = -1
-    this.bytesWritten = -1
-    this.lastActivity = -1
-    this.refresh()
-    this._survived = 0 // incremented on gc
-
-    this.info.markConnected(this.initiator)
-  }
-
-  get protomux() {
-    return Hypercore.getProtocolMuxer(this.stream)
-  }
-
-  get info() {
-    return this.replicator.dialer.lookup(this.peerId)
-  }
-
-  get connectedAt() {
-    return this.info.connectedAt
-  }
-
-  isIdle(now = Date.now()) {
-    // TODO: is there a signal for protomuxSession opened?
-    if (now - this.connectedAt < 5000) return false
-
-    if (this._protomuxSessions() === 0) return true
-
-    return false
-  }
-
-  _protomuxSessions() {
-    const mux = this.protomux
-
-    let opened = 0
-
-    for (const ch of mux) {
-      if (ch.protocol !== 'hypercore/alpha') continue
-      const dkeystr = toHex(ch.id)
-
-      for (const session of this.replicator.sessions.values()) {
-        if (!session.active) continue
-
-        if (session.hasCore(dkeystr)) {
-          opened++
-          break
-        }
-      }
-    }
-
-    return opened
-  }
-
-  _onclose() {
-    const rep = this.replicator
-
-    const err = getStreamError(this.stream)
-
-    const key = toHex(this.peerId)
-    if (this.initiator) {
-      rep.outbound.delete(key)
-      rep.stats.connects.client.closed++
-    } else {
-      rep.inbound.delete(key)
-      rep.stats.connects.server.closed++
-    }
-
-    this.info.markDisconnected(this.initiator, err)
-    rep.dialer.refresh() // reschedule fast-reconnects
-
-    rep.emit('disconnected', this)
-    rep.emit('update')
-  }
-
-  refresh(now = Date.now()) {
-    if (
-      this.bytesRead === this.stream.rawBytesRead &&
-      this.bytesWritten === this.stream.rawBytesWritten
-    ) {
-      return
-    }
-
-    this.bytesRead = this.stream.rawBytesRead
-    this.bytesWritten = this.stream.rawBytesWritten
-    this.lastActivity = now
-  }
-
-  destroy(err) {
-    this.stream.destroy(err)
   }
 }
 

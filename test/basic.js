@@ -3,15 +3,7 @@ const Corestore = require('corestore')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('..')
-const {
-  joinRemote,
-  onceEvent,
-  seedA,
-  seedB,
-  seedC,
-  spawnPeer,
-  timeout // TODO: banned outside of `backports/`
-} = require('./helpers/backports')
+const { joinRemote, onceEvent, seedA, seedB, seedC, spawnPeer } = require('./helpers/backports')
 
 const { toHex } = b4a
 
@@ -123,7 +115,7 @@ test('parent corestore doesnt activate core on namespace for session', async (t)
   const dkey = toHex(p1.cores[0].discoveryKey)
   t.ok(session.hasCore(dkey))
 
-  const otherNamespace = p1.store.namespace('bepp')
+  const otherNamespace = p1.store.namespace('beep')
   const core = otherNamespace.get({ name: 'other' })
   await core.ready()
   t.absent(session.hasCore(toHex(core.discoveryKey)))
@@ -146,33 +138,48 @@ test('GC preserves stable connections over rookies', async (t) => {
     minPeers: 0,
     maxPeers: 1
   })
+  const p2Connected = onceEvent(p1.replicator, 'connected')
+
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
   const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
-
-  const remote2 = await joinRemote(p2, p1)
-  await remote2[0].get(0)
-
   const p2Key = toHex(p2.replicator.peerId)
   const p3Key = toHex(p3.replicator.peerId)
 
-  await timeout(30)
+  await joinRemote(p2, p1)
+  await p2Connected
 
-  const p3Connected = onceEvent(p1.replicator, 'replicating')
-  const remote3 = await joinRemote(p3, p1)
-  await remote3[0].get(0)
+  let active = Array.from(p1.replicator.connections)
+  t.is(active.length, 1)
+
+  const a = active[0]
+  t.is(toHex(a.peerId), p2Key, 'p2 connected')
+
+  t.is(a._survived, 0, 'not yet sweeped')
+
+  await p1.replicator._gc()
+  t.is(a._survived, 1, 'passed gc')
+
+  const p3Connected = onceEvent(p1.replicator, 'connected').then(
+    (connection) => connection.replicating
+  )
+
+  await joinRemote(p3, p1)
   await p3Connected
 
-  t.is(p1.replicator.connectionCount, 2, 'p1 is over cap before gc')
-  t.ok(p1.replicator.getConnection(p2Key)._protomuxSessions() > 0, 'stable peer is active')
-  t.ok(p1.replicator.getConnection(p3Key)._protomuxSessions() > 0, 'rookie peer is active')
+  active = Array.from(p1.replicator.connections)
+  t.is(active.length, 2, 'over capacity')
+  const b = active[1]
+
+  t.is(toHex(a.peerId), p2Key, 'connection a = p2')
+  t.is(toHex(b.peerId), p3Key, 'connection b = p3')
+  t.ok(a._survived > b._survived, 'b will be dropped')
 
   await p1.replicator._gc()
 
-  t.alike(
-    Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)),
-    [p2Key],
-    'gc keeps the stable active connection'
-  )
+  active = Array.from(p1.replicator.connections)
+  t.is(active.length, 1, 'GC dropped overflow')
+  t.is(toHex(a.peerId), p2Key, 'p2 remains connected')
+  t.is(a._survived, 2, 'passed gc twice')
 
   await p1.destroy()
   await p2.destroy()
