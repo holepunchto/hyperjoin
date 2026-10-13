@@ -10,6 +10,8 @@ const seedA = Buffer.alloc(32, 0xa)
 const seedB = Buffer.alloc(32, 0xb)
 const seedC = Buffer.alloc(32, 0xc)
 
+// TODO: move all to single export at bottom
+
 exports.seedA = seedA
 exports.seedB = seedB
 exports.seedC = seedC
