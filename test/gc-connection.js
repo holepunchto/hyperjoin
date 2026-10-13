@@ -104,7 +104,7 @@ test('connection becomes idle after three minutes without traffic', async (t) =>
   const now = Date.now()
 
   t.ok(connection.bytesRead !== 0, 'bytes read')
-  t.ok(connection.bytesRead !== 0, 'bytes written')
+  t.ok(connection.bytesWritten !== 0, 'bytes written')
 
   connection.bytesRead = 0
   connection.bytesWritten = 0
