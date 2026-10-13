@@ -96,7 +96,8 @@ module.exports = class Replicator extends ReadyResource {
       backoffs: opts.backoffs,
       jitter: opts.jitter,
       suspended,
-      maxParallel
+      maxParallel,
+      want: () => this._maxPeers - this.connectionCount // throttle
     })
 
     this.relayThrough = relayThrough && toRelaySelector(relayThrough)

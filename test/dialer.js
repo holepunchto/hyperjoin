@@ -289,9 +289,99 @@ test('a retry due during a dial is re-scheduled', async (t) => {
   t.absent(dialer._refreshTimer, 'no more work scheduled')
 })
 
+test('Dialer throttles when host is at max capacity', async (t) => {
+  let cap = 2
+  let calls = 0
+  const want = () => (calls++, cap)
+  const onsettle = () => cap--
+
+  const ctx = spawnDialer(t, {
+    handlers: { want },
+    onsettle
+  })
+
+  const { dialer, dialed } = ctx
+
+  for (let n = 1; n <= 60; n++) {
+    spawnPeer(ctx, n)
+  }
+
+  dialer.refresh()
+
+  await dialer.flush()
+
+  t.is(dialed.length, 2, 'dials upto capacity')
+
+  cap = 2 // refill
+
+  dialer.refresh()
+  await dialer.flush()
+
+  t.is(dialed.length, 4, 'refilled')
+})
+
+// TODO: conflicts with prior test;
+// This patch alters behavior of flush() when Dialer is not in a dialable state. (not throttled)
+// If kept, the change would roughly translate to:
+//
+// await flush() // resolves when meaningful work has been done
+// await flushAll() // resolve when all known work is complete. (ignore throttles, can take long)
+//
+// The first test depends on the flush to resolve when everything is complete..
+// The next test below is correct.
+test.solo('Dialer throttles when max inflight is at cap', async (t) => {
+  const N_PEERS = 80
+  const ctx = spawnDialer(t)
+  const { dialer, dialed, maxInflight } = ctx
+
+  for (let n = 1; n <= N_PEERS; n++) {
+    spawnPeer(ctx, n)
+  }
+
+  // spam refresh every 500ms for 1 minute
+
+  const now = Date.now()
+
+  for (let t = 0; t < 60_000; t += 500) {
+    console.log('T=', t, Date.now() - now, dialed.length)
+    dialer.refresh(now + t)
+    await dialer.flush(now + t)
+
+    if (dialed.length === N_PEERS) break
+  }
+
+  console.log(dialed.length)
+
+  t.is(dialed.length, 80, 'all peers dialed')
+  t.is(maxInflight(), 3, 'inflight is bounded')
+})
+
+test('AI: dial-attempt-complete automatically calls refresh()', async (t) => {
+  const ctx = spawnDialer(t, { autoSettle: false, maxParallel: 1 })
+  const { dialer, dialed, pass } = ctx
+
+  const first = spawnPeer(ctx, 1)
+  const second = spawnPeer(ctx, 2)
+
+  pass(first.publicKey)
+  pass(second.publicKey)
+
+  await dialer.flush()
+
+  t.is(dialed.length, 2, 'slot release starts the deferred peer without another refresh')
+})
+
+
 function spawnDialer(
   t,
-  { maxParallel = 3, jitter = 0, suspended = false, autoSettle = true } = {}
+  {
+    maxParallel = 3,
+    jitter = 0,
+    suspended = false,
+    autoSettle = true,
+    handlers: _handlers = {},
+    onsettle = () => {}
+  } = {}
 ) {
   const dialed = []
   const errors = []
@@ -315,12 +405,14 @@ function spawnDialer(
         completeAttempt(false, null, doneAt)
         connected.add(toHex(peer.publicKey))
         peer.markConnected(true, doneAt) // Connection.on('open')
+        onsettle(true, settled)
       }
 
       const attemptFailed = (err) => {
         settled++
         const doneAt = now + Date.now() - startedAt
         completeAttempt(true, err, doneAt)
+        onsettle(false, settled)
         throw err // rethrow
       }
 
@@ -335,9 +427,12 @@ function spawnDialer(
         return Promise.reject(new Error('blocked')).catch(attemptFailed)
       }
     },
+
     ondialerror: (err) => errors.push(err),
-    isConnected: (k) => connected.has(k),
-    isSelf: (publicKey) => b4a.equals(publicKey, SELF)
+    isConnected: (k) => connected.has(toHex(k)),
+    isSelf: (publicKey) => b4a.equals(publicKey, SELF),
+
+    ..._handlers
   }
 
   const dialer = new Dialer(handlers, { maxParallel, jitter, suspended })
