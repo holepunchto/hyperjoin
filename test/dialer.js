@@ -320,16 +320,7 @@ test('Dialer throttles when host is at max capacity', async (t) => {
   t.is(dialed.length, 4, 'refilled')
 })
 
-// TODO: conflicts with prior test;
-// This patch alters behavior of flush() when Dialer is not in a dialable state. (not throttled)
-// If kept, the change would roughly translate to:
-//
-// await flush() // resolves when meaningful work has been done
-// await flushAll() // resolve when all known work is complete. (ignore throttles, can take long)
-//
-// The first test depends on the flush to resolve when everything is complete..
-// The next test below is correct.
-test.solo('Dialer throttles when max inflight is at cap', async (t) => {
+test('Dialer throttles when max inflight is at cap', async (t) => {
   const N_PEERS = 80
   const ctx = spawnDialer(t)
   const { dialer, dialed, maxInflight } = ctx
@@ -356,7 +347,7 @@ test.solo('Dialer throttles when max inflight is at cap', async (t) => {
   t.is(maxInflight(), 3, 'inflight is bounded')
 })
 
-test('AI: dial-attempt-complete automatically calls refresh()', async (t) => {
+test('Completed dial automatically calls refresh()', async (t) => {
   const ctx = spawnDialer(t, { autoSettle: false, maxParallel: 1 })
   const { dialer, dialed, pass } = ctx
 
@@ -370,7 +361,6 @@ test('AI: dial-attempt-complete automatically calls refresh()', async (t) => {
 
   t.is(dialed.length, 2, 'slot release starts the deferred peer without another refresh')
 })
-
 
 function spawnDialer(
   t,
