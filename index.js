@@ -160,10 +160,17 @@ module.exports = class Replicator extends ReadyResource {
       }
     }
 
-    this.dht.on('network-change', this._handleNetworkChange.bind(this))
-    this.dht.on('network-update', this._handleNetworkUpdate.bind(this))
+
+    this._handleNetworkChange = this._handleNetworkChange.bind(this)
+    this.dht.on('network-change', this._handleNetworkChange)
+
+    this._handleNetworkUpdate = this._handleNetworkUpdate.bind(this)
+    this.dht.on('network-update', this._handleNetworkUpdate)
+
+    this._onrootclose = this._onrootclose.bind(this)
+    this.root.once('close', this._onrootclose)
+
     this.on('update', this._handleUpdate.bind(this))
-    this.root.once('close', this._onrootclose.bind(this))
 
     this._gcDisabled = gcDisabled
     this._manual = !!manual
@@ -201,6 +208,8 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _open() {
+    // TODO: this await is the root cause
+    // for `refresh()` being async.
     this.keyPair ||= await this.root.createKeyPair('replicator')
     await this.dht.ready()
 
@@ -854,6 +863,9 @@ module.exports = class Replicator extends ReadyResource {
     this.destroyed = true
 
     this.root.removeListener('close', this._onrootclose)
+    this.dht.removeListener('network-change', this._handleNetworkChange)
+    this.dht.removeListener('network-update', this._handleNetworkUpdate)
+
     this._stopAutoRefresh()
 
     const tasks = []
