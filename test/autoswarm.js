@@ -191,6 +191,42 @@ test('autoswarm: can enable discovery swarming', async (t) => {
   await swarm.destroy()
 })
 
+test('autoswarm: discover() -> pin() upgrades the session, keeping discovery intact', async (t) => {
+  const swarm = await spawnSwarm(t)
+
+  const p1 = await swarm.spawnPeer({ discoveryStartupDelay: 0 })
+  const p2 = await swarm.spawnPeer()
+
+  const topic = b4a.alloc(32, 0x1)
+  const session1 = await p1.join(topic)
+  await p2.join(topic, { pin: true })
+  await swarm.propagateWriters()
+
+  t.is(session1.isDiscovering, false)
+  t.is(session1.isPinned, false)
+
+  session1.discover()
+  t.is(session1.isDiscovering, true, 'discovering after discover()')
+
+  const discovery = session1.discovery
+
+  session1.pin()
+  t.is(session1.isDiscovering, false, 'no longer discovering once pinned')
+  t.is(session1.isPinned, true, 'pin() upgrades the session')
+  t.is(session1.active, true)
+  t.is(session1.discovery, discovery, 'discovery instance is retained across the upgrade, not recreated')
+
+  await swarm.refresh()
+  await swarm.flush()
+
+  t.is(session1.isPinned, true, 'still pinned after refresh')
+  t.is(session1.announce, true, 'pinned session announces itself')
+  t.is(session1.isAnnounced, true, 'discovery actually announced on the dht')
+  t.ok(p1.replicator.connectionCount > 0, 'connects to the other pinned peer')
+
+  await swarm.destroy()
+})
+
 test('autoswarm: replicator activates sessions', async (t) => {
   const swarm = await spawnSwarm(t)
   const gcIdleTime = 100
