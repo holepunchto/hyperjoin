@@ -415,6 +415,28 @@ test('capped refresh() still collects expired peers', async (t) => {
   t.absent(dialer.peers.has(toHex(asKey(2))), 'expired peer collected')
 })
 
+test('peer switched to relaying is redialed on the next refresh', async (t) => {
+  const dialed = []
+  const dialer = new Dialer(
+    {
+      ondial: async (peer, now) => {
+        dialed.push(peer.forceRelaying)
+        peer.markAttempt(true, { canRelay: true, now })(true, 'HOLEPUNCH_ABORTED', now)
+      },
+      ondialerror: () => {}
+    },
+    { jitter: 0 }
+  )
+
+  dialer.topicEnable(TOPIC)
+  t.teardown(() => dialer.destroy())
+
+  dialer.seen({ publicKey: asKey(1) }, TOPIC, T0)
+  await dialer.flush(T0)
+
+  t.alike(dialed, [false, true], 'redialed through a relay')
+})
+
 function spawnDialer(
   t,
   {
