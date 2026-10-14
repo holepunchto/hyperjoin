@@ -365,3 +365,14 @@ test('Session close removes the store listener', async (t) => {
   await closed
   t.ok(session.closed, 'closing the store still closes the live session')
 })
+
+test('discovery: forwards the peer limit', async (t) => {
+  const swarm = await spawnSwarm(t)
+  t.teardown(() => swarm.close())
+  const peer = await swarm.spawnPeer()
+  const limited = await peer.join(b4a.alloc(32, 42), { discover: true, limit: 1 })
+  const unlimited = await peer.join(b4a.alloc(32, 43), { discover: true })
+
+  t.is(limited.discovery.limit, 1)
+  t.is(unlimited.discovery.limit, Infinity)
+})
