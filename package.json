@@ -25,7 +25,7 @@
   ],
   "devDependencies": {
     "brittle": "^3.19.1",
-    "corestore": "^7.13.0",
+    "corestore": "^7.14.0",
     "hyperdht": "^6.34.1",
     "lunte": "^1.8.6",
     "prettier": "^3.9.10",
@@ -49,7 +49,7 @@
   "dependencies": {
     "b4a": "^1.9.0",
     "bare-events": "^2.9.2",
-    "hypercore": "^11.38.0",
+    "hypercore": "^11.39.0",
     "ready-resource": "^1.2.0",
     "replicator-discovery": "^1.2.4",
     "safety-catch": "^1.0.3"
