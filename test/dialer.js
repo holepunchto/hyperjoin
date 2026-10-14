@@ -343,8 +343,6 @@ test('Dialer throttles when max inflight is at cap', async (t) => {
     if (dialed.length === N_PEERS) break
   }
 
-  console.log(dialed.length)
-
   t.is(dialed.length, 80, 'all peers dialed')
   t.is(maxInflight(), 3, 'inflight is bounded')
 })
@@ -362,6 +360,59 @@ test('Completed dial automatically calls refresh()', async (t) => {
   await dialer.flush()
 
   t.is(dialed.length, 2, 'slot release starts the deferred peer without another refresh')
+})
+
+test('flush() resolves when free budget is below the due peers', async (t) => {
+  const ctx = spawnDialer(t, {
+    suspended: true,
+    handlers: { want: () => 4 - ctx.connected.size }
+  })
+  const { dialer, dialed } = ctx
+
+  for (let n = 1; n <= 10; n++) spawnPeer(ctx, n)
+
+  dialer.resume()
+  await dialer.flush()
+
+  t.is(dialed.length, 4, 'dials up to the budget')
+})
+
+test('failed dial frees its budget for the next peer', async (t) => {
+  const ctx = spawnDialer(t, {
+    suspended: true,
+    autoSettle: false,
+    handlers: { want: () => 1 - ctx.connected.size }
+  })
+  const { dialer, dialed, fail, pass } = ctx
+
+  fail(asKey(1))
+  pass(asKey(2))
+  spawnPeer(ctx, 1, T0 - 10_200) // dialed first, fails
+  spawnPeer(ctx, 2, T0 - 10_100)
+
+  dialer.resume()
+  await dialer.flush()
+
+  t.is(dialed.length, 2, 'dialed when the failed dial settles')
+
+  await dialer.flush()
+
+  t.is(ctx.connected.size, 1)
+})
+
+test('capped refresh() still collects expired peers', async (t) => {
+  const ctx = spawnDialer(t, { suspended: true, handlers: { want: () => 0 } })
+  const { dialer, dialed } = ctx
+
+  const now = T0 + 20 * 60_000
+  spawnPeer(ctx, 1, now - 10_000) // due, over budget
+  const expired = spawnPeer(ctx, 2, now - 15 * 60_000 - 1)
+  expired.markAttempt(true, { now: now - 5000 })(false, null, now - 5000) // sorted after 1
+
+  dialer.resume(now)
+
+  t.is(dialed.length, 0)
+  t.absent(dialer.peers.has(toHex(asKey(2))), 'expired peer collected')
 })
 
 function spawnDialer(
