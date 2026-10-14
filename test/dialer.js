@@ -336,10 +336,9 @@ test('Dialer throttles when max inflight is at cap', async (t) => {
 
   const now = Date.now()
 
-  for (let t = 0; t < 60_000; t += 500) {
-    console.log('T=', t, Date.now() - now, dialed.length)
-    dialer.refresh(now + t)
-    await dialer.flush(now + t)
+  for (let i = 0; i < 60_000; i += 500) {
+    dialer.refresh(now + i)
+    await dialer.flush(now + i)
 
     if (dialed.length === N_PEERS) break
   }
