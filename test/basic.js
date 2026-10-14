@@ -290,3 +290,13 @@ test('regression: presuspend() during async firewall leaked _inflight', async (t
   await p2.destroy()
   await testnet.destroy()
 })
+
+test('Replicator enables dialer throttle', async (t) => {
+  const store = new Corestore(await t.tmp())
+  const replicator = new Replicator(store, { bootstrap: [], maxPeers: 2 })
+
+  t.is(replicator.dialer._want(), 2)
+
+  await replicator.close()
+  await store.close()
+})

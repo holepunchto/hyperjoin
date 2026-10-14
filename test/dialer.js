@@ -289,9 +289,142 @@ test('a retry due during a dial is re-scheduled', async (t) => {
   t.absent(dialer._refreshTimer, 'no more work scheduled')
 })
 
+test('Dialer throttles when host is at max capacity', async (t) => {
+  let cap = 2
+  let calls = 0
+  const want = () => {
+    calls++
+    return cap
+  }
+  const onsettle = () => cap--
+
+  const ctx = spawnDialer(t, {
+    handlers: { want },
+    onsettle
+  })
+
+  const { dialer, dialed } = ctx
+
+  for (let n = 1; n <= 60; n++) {
+    spawnPeer(ctx, n)
+  }
+
+  dialer.refresh()
+
+  await dialer.flush()
+
+  t.is(dialed.length, 2, 'dials upto capacity')
+
+  cap = 2 // refill
+
+  dialer.refresh()
+  await dialer.flush()
+
+  t.is(dialed.length, 4, 'refilled')
+})
+
+test('Dialer throttles when max inflight is at cap', async (t) => {
+  const N_PEERS = 80
+  const ctx = spawnDialer(t)
+  const { dialer, dialed, maxInflight } = ctx
+
+  for (let n = 1; n <= N_PEERS; n++) {
+    spawnPeer(ctx, n)
+  }
+
+  // spam refresh every 500ms for 1 minute
+
+  const now = Date.now()
+
+  for (let i = 0; i < 60_000; i += 500) {
+    dialer.refresh(now + i)
+    await dialer.flush(now + i)
+
+    if (dialed.length === N_PEERS) break
+  }
+
+  t.is(dialed.length, 80, 'all peers dialed')
+  t.is(maxInflight(), 3, 'inflight is bounded')
+})
+
+test('Completed dial automatically calls refresh()', async (t) => {
+  const ctx = spawnDialer(t, { autoSettle: false, maxParallel: 1 })
+  const { dialer, dialed, pass } = ctx
+
+  const first = spawnPeer(ctx, 1)
+  const second = spawnPeer(ctx, 2)
+
+  pass(first.publicKey)
+  pass(second.publicKey)
+
+  await dialer.flush()
+
+  t.is(dialed.length, 2, 'slot release starts the deferred peer without another refresh')
+})
+
+test('flush() resolves when free budget is below the due peers', async (t) => {
+  const ctx = spawnDialer(t, {
+    suspended: true,
+    handlers: { want: () => 4 - ctx.connected.size }
+  })
+  const { dialer, dialed } = ctx
+
+  for (let n = 1; n <= 10; n++) spawnPeer(ctx, n)
+
+  dialer.resume()
+  await dialer.flush()
+
+  t.is(dialed.length, 4, 'dials up to the budget')
+})
+
+test('failed dial frees its budget for the next peer', async (t) => {
+  const ctx = spawnDialer(t, {
+    suspended: true,
+    autoSettle: false,
+    handlers: { want: () => 1 - ctx.connected.size }
+  })
+  const { dialer, dialed, fail, pass } = ctx
+
+  fail(asKey(1))
+  pass(asKey(2))
+  spawnPeer(ctx, 1, T0 - 10_200) // dialed first, fails
+  spawnPeer(ctx, 2, T0 - 10_100)
+
+  dialer.resume()
+  await dialer.flush()
+
+  t.is(dialed.length, 2, 'dialed when the failed dial settles')
+
+  await dialer.flush()
+
+  t.is(ctx.connected.size, 1)
+})
+
+test('capped refresh() still collects expired peers', async (t) => {
+  const ctx = spawnDialer(t, { suspended: true, handlers: { want: () => 0 } })
+  const { dialer, dialed } = ctx
+
+  const now = T0 + 20 * 60_000
+  spawnPeer(ctx, 1, now - 10_000) // due, over budget
+  const expired = spawnPeer(ctx, 2, now - 15 * 60_000 - 1)
+  expired.markAttempt(true, { now: now - 5000 })(false, null, now - 5000) // sorted after 1
+
+  dialer.resume(now)
+
+  t.is(dialed.length, 0)
+  t.absent(dialer.peers.has(toHex(asKey(2))), 'expired peer collected')
+})
+
 function spawnDialer(
   t,
-  { maxParallel = 3, jitter = 0, suspended = false, autoSettle = true } = {}
+  {
+    maxParallel = 3,
+    jitter = 0,
+    suspended = false,
+    autoSettle = true,
+    handlers: _handlers = {},
+    onsettle = () => {}
+  } = {}
 ) {
   const dialed = []
   const errors = []
@@ -315,12 +448,14 @@ function spawnDialer(
         completeAttempt(false, null, doneAt)
         connected.add(toHex(peer.publicKey))
         peer.markConnected(true, doneAt) // Connection.on('open')
+        onsettle(true, settled)
       }
 
       const attemptFailed = (err) => {
         settled++
         const doneAt = now + Date.now() - startedAt
         completeAttempt(true, err, doneAt)
+        onsettle(false, settled)
         throw err // rethrow
       }
 
@@ -335,9 +470,12 @@ function spawnDialer(
         return Promise.reject(new Error('blocked')).catch(attemptFailed)
       }
     },
+
     ondialerror: (err) => errors.push(err),
-    isConnected: (k) => connected.has(k),
-    isSelf: (publicKey) => b4a.equals(publicKey, SELF)
+    isConnected: (k) => connected.has(toHex(k)),
+    isSelf: (publicKey) => b4a.equals(publicKey, SELF),
+
+    ..._handlers
   }
 
   const dialer = new Dialer(handlers, { maxParallel, jitter, suspended })
