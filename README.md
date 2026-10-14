@@ -135,6 +135,7 @@ Join topic, returns `ReplicatorSession`.
 - `priority`: autoswarm priority `number`
 - `pin`: same as `session.pin()`
 - `discover`: same as `session.discover()`
+- `limit`: maximum peers emitted per discovery query (default: `Infinity`)
 
 ### `await rep.refresh()`
 
