@@ -309,7 +309,11 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._manual) this._startAutoRefresh()
   }
 
-  join(store, topic, { priority = 0, pin = false, discover = false, deferSwarming } = {}) {
+  join(
+    store,
+    topic,
+    { priority = 0, pin = false, discover = false, autoswarm = true, deferSwarming } = {}
+  ) {
     const dk = toHex(topic)
     if (this.sessions.has(dk)) throw new Error('session exists')
 
@@ -317,6 +321,7 @@ module.exports = class Replicator extends ReadyResource {
       priority,
       pin,
       discover,
+      autoswarm,
       deferSwarming
     })
     this.sessions.set(dk, session)
@@ -742,6 +747,10 @@ module.exports = class Replicator extends ReadyResource {
       if (session.isDiscovering) continue
       if (session.isPinned) continue
       if (session.closing || session.closed) continue
+      if (!session.autoswarm) {
+        session._autoStop(now)
+        continue
+      }
 
       // don't deactivate pending nor newly-started topics
       if (session.isAuto) {
