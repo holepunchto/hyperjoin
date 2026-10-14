@@ -160,7 +160,6 @@ module.exports = class Replicator extends ReadyResource {
       }
     }
 
-
     this._handleNetworkChange = this._handleNetworkChange.bind(this)
     this.dht.on('network-change', this._handleNetworkChange)
 
