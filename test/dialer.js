@@ -415,7 +415,7 @@ test('capped refresh() still collects expired peers', async (t) => {
   t.absent(dialer.peers.has(toHex(asKey(2))), 'expired peer collected')
 })
 
-test('peer switched to relaying is redialed on the next refresh', async (t) => {
+test('peer switched to relaying is automatically redialed', async (t) => {
   const dialed = []
   const dialer = new Dialer(
     {
