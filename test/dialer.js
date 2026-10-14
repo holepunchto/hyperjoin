@@ -292,7 +292,7 @@ test('a retry due during a dial is re-scheduled', async (t) => {
 test('Dialer throttles when host is at max capacity', async (t) => {
   let cap = 2
   let calls = 0
-  const want = () => (calls++, cap)
+  const want = () => { calls++; return cap }
   const onsettle = () => cap--
 
   const ctx = spawnDialer(t, {
