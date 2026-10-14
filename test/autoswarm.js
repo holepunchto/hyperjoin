@@ -214,7 +214,11 @@ test('autoswarm: discover() -> pin() upgrades the session, keeping discovery int
   t.is(session1.isDiscovering, false, 'no longer discovering once pinned')
   t.is(session1.isPinned, true, 'pin() upgrades the session')
   t.is(session1.active, true)
-  t.is(session1.discovery, discovery, 'discovery instance is retained across the upgrade, not recreated')
+  t.is(
+    session1.discovery,
+    discovery,
+    'discovery instance is retained across the upgrade, not recreated'
+  )
 
   await swarm.refresh()
   await swarm.flush()
