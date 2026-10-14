@@ -85,15 +85,15 @@ module.exports = class Replicator extends ReadyResource {
     const handlers = {
       ondial: (peer) => this._connect(peer),
       ondialerror: (err) => this.emit('error', err),
-      isConnected: (key) => this.hasConnection(key)
+      isConnected: (key) => this.hasConnection(key),
+      want: () => this._maxPeers - this.connectionCount // throttle
     }
 
     this.dialer = new Dialer(handlers, {
       backoffs: opts.backoffs,
       jitter: opts.jitter,
       suspended,
-      maxParallel,
-      want: () => this._maxPeers - this.connectionCount // throttle
+      maxParallel
     })
 
     this.relayThrough = relayThrough && toRelaySelector(relayThrough)
