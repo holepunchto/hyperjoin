@@ -59,6 +59,7 @@ test('autoswarm: deferSwarming disabled', async (t) => {
   await swarm.propagateWriters()
   await swarm.refresh() // announce & lookup
   await swarm.flush() // dht-query + dials
+  await swarm.gc() // de-dupe
 
   t.is(p1.replicator.announcedSessions.length, 1, 'autoswarm announce')
   t.is(p1.replicator.connectionCount, 1)
