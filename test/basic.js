@@ -3,7 +3,7 @@ const Corestore = require('corestore')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('..')
-const { joinRemote, onceEvent, seedA, seedB, seedC, spawnPeer } = require('./helpers/backports')
+const { joinRemote, onceEvent, seedA, seedB, seedC, spawnPeer, timeout } = require('./helpers/backports')
 
 const { toHex } = b4a
 
@@ -285,6 +285,47 @@ test('regression: presuspend() during async firewall leaked _inflight', async (t
   t.is(p2.replicator._inflight.has(p1Hex), false, '_inflight cleared')
   t.is(p2.replicator.hasConnection(p1Hex), false, 'hasConnection(p1) is cleared')
   t.is(p2.replicator.connecting, 0, 'zero connections')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
+test('regression: suspend settles a dial cancelled before markAttempt()', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, jitter: 0 })
+
+  let releaseConnect = null
+  const connectReleased = new Promise((resolve) => {
+    releaseConnect = resolve
+  })
+
+  let connectEntered = null
+  const connectStarted = new Promise((resolve) => {
+    connectEntered = resolve
+  })
+
+  const connect = p2.replicator._connect
+  p2.replicator._connect = async function (peer) {
+    connectEntered()
+    await connectReleased
+    return connect.call(this, peer)
+  }
+
+  const topic = p1.cores[0].discoveryKey
+  p2.replicator.dialer.topicEnable(topic)
+  p2.replicator.dialer.seen({ publicKey: p1.replicator.peerId }, topic)
+
+  await connectStarted
+
+  const suspending = p2.replicator.suspend()
+  releaseConnect()
+
+  const suspended = await Promise.race([suspending.then(() => true), timeout(100).then(() => false)])
+  t.ok(suspended, 'suspension settles after the cancelled dial')
 
   await p1.destroy()
   await p2.destroy()

@@ -437,6 +437,21 @@ test('peer switched to relaying is automatically redialed', async (t) => {
   t.alike(dialed, [false, true], 'redialed through a relay')
 })
 
+test.solo('flush() settles when a dial makes no attempt', async (t) => {
+  const ctx = spawnDialer(t, {
+    suspended: true,
+    handlers: { ondial: async () => {} } // like Replicator._connect while suspending
+  })
+  const { dialer } = ctx
+
+  spawnPeer(ctx, 1)
+
+  dialer.resume()
+  await dialer.flush()
+
+  t.pass('flush settled')
+})
+
 function spawnDialer(
   t,
   {
