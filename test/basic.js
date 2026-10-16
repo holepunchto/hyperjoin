@@ -309,7 +309,7 @@ test('Replicator enables dialer throttle', async (t) => {
   await store.close()
 })
 
-test('regression: Dialer.flush() stuck while suspended', async (t) => {
+test('regression: Dialer.flush() resolves when replicator suspends', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
