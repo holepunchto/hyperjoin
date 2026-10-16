@@ -146,19 +146,30 @@ test('suspend/resume', async (t) => {
 })
 
 test('Dialer errors are routed to `ondialerror`', async (t) => {
-  const ctx = spawnDialer(t, { autoSettle: false })
-  const { dialer, dialed, errors } = ctx
+  let dials = 0
+  let caught = null
 
-  ctx.fail(asKey(1))
-  const peer = spawnPeer(ctx, 1, T0)
+  const ctx = spawnDialer(t, {
+    handlers: {
+      ondialerror: (err) => { caught = err },
+      ondial: async () => {
+        dials++
+        throw new Error('expected')
+      }
+    }
+  })
+
+  const { dialer } = ctx
+
+  spawnPeer(ctx, 1, T0)
 
   dialer.refresh(T0)
   const snapshot = dialer.flush(T0) // drains on peer's rejection
   await snapshot
 
-  t.is(dialed.length, 1, 'failing dial fired')
-  t.is(errors.length, 1, 'rejection re-routed to ondialerror')
-  t.is(dialed.filter((p) => p === peer).length, 1, 'fired exactly once')
+  t.is(dials, 1, 'failing dial fired')
+  t.ok(caught)
+  t.is(caught.message, 'expected', 'rejection re-routed to ondialerror')
 })
 
 // TODO: reproduce in basic.js with a full replicator stack
@@ -260,13 +271,10 @@ test('a retry due during a dial is re-scheduled', async (t) => {
   const dialer = new Dialer(
     {
       async ondial(peer, now) {
-        const complete = peer.markAttempt(true, { now })
-
         if (dials++ === 0) {
           await new Promise((resolve) => setTimeout(resolve, 20))
-          complete(true)
+          return true
         } else {
-          complete()
           settle()
         }
       },
@@ -419,9 +427,10 @@ test('peer switched to relaying is automatically redialed', async (t) => {
   const dialed = []
   const dialer = new Dialer(
     {
+      canRelay: () => true,
       ondial: async (peer, now) => {
         dialed.push(peer.forceRelaying)
-        peer.markAttempt(true, { canRelay: true, now })(true, 'HOLEPUNCH_ABORTED', now)
+        return 'HOLEPUNCH_ABORTED'
       },
       ondialerror: () => {}
     },
@@ -437,10 +446,10 @@ test('peer switched to relaying is automatically redialed', async (t) => {
   t.alike(dialed, [false, true], 'redialed through a relay')
 })
 
-test.solo('flush() settles when a dial makes no attempt', async (t) => {
+test('flush() settles when a dial makes no attempt', async (t) => {
   const ctx = spawnDialer(t, {
     suspended: true,
-    handlers: { ondial: async () => {} } // like Replicator._connect while suspending
+    handlers: { ondial: async () => {} }
   })
   const { dialer } = ctx
 
@@ -465,6 +474,7 @@ function spawnDialer(
 ) {
   const dialed = []
   const errors = []
+  const failures = []
   const connected = new Set()
   const allowed = new Set()
   const blocked = new Set()
@@ -475,36 +485,32 @@ function spawnDialer(
     ondial: (peer, now) => {
       dialed.push(peer)
       const startedAt = Date.now()
-      const completeAttempt = peer.markAttempt(true, { now })
+      const key = toHex(peer.publicKey)
 
       maxInflight = Math.max(maxInflight, dialed.length - settled)
 
       const attemptSuccess = () => {
         settled++
         const doneAt = now + Date.now() - startedAt
-        completeAttempt(false, null, doneAt)
-        connected.add(toHex(peer.publicKey))
+        connected.add(key)
         peer.markConnected(true, doneAt) // Connection.on('open')
         onsettle(true, settled)
       }
 
       const attemptFailed = (err) => {
         settled++
-        const doneAt = now + Date.now() - startedAt
-        completeAttempt(true, err, doneAt)
+        failures.add(key)
         onsettle(false, settled)
-        throw err // rethrow
+        return err
       }
-
-      const key = toHex(peer.publicKey)
 
       if (autoSettle || allowed.delete(key)) {
         return Promise.resolve().then(attemptSuccess)
       }
 
-      // reject
+      // dial failure
       if (blocked.delete(key)) {
-        return Promise.reject(new Error('blocked')).catch(attemptFailed)
+        return Promise.resolve().then(() => attemptFailed(new Error('blocked')))
       }
     },
 

@@ -291,7 +291,17 @@ test('regression: presuspend() during async firewall leaked _inflight', async (t
   await testnet.destroy()
 })
 
-test('regression: suspend settles a dial cancelled before markAttempt()', async (t) => {
+test('Replicator enables dialer throttle', async (t) => {
+  const store = new Corestore(await t.tmp())
+  const replicator = new Replicator(store, { bootstrap: [], maxPeers: 2 })
+
+  t.is(replicator.dialer._want(), 2)
+
+  await replicator.close()
+  await store.close()
+})
+
+test('regression: Dialer.flush() stuck while suspended', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -332,12 +342,3 @@ test('regression: suspend settles a dial cancelled before markAttempt()', async 
   await testnet.destroy()
 })
 
-test('Replicator enables dialer throttle', async (t) => {
-  const store = new Corestore(await t.tmp())
-  const replicator = new Replicator(store, { bootstrap: [], maxPeers: 2 })
-
-  t.is(replicator.dialer._want(), 2)
-
-  await replicator.close()
-  await store.close()
-})
