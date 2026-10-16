@@ -86,7 +86,7 @@ test('4 failed attempts set a 60s cooldown', (t) => {
   t.is(peer.retryAt - at, 60 * 1000, 'cooldown')
 })
 
-test('Connection stable for 10s resets attempts', (t) => {
+test('Connection stable for 2min resets attempts', (t) => {
   const { peer } = spawnPeer()
 
   peer.observe(TOPIC, T0)
@@ -104,7 +104,7 @@ test('Connection stable for 10s resets attempts', (t) => {
   peer.markAttempt(true, { now: connectedAt })()
   peer.markConnected(true, connectedAt)
 
-  const disconnectedAt = connectedAt + 10 * 1000 + 1
+  const disconnectedAt = connectedAt + 2 * 60 * 1000 + 1
 
   peer.markDisconnected(true, null, disconnectedAt)
 
@@ -205,7 +205,7 @@ test('A peer that holds a stable connection and then drops is re-dialed', (t) =>
   peer.observe(TOPIC, T0)
 
   const connectedAt = T0 + 5000
-  const disconnectedAt = connectedAt + 10 * 1000 + 1
+  const disconnectedAt = connectedAt + 2 * 60 * 1000 + 1
 
   peer.markAttempt(true, { now: connectedAt })()
   peer.markConnected(true, connectedAt)
@@ -213,6 +213,23 @@ test('A peer that holds a stable connection and then drops is re-dialed', (t) =>
 
   t.is(peer._outboundAttempts, 0, 'stable session reset the ladder')
   t.ok(peer.shouldDial(disconnectedAt), 're-dialable on drop')
+})
+
+test('a peer whose connection keeps dropping backs off', (t) => {
+  const { peer } = spawnPeer()
+
+  peer.observe(TOPIC, T0)
+
+  let now = T0
+  for (let i = 0; i < 4; i++) {
+    now = Math.max(now, peer.retryAt)
+    peer.markAttempt(true, { now })(false, null, now)
+    peer.markConnected(true, now)
+    now += 13 * 1000 // e.g. a one-way stream timing out
+    peer.markDisconnected(true, null, now)
+  }
+
+  t.ok(peer.retryAt > now, 'not redialed immediately')
 })
 
 test('Inbound peer gets banned for hammering', (t) => {
