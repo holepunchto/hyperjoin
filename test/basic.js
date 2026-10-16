@@ -299,6 +299,33 @@ test('regression: presuspend() during async firewall leaked _inflight', async (t
   await testnet.destroy()
 })
 
+test('Dialer is resumed after presuspend', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, jitter: 0 })
+
+  const topic = p1.cores[0].discoveryKey
+  const remote = p1.replicator.peerId
+
+  p2.replicator.dialer.topicEnable(topic)
+  p2.replicator.presuspend()
+  p2.replicator.dialer.seen({ publicKey: remote }, topic)
+
+  const peer = p2.replicator.dialer.lookup(remote)
+  t.is(peer._outboundAttempts, 0, 'no dials when presuspended')
+
+  await p2.replicator.resume()
+  await p2.replicator.flush()
+
+  t.ok(peer._outboundAttempts > 0, 'dialed after resume')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
 test('Replicator enables dialer throttle', async (t) => {
   const store = new Corestore(await t.tmp())
   const replicator = new Replicator(store, { bootstrap: [], maxPeers: 2 })
