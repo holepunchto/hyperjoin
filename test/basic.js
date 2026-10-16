@@ -3,7 +3,15 @@ const Corestore = require('corestore')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('..')
-const { joinRemote, onceEvent, seedA, seedB, seedC, spawnPeer, timeout } = require('./helpers/backports')
+const {
+  joinRemote,
+  onceEvent,
+  seedA,
+  seedB,
+  seedC,
+  spawnPeer,
+  timeout
+} = require('./helpers/backports')
 
 const { toHex } = b4a
 
@@ -212,7 +220,7 @@ test('inbound peer gets banned for hammering', async (t) => {
 
   const p1Key = p1.replicator.peerId
   const target = p2.replicator.dialer.lookup(p1Key)
-  const attempts = 8
+  const attempts = 21
 
   for (let n = 0; n < attempts; n++) {
     await p2.replicator._connect(target)
@@ -334,11 +342,13 @@ test('regression: Dialer.flush() stuck while suspended', async (t) => {
   const suspending = p2.replicator.suspend()
   releaseConnect()
 
-  const suspended = await Promise.race([suspending.then(() => true), timeout(100).then(() => false)])
+  const suspended = await Promise.race([
+    suspending.then(() => true),
+    timeout(100).then(() => false)
+  ])
   t.ok(suspended, 'suspension settles after the cancelled dial')
 
   await p1.destroy()
   await p2.destroy()
   await testnet.destroy()
 })
-

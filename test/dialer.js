@@ -151,7 +151,9 @@ test('Dialer errors are routed to `ondialerror`', async (t) => {
 
   const ctx = spawnDialer(t, {
     handlers: {
-      ondialerror: (err) => { caught = err },
+      ondialerror: (err) => {
+        caught = err
+      },
       ondial: async () => {
         dials++
         throw new Error('expected')
