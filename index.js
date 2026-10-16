@@ -571,13 +571,13 @@ module.exports = class Replicator extends ReadyResource {
 
     if (!opened) {
       this.emit('update')
-      return
+      return error || true
     }
 
     // stream opened - hand-off
     this._initConnection(true, peer.publicKey, stream, topic)
 
-    return !opened && error
+    return false
   }
 
   async _gc(now = Date.now()) {

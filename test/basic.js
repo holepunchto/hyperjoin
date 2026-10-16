@@ -1,4 +1,5 @@
 const { test } = require('brittle')
+const EventEmitter = require('bare-events')
 const Corestore = require('corestore')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
@@ -331,6 +332,41 @@ test('Replicator enables dialer throttle', async (t) => {
   const replicator = new Replicator(store, { bootstrap: [], maxPeers: 2 })
 
   t.is(replicator.dialer._want(), 2)
+
+  await replicator.close()
+  await store.close()
+})
+
+test('holepunch failure switches the peer to relaying', async (t) => {
+  const store = new Corestore(await t.tmp())
+  const replicator = new Replicator(store, {
+    bootstrap: [],
+    manual: true,
+    jitter: 0,
+    relayThrough: b4a.alloc(32, 7)
+  })
+  await replicator.ready()
+
+  replicator.dht.connect = () => {
+    const stream = new EventEmitter()
+    stream.destroy = () => {}
+    setImmediate(() => {
+      stream.emit('error', Object.assign(new Error('stub'), { code: 'HOLEPUNCH_ABORTED' }))
+      stream.emit('close')
+    })
+    return stream
+  }
+
+  const topic = b4a.alloc(32, 1)
+  const remote = b4a.alloc(32, 2)
+
+  replicator.dialer.topicEnable(topic)
+  replicator.dialer.seen({ publicKey: remote }, topic)
+  await replicator.dialer.flush()
+
+  const peer = replicator.dialer.lookup(remote)
+  t.is(peer._outboundSuccess, 0, 'failed dial is not a success')
+  t.ok(peer.forceRelaying, 'switched to relaying')
 
   await replicator.close()
   await store.close()
