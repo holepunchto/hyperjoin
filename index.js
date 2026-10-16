@@ -86,7 +86,8 @@ module.exports = class Replicator extends ReadyResource {
       ondial: (peer) => this._connect(peer),
       ondialerror: (err) => this.emit('error', err),
       isConnected: (key) => this.hasConnection(key),
-      want: () => this._maxPeers - this.connectionCount // throttle
+      want: () => this._maxPeers - this.connectionCount, // throttle
+      canRelay: () => !!this.relayThrough
     }
 
     this.dialer = new Dialer(handlers, {
@@ -288,12 +289,15 @@ module.exports = class Replicator extends ReadyResource {
     if (this._presuspended) return
 
     this._presuspended = true
+
+    this.dialer.suspend().catch(safetyCatch)
     this.refresh().catch(safetyCatch)
   }
 
   async resume({ log = noop } = {}) {
     if (this._presuspended) {
       this._presuspended = false
+      this.dialer.resume()
       await this.refresh()
     }
 
@@ -484,19 +488,19 @@ module.exports = class Replicator extends ReadyResource {
       this.suspended || // replicator
       this.closed || // ready-resource fully torn down
       this.closing ||
-      this.isPresuspended
+      this.isPresuspended // <-- unintentional artifact?
     )
   }
 
   async _connect(peer, topic) {
-    if (this._isTearingdown) return
+    if (this._isTearingdown) return true
 
     const hex = toHex(peer.publicKey)
-    if (b4a.equals(peer.publicKey, this.peerId)) return
+    if (b4a.equals(peer.publicKey, this.peerId)) return true
 
-    if (this.outbound.has(hex)) return
-    if (this.inbound.has(hex)) return
-    if (this._inflight.has(hex)) return
+    if (this.outbound.has(hex)) return true
+    if (this.inbound.has(hex)) return true
+    if (this._inflight.has(hex)) return true
 
     const peerInfo = this.dialer.lookup(peer.publicKey)
 
@@ -510,14 +514,12 @@ module.exports = class Replicator extends ReadyResource {
       if (firewalled) this._inflight.delete(hex)
     }
 
-    if (firewalled) return
+    if (firewalled) return true
 
     if (this._isTearingdown) {
       this._inflight.delete(hex)
-      return
+      return true
     }
-
-    const attemptDone = peer.markAttempt(true, { canRelay: !!this.relayThrough })
 
     let stream
     let error = null
@@ -564,19 +566,18 @@ module.exports = class Replicator extends ReadyResource {
       stream.once('error', noop)
       const e = new Error(ERR_DESTROYED)
       stream.destroy(e)
-      attemptDone(true, ERR_DESTROYED)
-      return
+      return ERR_DESTROYED
     }
-
-    attemptDone(!opened, error)
 
     if (!opened) {
       this.emit('update')
-      return
+      return error || true
     }
 
     // stream opened - hand-off
     this._initConnection(true, peer.publicKey, stream, topic)
+
+    return false
   }
 
   async _gc(now = Date.now()) {

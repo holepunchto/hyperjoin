@@ -1,9 +1,18 @@
 const { test } = require('brittle')
+const EventEmitter = require('bare-events')
 const Corestore = require('corestore')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('..')
-const { joinRemote, onceEvent, seedA, seedB, seedC, spawnPeer } = require('./helpers/backports')
+const {
+  joinRemote,
+  onceEvent,
+  seedA,
+  seedB,
+  seedC,
+  spawnPeer,
+  timeout
+} = require('./helpers/backports')
 
 const { toHex } = b4a
 
@@ -212,7 +221,7 @@ test('inbound peer gets banned for hammering', async (t) => {
 
   const p1Key = p1.replicator.peerId
   const target = p2.replicator.dialer.lookup(p1Key)
-  const attempts = 8
+  const attempts = 21
 
   for (let n = 0; n < attempts; n++) {
     await p2.replicator._connect(target)
@@ -291,6 +300,33 @@ test('regression: presuspend() during async firewall leaked _inflight', async (t
   await testnet.destroy()
 })
 
+test('Dialer is resumed after presuspend', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, jitter: 0 })
+
+  const topic = p1.cores[0].discoveryKey
+  const remote = p1.replicator.peerId
+
+  p2.replicator.dialer.topicEnable(topic)
+  p2.replicator.presuspend()
+  p2.replicator.dialer.seen({ publicKey: remote }, topic)
+
+  const peer = p2.replicator.dialer.lookup(remote)
+  t.is(peer._outboundAttempts, 0, 'no dials when presuspended')
+
+  await p2.replicator.resume()
+  await p2.replicator.flush()
+
+  t.ok(peer._outboundAttempts > 0, 'dialed after resume')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
 test('Replicator enables dialer throttle', async (t) => {
   const store = new Corestore(await t.tmp())
   const replicator = new Replicator(store, { bootstrap: [], maxPeers: 2 })
@@ -299,4 +335,83 @@ test('Replicator enables dialer throttle', async (t) => {
 
   await replicator.close()
   await store.close()
+})
+
+test('holepunch failure switches the peer to relaying', async (t) => {
+  const store = new Corestore(await t.tmp())
+  const replicator = new Replicator(store, {
+    bootstrap: [],
+    manual: true,
+    jitter: 0,
+    relayThrough: b4a.alloc(32, 7)
+  })
+  await replicator.ready()
+
+  replicator.dht.connect = () => {
+    const stream = new EventEmitter()
+    stream.destroy = () => {}
+    setImmediate(() => {
+      stream.emit('error', Object.assign(new Error('stub'), { code: 'HOLEPUNCH_ABORTED' }))
+      stream.emit('close')
+    })
+    return stream
+  }
+
+  const topic = b4a.alloc(32, 1)
+  const remote = b4a.alloc(32, 2)
+
+  replicator.dialer.topicEnable(topic)
+  replicator.dialer.seen({ publicKey: remote }, topic)
+  await replicator.dialer.flush()
+
+  const peer = replicator.dialer.lookup(remote)
+  t.is(peer._outboundSuccess, 0, 'failed dial is not a success')
+  t.ok(peer.forceRelaying, 'switched to relaying')
+
+  await replicator.close()
+  await store.close()
+})
+
+test('regression: Dialer.flush() resolves when replicator suspends', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, jitter: 0 })
+
+  let releaseConnect = null
+  const connectReleased = new Promise((resolve) => {
+    releaseConnect = resolve
+  })
+
+  let connectEntered = null
+  const connectStarted = new Promise((resolve) => {
+    connectEntered = resolve
+  })
+
+  const connect = p2.replicator._connect
+  p2.replicator._connect = async function (peer) {
+    connectEntered()
+    await connectReleased
+    return connect.call(this, peer)
+  }
+
+  const topic = p1.cores[0].discoveryKey
+  p2.replicator.dialer.topicEnable(topic)
+  p2.replicator.dialer.seen({ publicKey: p1.replicator.peerId }, topic)
+
+  await connectStarted
+
+  const suspending = p2.replicator.suspend()
+  releaseConnect()
+
+  const suspended = await Promise.race([
+    suspending.then(() => true),
+    timeout(100).then(() => false)
+  ])
+  t.ok(suspended, 'suspension settles after the cancelled dial')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
 })
