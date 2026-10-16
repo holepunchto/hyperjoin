@@ -177,7 +177,7 @@ test('Dialer errors are routed to `ondialerror`', async (t) => {
 // TODO: reproduce in basic.js with a full replicator stack
 test('peer.retryAt increased on failure and is re-dialed', async (t) => {
   const ctx = spawnDialer(t, { autoSettle: false })
-  const { dialer, dialed, errors, fail, pass } = ctx
+  const { dialer, dialed, failures, fail, pass } = ctx
 
   fail(asKey(1))
 
@@ -189,7 +189,7 @@ test('peer.retryAt increased on failure and is re-dialed', async (t) => {
   await dialer.flush()
 
   t.is(dialed.length, 1, 'one attempt')
-  t.is(errors.length, 1, 'one failed')
+  t.is(failures.length, 1, 'one failed')
   t.ok(peer.retryAt > retryAt, 'retryAt increased')
 
   pass(asKey(1))
@@ -200,7 +200,7 @@ test('peer.retryAt increased on failure and is re-dialed', async (t) => {
 
   await retried
 
-  t.is(errors.length, 1, 'still one failed')
+  t.is(failures.length, 1, 'still one failed')
   t.is(dialed.length, 2, 'two attempts')
 
   t.is(ctx.connected.size, 1, 'one successful')
@@ -208,7 +208,7 @@ test('peer.retryAt increased on failure and is re-dialed', async (t) => {
 
 test('dialer does not dial peers without an active topic', async (t) => {
   const ctx = spawnDialer(t)
-  const { dialer, dialed, errors } = ctx
+  const { dialer, dialed, failures } = ctx
 
   dialer.topicDisable(TOPIC)
 
@@ -218,7 +218,7 @@ test('dialer does not dial peers without an active topic', async (t) => {
   await dialer.flush()
 
   t.is(dialed.length, 0, 'topic disabled: no dials')
-  t.is(errors.length, 0)
+  t.is(failures.length, 0)
 
   dialer.topicEnable(TOPIC)
 
@@ -226,7 +226,7 @@ test('dialer does not dial peers without an active topic', async (t) => {
   await dialer.flush() // drains on peer's rejection
 
   t.is(dialed.length, 1, 'topic enabled: dials')
-  t.is(errors.length, 0)
+  t.is(failures.length, 0)
   t.is(dialed.filter((p) => p === peer).length, 1, 'fired exactly once')
 })
 
@@ -501,7 +501,7 @@ function spawnDialer(
 
       const attemptFailed = (err) => {
         settled++
-        failures.add(key)
+        failures.push(key)
         onsettle(false, settled)
         return err
       }
@@ -531,6 +531,7 @@ function spawnDialer(
   return {
     dialer,
     dialed,
+    failures,
     errors,
     connected,
     maxInflight: () => maxInflight,
