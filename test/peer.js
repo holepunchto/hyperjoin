@@ -86,7 +86,7 @@ test('4 failed attempts set a 60s cooldown', (t) => {
   t.is(peer.retryAt - at, 60 * 1000, 'cooldown')
 })
 
-test('Connection stable for 2min resets attempts', (t) => {
+test('Connection stable for 60s resets attempts', (t) => {
   const { peer } = spawnPeer()
 
   peer.observe(TOPIC, T0)
@@ -104,7 +104,7 @@ test('Connection stable for 2min resets attempts', (t) => {
   peer.markAttempt(true, { now: connectedAt })()
   peer.markConnected(true, connectedAt)
 
-  const disconnectedAt = connectedAt + 2 * 60 * 1000 + 1
+  const disconnectedAt = connectedAt + 60 * 1000 + 1
 
   peer.markDisconnected(true, null, disconnectedAt)
 
@@ -205,7 +205,7 @@ test('A peer that holds a stable connection and then drops is re-dialed', (t) =>
   peer.observe(TOPIC, T0)
 
   const connectedAt = T0 + 5000
-  const disconnectedAt = connectedAt + 2 * 60 * 1000 + 1
+  const disconnectedAt = connectedAt + 60 * 1000 + 1
 
   peer.markAttempt(true, { now: connectedAt })()
   peer.markConnected(true, connectedAt)
