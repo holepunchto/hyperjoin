@@ -242,7 +242,7 @@ test('A peer that holds a stable connection and then drops is re-dialed', async 
   t.is(dialed.length, 1, 'first dial fired')
   t.ok(peer.connected, 'connected')
 
-  const disconnectedAt = Date.now() + 10 * 1000 + 1
+  const disconnectedAt = Date.now() + 60 * 1000 + 1
 
   ctx.connected.delete(toHex(peer.publicKey))
   peer.markDisconnected(true, null, disconnectedAt)
