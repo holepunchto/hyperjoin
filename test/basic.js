@@ -327,6 +327,53 @@ test('Dialer is resumed after presuspend', async (t) => {
   await testnet.destroy()
 })
 
+test('regression: suspend() does not leak dials', async (t) => {
+  const store = new Corestore(await t.tmp())
+  const replicator = new Replicator(store, { bootstrap: [], manual: true, jitter: 10 })
+  await replicator.ready()
+
+  const topic = b4a.alloc(32, 1)
+  const remote = b4a.alloc(32, 2)
+
+  replicator.dialer.topicEnable(topic)
+
+  const suspended = replicator.suspend()
+  replicator.dialer.seen({ publicKey: remote }, topic)
+
+  await suspended
+
+  t.is(replicator.dialer.inflight, 0, 'no dial remains in flight')
+
+  await replicator.close()
+  await store.close()
+})
+
+test('regression: resume() restores dials', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, jitter: 0 })
+  const topic = b4a.alloc(32, 1)
+
+  await p2.replicator.suspend()
+
+  p2.replicator.dialer.topicEnable(topic)
+  p2.replicator.dialer.seen({ publicKey: p1.replicator.peerId }, topic)
+
+  const peer = p2.replicator.dialer.lookup(p1.replicator.peerId)
+  t.is(peer._outboundAttempts, 0, 'nothing dialed while suspended')
+
+  await p2.replicator.resume()
+  await p2.replicator.flush()
+
+  t.is(peer._outboundAttempts, 1, 'dialed after resume')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
 test('Replicator enables dialer throttle', async (t) => {
   const store = new Corestore(await t.tmp())
   const replicator = new Replicator(store, { bootstrap: [], maxPeers: 2 })

@@ -86,8 +86,12 @@ module.exports = class Replicator extends ReadyResource {
       ondial: (peer) => this._connect(peer),
       ondialerror: (err) => this.emit('error', err),
       isConnected: (key) => this.hasConnection(key),
-      want: () => this._maxPeers - this.connectionCount, // throttle
-      canRelay: () => !!this.relayThrough
+      canRelay: () => !!this.relayThrough,
+      want: () => {
+        if (this.suspended || this.isPresuspended) return 0
+
+        return this._maxPeers - this.connectionCount // throttle
+      }
     }
 
     this.dialer = new Dialer(handlers, {
@@ -252,8 +256,9 @@ module.exports = class Replicator extends ReadyResource {
 
   suspend({ log = noop } = {}) {
     if (!this.suspended) {
-      this._suspending = this._beginSuspension({ log })
       this.suspended = true
+
+      this._suspending = this._beginSuspension({ log })
     }
 
     return this._suspending
@@ -307,9 +312,9 @@ module.exports = class Replicator extends ReadyResource {
 
     await this.server.resume({ log })
 
-    this.dialer.resume({ log })
-
     this.suspended = false
+
+    this.dialer.resume()
 
     const pending = []
 
