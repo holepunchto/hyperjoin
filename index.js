@@ -271,6 +271,7 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     for (const connection of this.connections) {
+      connection.info.resetAttempts() // dropped by us, not the peer
       pending.push(this._evictConnection(connection, ERR_SUSPEND))
     }
 
