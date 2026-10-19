@@ -327,6 +327,31 @@ test('Dialer is resumed after presuspend', async (t) => {
   await testnet.destroy()
 })
 
+test('regression: suspend() holds dials until resume()', async (t) => {
+  const store = new Corestore(await t.tmp())
+  const replicator = new Replicator(store, { bootstrap: [], manual: true, jitter: 0 })
+  await replicator.ready()
+
+  const topic = b4a.alloc(32, 1)
+  const remote = b4a.alloc(32, 2)
+
+  replicator.dialer.topicEnable(topic)
+
+  const suspended = replicator.suspend()
+  replicator.dialer.seen({ publicKey: remote }, topic)
+  await suspended
+
+  const peer = replicator.dialer.lookup(remote)
+  t.is(peer._outboundAttempts, 0, 'nothing dialed while suspending')
+
+  await replicator.resume()
+
+  t.is(peer._outboundAttempts, 1, 'dialed after resume')
+
+  await replicator.close()
+  await store.close()
+})
+
 test('suspend resets dial attempts of dropped connections', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
