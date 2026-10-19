@@ -374,6 +374,32 @@ test('regression: resume() restores dials', async (t) => {
   await testnet.destroy()
 })
 
+test('suspend resets dial attempts of dropped connections', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, jitter: 0 })
+
+  const topic = p1.cores[0].discoveryKey
+  const remote = p1.replicator.peerId
+
+  p2.replicator.dialer.topicEnable(topic)
+  p2.replicator.dialer.seen({ publicKey: remote }, topic)
+  await p2.replicator.flush()
+
+  const peer = p2.replicator.dialer.lookup(remote)
+  peer._outboundAttempts = 4 // took a few dials to connect
+
+  await p2.replicator.suspend()
+
+  t.is(peer._outboundAttempts, 0, 'attempts reset')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
 test('Replicator enables dialer throttle', async (t) => {
   const store = new Corestore(await t.tmp())
   const replicator = new Replicator(store, { bootstrap: [], maxPeers: 2 })
