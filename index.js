@@ -276,7 +276,7 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     for (const connection of this.connections) {
-      connection.info.resetAttempts() // dropped by us, not the peer
+      connection.info.resetAttempts()
       pending.push(this._evictConnection(connection, ERR_SUSPEND))
     }
 
@@ -832,6 +832,7 @@ module.exports = class Replicator extends ReadyResource {
     this._online = this.dht.online
     if (!networkCameOnline) return
 
+    this.dialer.resetBackoff() // failures while offline were ours
     await this._handleNetworkChange()
   }
 

@@ -2,6 +2,8 @@ const test = require('brittle')
 const b4a = require('b4a')
 const Peer = require('../lib/peer')
 
+const { backoffDuration } = Peer // before test/helpers/backports stubs it
+
 const T0 = Date.now()
 const TOPIC = b4a.alloc(32, 1)
 const asKey = (n) => b4a.alloc(32, n)
@@ -62,28 +64,28 @@ test('attempt failure increases retryAt', (t) => {
   t.ok(second < third, 'third failure waits longer still')
 })
 
-test('4 failed attempts set a 60s cooldown', (t) => {
+test('backoff keeps growing past 60s, capped at 10min', (t) => {
+  const stub = Peer.backoffDuration
+  Peer.backoffDuration = backoffDuration
+  t.teardown(() => {
+    Peer.backoffDuration = stub
+  })
+
   const { peer } = spawnPeer()
 
   peer.observe(TOPIC, T0)
 
-  let at = T0
-  let backoff = 0
-
-  for (let n = 1; n < 4; n++) {
-    peer.markAttempt(true, { now: at })(true, 'ERR_CONNECT', at)
-
-    t.is(peer._outboundAttempts, n)
-    t.ok(peer.retryAt - at > backoff, 'burst ' + n + ' grows')
-
-    backoff = peer.retryAt - at
-    at = peer.retryAt
+  for (let n = 0; n < 5; n++) {
+    peer.markAttempt(true, { now: T0 })(true, 'ERR_CONNECT', T0)
   }
 
-  peer.markAttempt(true, { now: at })(true, 'ERR_CONNECT', at)
+  t.ok(peer.retryAt - T0 > 60 * 1000, 'grows past 60s')
 
-  t.is(peer._outboundAttempts, 4)
-  t.is(peer.retryAt - at, 60 * 1000, 'cooldown')
+  for (let n = 5; n < 8; n++) {
+    peer.markAttempt(true, { now: T0 })(true, 'ERR_CONNECT', T0)
+  }
+
+  t.is(peer.retryAt - T0, 10 * 60 * 1000, 'capped at 10min')
 })
 
 test('Connection stable for 60s resets attempts', (t) => {
