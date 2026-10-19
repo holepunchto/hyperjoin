@@ -441,3 +441,22 @@ test('regression: Dialer.flush() resolves when replicator suspends', async (t) =
   await p2.destroy()
   await testnet.destroy()
 })
+
+test('network coming back online resets dial backoff', async (t) => {
+  const store = new Corestore(await t.tmp())
+  const replicator = new Replicator(store, { bootstrap: [], manual: true })
+  await replicator.ready()
+
+  const peer = replicator.dialer.lookup(b4a.alloc(32, 2))
+  peer._outboundAttempts = 5 // failed while we were offline
+
+  replicator.dht.online = false
+  replicator.dht.emit('network-update')
+  replicator.dht.online = true
+  replicator.dht.emit('network-update')
+
+  t.is(peer._outboundAttempts, 0)
+
+  await replicator.close()
+  await store.close()
+})

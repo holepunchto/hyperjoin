@@ -62,28 +62,22 @@ test('attempt failure increases retryAt', (t) => {
   t.ok(second < third, 'third failure waits longer still')
 })
 
-test('4 failed attempts set a 60s cooldown', (t) => {
+test('backoff keeps growing past 60s, capped at 10min', (t) => {
+  const backoffDuration = Peer.backoffDuration
+  Peer.backoffDuration = (n) => n * 60 * 1000
+  t.teardown(() => {
+    Peer.backoffDuration = backoffDuration
+  })
+
   const { peer } = spawnPeer()
 
   peer.observe(TOPIC, T0)
 
-  let at = T0
-  let backoff = 0
+  for (let n = 0; n < 5; n++) peer.markAttempt(true, { now: T0 })(true, 'ERR_CONNECT', T0)
+  t.is(peer.retryAt - T0, 5 * 60 * 1000, 'grows past 60s')
 
-  for (let n = 1; n < 4; n++) {
-    peer.markAttempt(true, { now: at })(true, 'ERR_CONNECT', at)
-
-    t.is(peer._outboundAttempts, n)
-    t.ok(peer.retryAt - at > backoff, 'burst ' + n + ' grows')
-
-    backoff = peer.retryAt - at
-    at = peer.retryAt
-  }
-
-  peer.markAttempt(true, { now: at })(true, 'ERR_CONNECT', at)
-
-  t.is(peer._outboundAttempts, 4)
-  t.is(peer.retryAt - at, 60 * 1000, 'cooldown')
+  for (let n = 0; n < 10; n++) peer.markAttempt(true, { now: T0 })(true, 'ERR_CONNECT', T0)
+  t.is(peer.retryAt - T0, 10 * 60 * 1000, 'capped')
 })
 
 test('Connection stable for 60s resets attempts', (t) => {

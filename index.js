@@ -827,6 +827,7 @@ module.exports = class Replicator extends ReadyResource {
     this._online = this.dht.online
     if (!networkCameOnline) return
 
+    this.dialer.resetBackoff() // failures while offline were ours
     await this._handleNetworkChange()
   }
 
