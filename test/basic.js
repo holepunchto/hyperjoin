@@ -3,6 +3,7 @@ const EventEmitter = require('bare-events')
 const Corestore = require('corestore')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
+const DHT = require('hyperdht')
 const Replicator = require('..')
 const {
   joinRemote,
@@ -49,6 +50,67 @@ test('ready does not wait for the server to listen', async (t) => {
   await replicator.close()
   await store.close()
   await testnet.destroy()
+})
+
+test('pinned session announces only once the server is listening', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
+  const replicator = new Replicator(store, { bootstrap, manual: true })
+
+  let release = null
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  const listen = replicator.server.listen.bind(replicator.server)
+  replicator.server.listen = async (keyPair) => {
+    await gate
+    return listen(keyPair)
+  }
+
+  await replicator.ready()
+
+  const core = store.get({ name: 'one' })
+  await core.ready()
+
+  const session = replicator.join(store, core.discoveryKey, { pin: true })
+  await session.refresh()
+
+  t.is(replicator.listening, false)
+  t.is(session.discovery.announce, false, 'not announced before listening')
+
+  release()
+  await replicator.flush()
+
+  t.is(replicator.listening, true)
+  t.is(session.discovery.announce, true, 'announced after listening')
+
+  await replicator.close()
+  await store.close()
+  await testnet.destroy()
+})
+
+test('failed listen is swallowed and nothing announces', async (t) => {
+  const dht = new DHT({ bootstrap: [] })
+  await dht.destroy()
+
+  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
+  const replicator = new Replicator(store, { dht, manual: true })
+
+  await replicator.ready()
+
+  const core = store.get({ name: 'one' })
+  await core.ready()
+
+  const session = replicator.join(store, core.discoveryKey, { pin: true })
+  await session.refresh()
+  await replicator.flush()
+
+  t.is(replicator.listening, false)
+  t.is(session.discovery.announce, false, 'not announced')
+
+  await replicator.close()
+  await store.close()
 })
 
 test('basic replication', async (t) => {

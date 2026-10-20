@@ -116,8 +116,8 @@ module.exports = class Replicator extends ReadyResource {
     this.suspended = suspended
     this._presuspended = false
     this._suspending = Promise.resolve()
+    this.listening = false
     this._listening = null
-    this._listened = false
 
     this.sessions = new Map() // hex(discoveryKey) -> Session
     this.inbound = new Map() // hex(peerId) -> Connection
@@ -188,10 +188,6 @@ module.exports = class Replicator extends ReadyResource {
     return this.keyPair ? this.keyPair.publicKey : null
   }
 
-  get listening() {
-    return this._listened
-  }
-
   get connectionCount() {
     return this.inbound.size + this.outbound.size
   }
@@ -218,37 +214,27 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _open() {
-    // TODO: this await is the root cause
-    // for `refresh()` being async.
     this.keyPair ||= await this.root.createKeyPair('replicator')
-    this._maybeListen()
+    this._safeListen()
   }
 
-  _maybeListen() {
+  _safeListen() {
     if (this._listening !== null || !this.keyPair || this.suspended || this.closing) return
-    this._listening = this._listen()
+    this._listening = this.server.listen(this.keyPair).then(() => this._onlisten(), safetyCatch)
   }
 
-  async _listen() {
-    try {
-      await this.server.listen(this.keyPair)
-    } catch (err) {
-      safetyCatch(err)
-      this._listening = null
-      return
-    }
+  _onlisten() {
+    this.listening = true
+    return this._refreshSessions()
+  }
 
-    this._listened = true
-    if (this.closing) return
-
-    // only re-apply session state (announce is gated on listening),
-    // selection policy stays with refresh()
+  _refreshSessions(now = Date.now()) {
     const pending = []
     for (const sess of this.sessions.values()) {
       if (sess.closing || sess.closed) continue
-      pending.push(sess.refresh().catch(safetyCatch))
+      pending.push(sess.refresh(now))
     }
-    await Promise.all(pending)
+    return Promise.allSettled(pending)
   }
 
   getConnection(peerId) {
@@ -345,7 +331,7 @@ module.exports = class Replicator extends ReadyResource {
     await this.server.resume({ log })
 
     this.suspended = false
-    this._maybeListen()
+    this._safeListen()
 
     this.dialer.resume()
 
@@ -745,7 +731,6 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async refresh(now = Date.now()) {
-    this._maybeListen()
     this._autoselect(now) // updates sessions
 
     const done = []
@@ -770,7 +755,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async flush() {
-    if (this._listening !== null) await this._listening
+    if (this._listening !== null && !this.suspended) await this._listening
 
     const pending = []
     for (const sess of this.sessions.values()) {
