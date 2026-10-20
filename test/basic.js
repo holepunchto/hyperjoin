@@ -16,7 +16,7 @@ const {
 
 const { toHex } = b4a
 
-test('Default keypair from corestore', async (t) => {
+test('default keypair from corestore', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
   const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
@@ -31,7 +31,27 @@ test('Default keypair from corestore', async (t) => {
   await testnet.destroy()
 })
 
-test('Basic replication', async (t) => {
+test('ready does not wait for the server to listen', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
+  const replicator = new Replicator(store, { bootstrap, manual: true })
+
+  await replicator.ready()
+
+  t.is(replicator.listening, false)
+  t.ok(replicator.peerId)
+
+  await replicator.flush()
+
+  t.is(replicator.listening, true)
+
+  await replicator.close()
+  await store.close()
+  await testnet.destroy()
+})
+
+test('basic replication', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -62,7 +82,7 @@ test('Basic replication', async (t) => {
   await testnet.destroy()
 })
 
-test('GC connections with no active mux sessions', async (t) => {
+test('gc connections with no active mux sessions', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -137,7 +157,7 @@ test('parent corestore doesnt activate core on namespace for session', async (t)
   await testnet.destroy()
 })
 
-test('GC preserves stable connections over rookies', async (t) => {
+test('gc preserves stable connections over rookies', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -300,7 +320,7 @@ test('regression: presuspend() during async firewall leaked _inflight', async (t
   await testnet.destroy()
 })
 
-test('Dialer is resumed after presuspend', async (t) => {
+test('dialer is resumed after presuspend', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -378,7 +398,7 @@ test('suspend resets dial attempts of dropped connections', async (t) => {
   await testnet.destroy()
 })
 
-test('Replicator enables dialer throttle', async (t) => {
+test('replicator enables dialer throttle', async (t) => {
   const store = new Corestore(await t.tmp())
   const replicator = new Replicator(store, { bootstrap: [], maxPeers: 2 })
 
@@ -423,7 +443,7 @@ test('holepunch failure switches the peer to relaying', async (t) => {
   await store.close()
 })
 
-test('regression: Dialer.flush() resolves when replicator suspends', async (t) => {
+test('regression: dialer.flush() resolves when replicator suspends', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 

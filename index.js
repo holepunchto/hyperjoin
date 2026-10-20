@@ -116,6 +116,8 @@ module.exports = class Replicator extends ReadyResource {
     this.suspended = suspended
     this._presuspended = false
     this._suspending = Promise.resolve()
+    this._listening = null
+    this._listened = false
 
     this.sessions = new Map() // hex(discoveryKey) -> Session
     this.inbound = new Map() // hex(peerId) -> Connection
@@ -183,7 +185,11 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   get peerId() {
-    return this.server.publicKey
+    return this.keyPair ? this.keyPair.publicKey : null
+  }
+
+  get listening() {
+    return this._listened
   }
 
   get connectionCount() {
@@ -215,9 +221,27 @@ module.exports = class Replicator extends ReadyResource {
     // TODO: this await is the root cause
     // for `refresh()` being async.
     this.keyPair ||= await this.root.createKeyPair('replicator')
-    await this.dht.ready()
+    this._maybeListen()
+  }
 
-    await this.server.listen(this.keyPair)
+  _maybeListen() {
+    if (this._listening !== null || !this.keyPair || this.suspended || this.closing) return
+    this._listening = this._listen()
+  }
+
+  async _listen() {
+    try {
+      await this.server.listen(this.keyPair)
+    } catch (err) {
+      safetyCatch(err)
+      this._listening = null
+      return
+    }
+
+    this._listened = true
+    if (this.closing) return
+
+    await this.refresh().catch(safetyCatch)
   }
 
   getConnection(peerId) {
@@ -314,6 +338,7 @@ module.exports = class Replicator extends ReadyResource {
     await this.server.resume({ log })
 
     this.suspended = false
+    this._maybeListen()
 
     this.dialer.resume()
 
@@ -713,6 +738,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async refresh(now = Date.now()) {
+    this._maybeListen()
     this._autoselect(now) // updates sessions
 
     const done = []
@@ -737,6 +763,8 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async flush() {
+    if (this._listening !== null) await this._listening
+
     const pending = []
     for (const sess of this.sessions.values()) {
       if (sess.closing || sess.closed || sess.state === 'destroyed') continue
