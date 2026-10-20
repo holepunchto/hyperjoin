@@ -26,6 +26,7 @@ const DHT_FAST_RETRY = 3 * 1000 // 3s
 const MIN_PEERS = 20
 const MAX_PEERS = 40
 const WANDERLUST_THRESHOLD = 60 * 1000
+const DUPLICATE_REDIAL_GAP = 10 * 1000
 
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
@@ -378,7 +379,9 @@ module.exports = class Replicator extends ReadyResource {
       // If both connections are from the same peer,
       // - pick the new one if the existing stream is already established (has sent and received bytes),
       //   because the other client must have lost that connection and be reconnecting
-      const keepNew = existing.rawBytesRead > 0 && existing.rawBytesWritten > 0
+      // - or if the existing stream never received anything, eg. opened from a stale handshake
+      const established = existing.rawBytesRead > 0 && existing.rawBytesWritten > 0
+      const keepNew = established || existing.rawBytesRead === 0
 
       if (keepNew === false) {
         attemptDone(true, ERR_DUPLICATE)
@@ -606,8 +609,14 @@ module.exports = class Replicator extends ReadyResource {
       const cmp = b4a.compare(this.peerId, connection.peerId)
       if (cmp === 0) throw new Error('unreachable: self connection')
 
-      // low-peerId keeps inbound
-      const target = (cmp > 0) ^ connection.initiator ? connection : dst.get(key)
+      const other = dst.get(key)
+
+      // low-peerId keeps inbound, unless one was opened well after the other: peers
+      // only dial when not connected, so the dialer of the newer one lost the older one
+      let target = (cmp > 0) ^ connection.initiator ? connection : other
+      if (Math.abs(connection.openedAt - other.openedAt) > DUPLICATE_REDIAL_GAP) {
+        target = connection.openedAt < other.openedAt ? connection : other
+      }
 
       evictions.push(this._evictConnection(target, ERR_DUPLICATE))
       connectionsEvicted++

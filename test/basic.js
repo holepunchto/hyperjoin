@@ -11,7 +11,8 @@ const {
   seedB,
   seedC,
   spawnPeer,
-  timeout
+  timeout,
+  waitForEvents
 } = require('./helpers/backports')
 
 const { toHex } = b4a
@@ -484,4 +485,62 @@ test('network coming back online resets dial backoff', async (t) => {
 
   await replicator.close()
   await store.close()
+})
+
+test('duplicate inbound replaces one that never received anything', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+
+  // silent, like a connection opened from a stale handshake
+  const silent = p2.replicator.dht.connect(p1.replicator.peerId, {
+    keyPair: p2.replicator.keyPair
+  })
+  silent.on('error', () => {})
+
+  const ghost = await onceEvent(p1.replicator, 'connected')
+
+  const duplicate = onceEvent(p1.replicator.server, 'connection')
+  await p2.replicator._connect(p2.replicator.dialer.lookup(p1.replicator.peerId))
+  const conn = await duplicate
+
+  t.ok(ghost.stream.destroying, 'silent connection dropped')
+  t.absent(conn.destroying, 'new connection kept')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
+test('GC dedupe drops the older connection when the peer redialed', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+
+  const connected = waitForEvents(p1.replicator, 'connected', 2)
+  p1.replicator._connect(p1.replicator.dialer.lookup(p2.replicator.peerId))
+  p2.replicator._connect(p2.replicator.dialer.lookup(p1.replicator.peerId))
+  await connected
+
+  const [inbound] = p1.replicator.inbound.values()
+  const [outbound] = p1.replicator.outbound.values()
+
+  // the one kept by peerId order is long-lived, the other a redial
+  const highId = b4a.compare(p1.replicator.peerId, p2.replicator.peerId) > 0
+  const [older, newer] = highId ? [outbound, inbound] : [inbound, outbound]
+  older.openedAt -= 60_000
+
+  await p1.replicator._gc()
+
+  t.is(p1.replicator.connectionCount, 1)
+  t.ok(older.stream.destroyed, 'older connection dropped')
+  t.absent(newer.stream.destroyed, 'redial kept')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
 })
