@@ -548,3 +548,28 @@ function spawnPeer(ctx, n, lastSeenAt) {
   ctx.dialer.seen({ publicKey: asKey(n) }, TOPIC, lastSeenAt)
   return ctx.dialer.lookup(asKey(n))
 }
+
+test('joined peers are dialed without being seen on a topic', async (t) => {
+  let dialed = 0
+  const dialer = new Dialer(
+    {
+      ondial: async () => {
+        dialed++
+      }
+    },
+    { jitter: 0 }
+  )
+
+  dialer.joinPeer(asKey(7))
+
+  await new Promise((resolve) => setTimeout(resolve, 100))
+
+  t.is(dialed, 1)
+  t.absent(
+    dialer.lookup(asKey(7)).isExpired(Date.now() + 60 * 60 * 1000),
+    'never expires while joined'
+  )
+
+  dialer.leavePeer(asKey(7))
+  dialer.destroy()
+})

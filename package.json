@@ -29,7 +29,8 @@
     "hyperdht": "^6.34.1",
     "lunte": "^1.8.6",
     "prettier": "^3.9.10",
-    "prettier-config-holepunch": "^2.0.0"
+    "prettier-config-holepunch": "^2.0.0",
+    "test-tmp": "^1.4.0"
   },
   "scripts": {
     "format": "prettier . --write",

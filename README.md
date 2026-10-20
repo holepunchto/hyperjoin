@@ -1,7 +1,10 @@
 # Replicator
 
-A `hyperswarm` replacement modeled for `corestore` that allows
-resource tracking and garbage collection.
+A `hyperswarm` replacement modeled for `corestore`. Every connection replicates
+the root corestore. The API mirrors hyperswarm's. What the replicator adds is
+connection management: an idle connection GC driven by real traffic, a
+connection cap that drops the right connections, and dial backoff and bans
+that never punish a peer for disconnects we caused.
 
 ## Usage
 
@@ -11,22 +14,24 @@ const Replicator = require('replicator')
 
 const store = new Corestore('./storage')
 
-const rep = new Replicator(store, { slots: 8, maxPeers: 40 })
+const rep = new Replicator(store, { maxPeers: 40 })
 await rep.ready()
 
 const session = store.session() // or namespace()
 
-const core = session.get({ name: 'example' })
-await core.ready()
+// like hyperswarm: announce the topic and connect to its peers
+const discovery = rep.join(session, topic)
+await discovery.flushed()
 
-const topic = Buffer.alloc(32, 0x1)
+// only look it up, connect to at most one peer
+const lookup = rep.join(session, otherTopic, { server: false, client: true, limit: 1 })
 
-// ReplicatorSession
-const rs = rep.join(session, topic, { pin: true })
+// leave
+await lookup.destroy()
+await discovery.destroy()
 
-await rep.refresh() // apply auto-rotation & launch topics
+await session.close() // also leaves every topic joined with it
 
-await store.close() // leaves topic
 await rep.close()
 ```
 
@@ -34,28 +39,21 @@ await rep.close()
 
 ### `new Replicator(store, opts)`
 
-Create a topic replicator for a root corestore.
-
 `opts`:
 
 General
 
-- `autoswarm`: enables active topic rotation (default: `true`)
 - `suspended`: start suspended
 - `seed`: derive the replicator keypair from a seed
-- `maxPeers`: drop connections above
+- `maxPeers`: connection cap
 - `minPeers`: minimum connections to keep
 - `maxParallel`: max parallel outbound dials
-- `slots`: auto-rotation slots
-- `gcIdleTime`: Evict idle sessions exceeding time
-- `defaultDiscoveryTimeout`: initial discovery lifetime
-- `updatedDiscoveryTimeout`: shortened discovery lifetime after `session.bump()`
-- `discoveryStartupDelay`: delay before discovery lookups
-- `autoStartupDelay`: delay before autoswarm announcements
-- `minActiveTime`: minimum time an autoswarmed session stays active
-- `manual`: don't launch internal `refresh()` interval (default: `false`)
-- `interval`: Auto-refresh interval (default: `5000`)
-- `gcDisabled`: prevent garbage collection on `refresh()`
+- `connectionIdleTimeout`: a connection without protocol traffic for this long is idle (default: 3 minutes, keep-alives do not count)
+- `connectionGc`: drop idle connections nobody wants even below `maxPeers` (default: `true`)
+- `dhtFastRetry`: retry an empty first lookup after up to this long (default: `3s`)
+- `manual`: don't run the internal `refresh()` interval (default: `false`)
+- `interval`: auto-refresh interval (default: `5000`)
+- `gcDisabled`: never drop connections in `refresh()`
 
 Transport
 
@@ -66,158 +64,96 @@ Transport
 - `port`: bind the DHT socket to a fixed port
 - `firewall`: filter inbound and outbound peers
 - `relayThrough`: relay selector for outbound connections
+- `wakeup`: a `protomux-wakeup` instance, attached to every connection
 
-### Events
+### `const discovery = rep.join(storeSession, topic, { server = true, client = true, limit = Infinity })`
 
-#### `rep.on('activate', (session) => {})`
+Join a topic, like hyperswarm. Closing `storeSession` leaves the topic, the
+session of the first join of a topic owns it.
 
-Fired when a session becomes active.
+- `server`: announce the topic so its peers can find us;
+- `client`: look the topic up and connect to its peers;
+- `limit`: connect to at most this many of them, counting connected peers.
 
-#### `rep.on('deactivate', (session) => {})`
+Every call returns its own handle. A topic combines its joins: it is a server
+if any join is, a client if any join is, and its limit is the highest of the
+client joins (unlimited if any client join is). The topic is left (and
+un-announced) when its last join is destroyed.
 
-Fired when a session becomes inactive a.k.a idle.
+- `await discovery.flushed()`: wait for the current announce or lookup
+- `await discovery.refresh({ server, client, limit })`: change this join's flags
+- `await discovery.destroy()`: leave
 
-#### `rep.on('remove', (session) => {})`
+### `rep.joinPeer(publicKey)` / `rep.leavePeer(publicKey)`
 
-Fired when a session is removed from the replicator.
+Stay connected to a peer by public key, without a topic. Refcounted. A joined
+peer is never dropped by the connection GC.
 
-#### `rep.on('evicted', (count) => {})`
+### `await rep.background()` / `await rep.foreground()`
 
-Fired after GC evicts idle sessions. `count` is the number removed.
-
-Can be used as signal to add more sessions through `rep.join()`
-and update all priorities:
-
-```
-for (const [topic, session] of rep.sessions) {
-  session.priority = appTimestampOf(topic)
-}
-```
-
-#### `rep.on('dropped', (count) => {})`
-
-Fired after GC drops connections. `count` is the number dropped.
-
-### Getters
-
-#### `rep.connectionCount`
-
-Total amount of active connections.
-
-#### `rep.connecting`
-
-Amount of outbound connections in-flight.
-
-#### `rep.connections`
-
-Returns iterator over all established connections.
-
-#### `rep.activeSessions`
-
-Returns list of active sessions.
-
-#### `rep.announcedSessions`
-
-Returns list of announced sessions that are required to be un-announced on teardown.
-
-### Methods
-
-### `await rep.ready()`
-
-Resolves after dht.server port is bound and store is ready.
-
-### `const rs = rep.join(storeSession, topic, opts)`
-
-Join topic, returns `ReplicatorSession`.
-
-`opts`:
-
-- `priority`: autoswarm priority `number`
-- `pin`: same as `session.pin()`
-- `discover`: same as `session.discover()`
-- `limit`: maximum peers emitted per discovery query (default: `Infinity`)
-
-### `await rep.refresh()`
-
-Invokes topic-rotation, applies state transitions, then finally runs garbage-collector.
-
-Manual replicators take no actions unless refresh is called.
-
-### `await rep.flush()`
-
-Wait until current discovery and dial work settles.
-
-### `await rep.setAutoswarm(enabled)`
-
-Enable or disable autoswarm topic rotation.
-Disabling un-announces all autostarted topics
-
-### `rep.presuspend()`
-
-Begins unannouncing all topics.
+In the background nothing is announced, looked up or dialed. Existing
+connections stay up and inbound connections are still accepted.
+`presuspend()` is a deprecated alias of `background()`.
 
 ### `await rep.suspend()` / `await rep.resume()`
 
-Suspend and resume discovery, server, and connection activity.
+Suspend drops every connection and stops the server. `resume()` brings the
+server back first, then announces, looks up and dials again. It also leaves
+the background.
+
+### `await rep.refresh()`
+
+Drops idle or surplus connections and reschedules dials. Manual replicators
+take no actions unless refresh is called.
+
+### `await rep.flush()`
+
+Wait until the current announces, lookups and dials settle.
 
 ### `await rep.close()`
 
-Close the replicator and all joined sessions.
+Close the replicator and leave every topic.
 
-### ReplicatorSession
+### Properties
 
-#### `rs.on('state', (next, previous) => {})`
+- `rep.connectionCount`, `rep.connecting`, `rep.connections`, `rep.peers`, `rep.sessions`
+- `rep.activeSessions`, `rep.announcedSessions`
+- `rep.isBackgrounded`, `rep.discoveryRunning`, `rep.suspended`
+- `rep.stats`
 
-Fired when a session changes state.
+### Events
 
-States:
+- `'join' (session)` / `'remove' (session)`: a topic was joined or left
+- `'connected' (connection)` / `'disconnected' (connection)`
+- `'dropped' (count)`: connections were dropped by the GC
+- `'discovery-error' (err, session)`: a DHT query failed (also counted in `stats.dht.errors`)
+- `'ban' (peer, reason)`
 
-- `inactive`
-- `pinned`
-- `autostarted`
-- `discovering`
-- `destroyed`
+### Connections
 
-#### `rs.on('activate', (session) => {})`
+A connection is _wanted_ when the dialer would connect to that peer: it is
+joined (`joinPeer`) or was seen on a topic we are a client of.
 
-Fired when the session becomes active.
+- Idle connections that are not wanted are dropped, whatever the connection
+  count. Wanted ones are kept, dropping them would only redial them.
+- Over `maxPeers`, unwanted connections go first, then the quietest.
+- At `maxPeers`, a wanted peer waiting to be dialed makes room by dropping an
+  unwanted connection.
+- Joined peers are never dropped.
 
-#### `rs.on('deactivate', (session) => {})`
+Disconnects the replicator causes itself (suspend, dedupe, idle, cap) never
+count against a peer. An inbound peer that drops within seconds 20 times in
+10 minutes is banned for hammering.
 
-Fired when the session becomes inactive a.k.a idle.
+## Migrating from 1.x
 
-#### `rs.on('bump', (version) => {})`
-
-Fired when a remote discovery bump is observed.
-
-#### `rs.on('discovered', () => {})`
-
-Fired when the session exits discovery mode.
-
-### `rs.pin()` / `rs.unpin()`
-
-Pin topic to announce itself on dht - bypasses `priority`, auto-rotation and
-forces the session to be active until manual call to `unpin()`.
-
-### `rs.discover()`
-
-Launch a dht lookup for the topic to discover peers and update version `seen`. (announce: false / client only)
-On pinned sessions, forces a discovery refresh without unpinning.
-
-### `rs.bump(version = -1)`
-
-Announce local version on topic.
-
-If bump is called while in discovery mode, the discovery timeout is reset to
-`updatedDiscoveryTimeout` as the discovery operation can be considered 'sucessful'
-
-### `rs.priority = number`
-
-Priority used by autoswarm auto-selection.
-
-### `await rs.flush()`
-
-Wait until this topic's current dht query settles
+- `rep.join(storeSession, topic, opts)` takes `{ server, client, limit }` and returns a handle, like hyperswarm.
+- The swarming modes are gone: `pin`/`unpin`, `discover`, `bump`, autoswarm
+  (`autoswarm`, `slots`, `priority`, `setAutoswarm`), the discovery timeouts and
+  `gcIdleTime`. Applications decide which topics to join and for how long.
+- `presuspend()` no longer refuses inbound connections; it is `background()`.
+- `limit` counts connected peers (self excluded), like hyperswarm.
+- `joinPeer` / `leavePeer` connect by public key.
 
 ## License
 

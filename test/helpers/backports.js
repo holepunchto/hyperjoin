@@ -45,11 +45,8 @@ exports.joinRemote = async function joinRemote(peer, remotePeer) {
   const remote = remotePeer.cores.map((core) => peer.session.get(core.key))
   await Promise.all(remote.map((core) => core.ready()))
 
-  const repSession = peer.replicator.join(peer.store.session(), remotePeer.cores[0].discoveryKey, {
-    pin: true
-  })
-  await repSession.ready()
-  await repSession.refresh()
+  const repSession = peer.replicator.join(peer.store.session(), remotePeer.cores[0].discoveryKey)
+  await repSession.flushed()
   await peer.replicator.flush()
 
   return remote
@@ -63,8 +60,6 @@ exports.spawnPeer = async function spawnPeer(t, opts = {}) {
   const store = new Corestore(await t.tmp(), storeOpts)
   const replicator = new Replicator(store, {
     manual: true,
-    autoswarm: false,
-    discoveryStartupDelay: 0,
     dhtFastRetry: 50,
     ...opts
   })
@@ -77,9 +72,8 @@ exports.spawnPeer = async function spawnPeer(t, opts = {}) {
   await one.ready()
   await one.append([b4a.from('cells'), b4a.from('interlinked')])
 
-  const repSession = replicator.join(session, one.discoveryKey, { pin: true })
-  await repSession.ready()
-  await repSession.refresh()
+  const repSession = replicator.join(session, one.discoveryKey)
+  await repSession.flushed()
   await replicator.flush()
 
   const two = session.get({ name: 'two' })

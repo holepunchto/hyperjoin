@@ -16,6 +16,8 @@ const {
 
 const { toHex } = b4a
 
+const REPLICATION_GRACE = 6000 // lib/connection.js, a new connection is never idle before it
+
 test('Default keypair from corestore', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
@@ -62,7 +64,7 @@ test('Basic replication', async (t) => {
   await testnet.destroy()
 })
 
-test('GC connections with no active mux sessions', async (t) => {
+test('GC drops connections with no open channels first', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -77,29 +79,24 @@ test('GC connections with no active mux sessions', async (t) => {
   const p3Key = toHex(p3.replicator.peerId)
 
   const p3Connected = onceEvent(p1.replicator, 'connected')
+  // p3 only looks the topic up, so p1 never sees it in a lookup
   const p3Session = p3.replicator.join(p3.store.session(), p1.cores[0].discoveryKey, {
-    discover: true
+    server: false
   })
-  await p3Session.ready()
-  await p3Session.refresh()
+  await p3Session.flushed()
   await p3Connected
 
   t.is(p1.replicator.connectionCount, 2, 'p1 connected to both peers')
-  t.ok(p1.replicator.getConnection(p2Key)._protomuxSessions() > 0, 'p2 has open core session to p1')
   t.is(p1.replicator.hasConnection(p3Key), true, 'p3 should connect to p1')
-  t.is(
-    p1.replicator.getConnection(p3Key)._protomuxSessions(),
-    0,
-    'p3 connection has no protomux sessions'
-  )
 
-  await p1.replicator._gc()
+  // past the replication grace period, a connection with no open channels is idle
+  const now = Date.now() + REPLICATION_GRACE
+  t.absent(p1.replicator.getConnection(p2Key).isIdle(now), 'p2 replicates a core with p1')
+  t.ok(p1.replicator.getConnection(p3Key).isIdle(now), 'p3 opened no channels')
 
-  t.is(
-    p1.replicator.connectionCount,
-    1,
-    'gc should evict the connection without active protmux sessions'
-  )
+  await p1.replicator._gc(now)
+
+  t.is(p1.replicator.connectionCount, 1, 'gc drops the idle connection over the cap')
   t.alike(
     Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)),
     [p2Key],
@@ -163,10 +160,10 @@ test('GC preserves stable connections over rookies', async (t) => {
   const a = active[0]
   t.is(toHex(a.peerId), p2Key, 'p2 connected')
 
-  t.is(a._survived, 0, 'not yet sweeped')
+  t.is(a.survived, 0, 'not yet sweeped')
 
   await p1.replicator._gc()
-  t.is(a._survived, 1, 'passed gc')
+  t.is(a.survived, 1, 'passed gc')
 
   const p3Connected = onceEvent(p1.replicator, 'connected').then(
     (connection) => connection.replicating
@@ -181,14 +178,14 @@ test('GC preserves stable connections over rookies', async (t) => {
 
   t.is(toHex(a.peerId), p2Key, 'connection a = p2')
   t.is(toHex(b.peerId), p3Key, 'connection b = p3')
-  t.ok(a._survived > b._survived, 'b will be dropped')
+  t.ok(a.survived > b.survived, 'b will be dropped')
 
   await p1.replicator._gc()
 
   active = Array.from(p1.replicator.connections)
   t.is(active.length, 1, 'GC dropped overflow')
   t.is(toHex(a.peerId), p2Key, 'p2 remains connected')
-  t.is(a._survived, 2, 'passed gc twice')
+  t.is(a.survived, 2, 'passed gc twice')
 
   await p1.destroy()
   await p2.destroy()
@@ -244,7 +241,7 @@ test('inbound peer gets banned for hammering', async (t) => {
   await testnet.destroy()
 })
 
-test('regression: presuspend() during async firewall leaked _inflight', async (t) => {
+test('regression: background() during async firewall leaked _inflight', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -272,16 +269,15 @@ test('regression: presuspend() during async firewall leaked _inflight', async (t
   })
 
   const p2session = p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey, {
-    discover: true
+    server: false
   })
 
-  await p2session.ready()
-  await p2session.refresh()
+  await p2session.flushed()
 
   await trapped // pending async firewall
 
-  p2.replicator.presuspend()
-  t.ok(p2.replicator.isPresuspended, 'presuspended')
+  p2.replicator.background()
+  t.ok(p2.replicator.isBackgrounded, 'backgrounded')
 
   resolveFirewall(false) // release
 
@@ -300,7 +296,7 @@ test('regression: presuspend() during async firewall leaked _inflight', async (t
   await testnet.destroy()
 })
 
-test('Dialer is resumed after presuspend', async (t) => {
+test('Dialer is resumed after background', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -311,11 +307,11 @@ test('Dialer is resumed after presuspend', async (t) => {
   const remote = p1.replicator.peerId
 
   p2.replicator.dialer.topicEnable(topic)
-  p2.replicator.presuspend()
+  p2.replicator.background()
   p2.replicator.dialer.seen({ publicKey: remote }, topic)
 
   const peer = p2.replicator.dialer.lookup(remote)
-  t.is(peer._outboundAttempts, 0, 'no dials when presuspended')
+  t.is(peer._outboundAttempts, 0, 'no dials when backgrounded')
 
   await p2.replicator.resume()
   await p2.replicator.flush()
@@ -345,6 +341,7 @@ test('regression: suspend() holds dials until resume()', async (t) => {
   t.is(peer._outboundAttempts, 0, 'nothing dialed while suspending')
 
   await replicator.resume()
+  await replicator.dialer.flush()
 
   t.is(peer._outboundAttempts, 1, 'dialed after resume')
 

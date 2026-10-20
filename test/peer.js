@@ -272,3 +272,71 @@ test('next retryAt must not occur before previous attempt finish', (t) => {
 
   t.ok(peer.retryAt > settledAt, 'retry remains in the future after a slow failure')
 })
+
+test('disconnects we cause never ban a peer', (t) => {
+  const peer = new Peer(asKey(7))
+  let now = 1_000_000
+
+  for (let i = 0; i < 50; i++) {
+    peer.markConnected(false, now)
+    now += 100
+    peer.markDisconnected(false, 'SuspendDrop', now)
+  }
+
+  t.absent(peer.isBanned)
+})
+
+test('peers that keep dropping within seconds are banned', (t) => {
+  const peer = new Peer(asKey(7))
+  let now = 1_000_000
+
+  for (let i = 0; i < 19; i++) {
+    peer.markConnected(false, now)
+    now += 100
+    peer.markDisconnected(false, 'ECONNRESET', now)
+  }
+
+  t.absent(peer.isBanned, 'not banned after 19')
+
+  peer.markConnected(false, now)
+  now += 100
+  peer.markDisconnected(false, 'ECONNRESET', now)
+
+  t.ok(peer.isBanned, 'banned on the 20th')
+  t.is(peer.banReason, 'hammering')
+})
+
+test('short disconnects outside the window are forgiven', (t) => {
+  const peer = new Peer(asKey(7))
+  let now = 1_000_000
+
+  for (let i = 0; i < 15; i++) {
+    peer.markConnected(false, now)
+    now += 100
+    peer.markDisconnected(false, 'ECONNRESET', now)
+  }
+
+  now += 11 * 60 * 1000 // past the 10 minute window
+
+  for (let i = 0; i < 10; i++) {
+    peer.markConnected(false, now)
+    now += 100
+    peer.markDisconnected(false, 'ECONNRESET', now)
+  }
+
+  t.absent(peer.isBanned, 'old short sessions no longer count')
+})
+
+test('inbound attempts do not move the outbound retry', (t) => {
+  const peer = new Peer(asKey(7))
+  const now = 1_000_000
+
+  peer.observe(TOPIC, now)
+  peer.markAttempt(true, { now })(true, 'ETIMEDOUT', now)
+
+  const retryAt = peer.retryAt
+
+  peer.markAttempt(false, { now: now + 1000 })(false, null, now + 1000)
+
+  t.is(peer.retryAt, retryAt)
+})

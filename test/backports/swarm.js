@@ -18,17 +18,15 @@ const Peer = require('../../lib/peer')
 const { toHex } = b4a
 
 async function joinPinned(replicator, store, topic) {
-  const session = replicator.join(store, topic, { pin: true })
-  await session.ready()
-  await session.refresh()
+  const session = replicator.join(store, topic)
+  await session.flushed()
   await replicator.flush()
   return session
 }
 
 async function joinDiscover(replicator, store, topic) {
-  const session = replicator.join(store, topic, { discover: true })
-  await session.ready()
-  await session.refresh()
+  const session = replicator.join(store, topic, { server: false })
+  await session.flushed()
   await replicator.flush()
   return session
 }
@@ -82,8 +80,7 @@ test('two servers - first connection', async (t) => {
     connection.stream.end()
   })
 
-  const session = await joinPinned(p2.replicator, p2.store.session(), p1.cores[0].discoveryKey)
-  await session.ready()
+  await joinPinned(p2.replicator, p2.store.session(), p1.cores[0].discoveryKey)
   await p2.replicator.flush()
 
   await connection1Test
@@ -247,8 +244,7 @@ test('two servers, two clients - simple deduplication', async (t) => {
     connection2Test.pass('p2 connection')
   })
 
-  const session = await joinPinned(p2.replicator, p2.store.session(), p1.cores[0].discoveryKey)
-  await session.ready()
+  await joinPinned(p2.replicator, p2.store.session(), p1.cores[0].discoveryKey)
   await p1.replicator.flush()
   await p2.replicator.flush()
 
@@ -353,16 +349,13 @@ test('GC dedupes connections', async (t) => {
   await Promise.all([...p1.replicator.sessions.values()].map((s) => s.ready()))
   await Promise.all([...p2.replicator.sessions.values()].map((s) => s.ready()))
 
-  const s1 = [...p1.replicator.sessions.values()][0]
-  const s2 = [...p2.replicator.sessions.values()][0]
-
   const p1Connections = waitForEvents(p1.replicator, 'connected', 2)
   const p2Connections = waitForEvents(p2.replicator, 'connected', 2)
 
   let peerInfo = p1.replicator.dialer.lookup(p2.replicator.peerId)
-  p1.replicator._connect(peerInfo, s1.discoveryKey)
+  p1.replicator._connect(peerInfo)
   peerInfo = p2.replicator.dialer.lookup(p1.replicator.peerId)
-  p2.replicator._connect(peerInfo, s2.discoveryKey)
+  p2.replicator._connect(peerInfo)
 
   await Promise.all([p1Connections, p2Connections])
 
@@ -550,10 +543,9 @@ test('two servers, one client - refreshing a peer discovery instance discovers n
   })
 
   const session = p3.replicator.join(p3.store.session(), p1.cores[0].discoveryKey, {
-    discover: true
+    server: false
   })
-  await session.ready()
-  await session.refresh()
+  await session.flushed()
   await p3.replicator.flush()
 
   t.is(clientConnections, 1)
@@ -562,7 +554,7 @@ test('two servers, one client - refreshing a peer discovery instance discovers n
   await p2.replicator.flush()
   t.is(clientConnections, 1)
 
-  session.discovery.refresh()
+  session.session.discovery.refresh()
   await p3.replicator.flush()
   t.is(clientConnections, 2)
 
@@ -659,22 +651,19 @@ test('rejoining with different client/server opts refreshes', async (t) => {
   await one.ready()
   await one.append([b4a.from('cells'), b4a.from('interlinked')])
 
-  const session1 = replicator.join(local, one.discoveryKey, { discover: true })
-  await session1.ready()
-  await session1.refresh()
-  await session1.flush()
-  await session1.close()
+  const session1 = replicator.join(local, one.discoveryKey, { server: false })
+  await session1.flushed()
+  await session1.destroy()
 
-  const session2 = replicator.join(local, one.discoveryKey, { pin: true })
-  await session2.ready()
-  await session2.refresh()
+  const session2 = replicator.join(local, one.discoveryKey)
+  await session2.flushed()
   await replicator.flush()
 
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
   p2.replicator.on('connected', () => {})
   const client = await joinPinned(p2.replicator, p2.store.session(), one.discoveryKey)
-  await client.flush()
+  await client.flushed()
   await p2.replicator.flush()
 
   t.is(p2.replicator.connectionCount, 1)
@@ -694,7 +683,7 @@ test('closing all discovery sessions clears topic state', async (t) => {
 
   const store2 = p1.store.session()
   const session1 = p1.replicator.sessions.get(toHex(p1.cores[0].discoveryKey))
-  const session2 = await joinPinned(p1.replicator, store2, p1.cores[1].discoveryKey)
+  const session2 = (await joinPinned(p1.replicator, store2, p1.cores[1].discoveryKey)).session
 
   const remote1 = p2.session.get(p1.cores[0].key)
   const remote2 = p2.session.get(p1.cores[1].key)
@@ -704,7 +693,7 @@ test('closing all discovery sessions clears topic state', async (t) => {
   const client1 = await joinPinned(p2.replicator, p2.store.session(), p1.cores[0].discoveryKey)
   const client2 = await joinPinned(p2.replicator, p2.store.session(), p1.cores[1].discoveryKey)
 
-  await Promise.all([client1.ready(), client2.ready(), remote1.get(0), remote2.get(0)])
+  await Promise.all([client1.flushed(), client2.flushed(), remote1.get(0), remote2.get(0)])
 
   t.is(p1.replicator.sessions.size, 2)
   // TODO: Post v0.5 - orphan status should accellerate decay
@@ -752,8 +741,7 @@ test.skip('peer-discovery object deleted when corresponding connection closes (s
 
   await p1.session.close()
 
-  const client = await joinPinned(p2.replicator, p2.store.session(), p1.cores[0].discoveryKey)
-  await client.ready()
+  await joinPinned(p2.replicator, p2.store.session(), p1.cores[0].discoveryKey)
   await p2.replicator.flush()
 
   await connected

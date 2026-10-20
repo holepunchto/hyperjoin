@@ -62,7 +62,6 @@ class TestSwarm extends ReadyResource {
   async spawnPeer(opts) {
     const peer = new TestPeer(++this._peerCounter, this.rootPath, {
       bootstrap: this.bootstrap,
-      autoswarm: true,
       ...opts
     })
 
@@ -108,7 +107,6 @@ class TestPeer extends ReadyResource {
     this.store = new Corestore(this._path, storeOpts)
     this.replicator = new Replicator(this.store, {
       manual: true,
-      autoswarm: true,
       dhtFastRetry: 100,
       ...this._opts
     })
@@ -125,7 +123,7 @@ class TestPeer extends ReadyResource {
     const ns = this.store.namespace(topic)
     const session = ns.session()
     const repSession = this.replicator.join(session, topic, opts)
-    await repSession.ready()
+    await repSession.session.ready()
 
     this.sessions.set(toHex(topic), { session, repSession })
 

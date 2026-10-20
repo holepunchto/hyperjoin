@@ -4,21 +4,12 @@ const safetyCatch = require('safety-catch')
 const Dialer = require('./lib/dialer')
 const Connection = require('./lib/connection')
 const Session = require('./lib/session')
+const PeerDiscoverySession = require('./lib/peer-discovery-session')
 
 const b4a = require('b4a')
 const { toHex } = b4a
 
 const AUTO_REFRESH_INTERVAL = 5000
-
-// sessions
-const DEFAULT_AUTO_SLOTS = 8
-const DEFAULT_SWARM_GC_IDLE_TIME = 30 * 1000
-
-const DEFAULT_DISCOVERY_TIMEOUT = 60 * 1000
-const UPDATED_DISCOVERY_TIMEOUT = 10 * 1000
-const DISCOVERY_STARTUP_DELAY = 5 * 1000 // 5s
-const AUTO_STARTUP_DELAY = 5 * 1000 // 5s
-const MIN_ACTIVE_TIME = 30 * 1000
 
 const DHT_FAST_RETRY = 3 * 1000 // 3s
 
@@ -26,6 +17,7 @@ const DHT_FAST_RETRY = 3 * 1000 // 3s
 const MIN_PEERS = 20
 const MAX_PEERS = 40
 const WANDERLUST_THRESHOLD = 60 * 1000
+const CONNECTION_IDLE_TIMEOUT = 3 * 60 * 1000 // 3 Minutes
 
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
@@ -39,39 +31,25 @@ module.exports = class Replicator extends ReadyResource {
 
     const {
       seed,
-      keyPair,
+      keyPair = seed ? DHT.keyPair(seed) : null,
       relayThrough,
       minPeers = MIN_PEERS,
       maxPeers = MAX_PEERS,
       maxParallel,
       wanderlust = WANDERLUST_THRESHOLD,
       firewall = allowAll,
-      suspended,
-      autoswarm = true,
+      suspended = false,
       manual = false,
       interval = AUTO_REFRESH_INTERVAL,
       gcDisabled = false,
-
-      // Discovery
-      defaultDiscoveryTimeout = DEFAULT_DISCOVERY_TIMEOUT,
-      updatedDiscoveryTimeout = UPDATED_DISCOVERY_TIMEOUT,
-      discoveryStartupDelay = DISCOVERY_STARTUP_DELAY,
       dhtFastRetry = DHT_FAST_RETRY,
-
-      // Idle
-      gcIdleTime = DEFAULT_SWARM_GC_IDLE_TIME,
-
-      // autoswarm
-      slots = DEFAULT_AUTO_SLOTS,
-      autoStartupDelay = AUTO_STARTUP_DELAY,
-      minActiveTime = MIN_ACTIVE_TIME
+      connectionIdleTimeout = CONNECTION_IDLE_TIMEOUT,
+      connectionGc = true,
+      wakeup = null
     } = opts
 
-    if (seed) this.keyPair = DHT.keyPair(seed)
-    if (keyPair) this.keyPair = keyPair
-
+    this.keyPair = keyPair
     this.root = rootStore
-    this._dhtOwned = !opts.dht
     this.dht =
       opts.dht ||
       new DHT({
@@ -80,28 +58,28 @@ module.exports = class Replicator extends ReadyResource {
         port: opts.port
       })
 
-    this._firewall = firewall
+    this.dialer = new Dialer(
+      {
+        ondial: (peer) => this._connect(peer),
+        ondialerror: (err) => this.emit('error', err),
+        isConnected: (key) => this.hasConnection(key),
+        canRelay: () => !!this.relayThrough,
+        want: () => {
+          if (!this.discoveryRunning) return 0
 
-    const handlers = {
-      ondial: (peer) => this._connect(peer),
-      ondialerror: (err) => this.emit('error', err),
-      isConnected: (key) => this.hasConnection(key),
-      canRelay: () => !!this.relayThrough,
-      want: () => {
-        if (this.suspended || this.isPresuspended) return 0
-
-        return this._maxPeers - this.connectionCount // throttle
+          return this._maxPeers - this.connectionCount // throttle
+        }
+      },
+      {
+        backoffs: opts.backoffs,
+        jitter: opts.jitter,
+        suspended,
+        maxParallel
       }
-    }
-
-    this.dialer = new Dialer(handlers, {
-      backoffs: opts.backoffs,
-      jitter: opts.jitter,
-      suspended,
-      maxParallel
-    })
+    )
 
     this.relayThrough = relayThrough && toRelaySelector(relayThrough)
+    this.wakeup = wakeup // protomux-wakeup, attached to every connection
 
     this.server = this.dht.createServer(
       {
@@ -114,34 +92,15 @@ module.exports = class Replicator extends ReadyResource {
 
     this.destroyed = false
     this.suspended = suspended
-    this._presuspended = false
-    this._suspending = Promise.resolve()
+    this.isBackgrounded = false
 
-    this.sessions = new Map() // hex(discoveryKey) -> Session
+    this.sessions = new Map() // hex(topic) -> Session
     this.inbound = new Map() // hex(peerId) -> Connection
     this.outbound = new Map() // hex(peerId) -> Connection
 
-    this._inflight = new Set() // hex(peerId), dedup in-flight dials
-    this._inflightCancel = new Set() // cancelCallbacks
-    this._minPeers = minPeers
-    this._maxPeers = maxPeers
-    this._wanderlust = wanderlust
-    this._lastConnectionEvict = 0
-
-    this.slots = slots
-    this._autoswarm = autoswarm
-    this._autoRefreshInterval = interval
-    this._gcIdleTime = gcIdleTime
-
-    this._autoStartupDelay = autoStartupDelay
-    this._minActiveTime = minActiveTime
-
-    this._defaultDiscoveryTimeout = defaultDiscoveryTimeout
-    this._updatedDiscoveryTimeout = updatedDiscoveryTimeout
-    this._discoveryStartupDelay = discoveryStartupDelay
-    this._dhtFastRetry = dhtFastRetry
-
-    this._online = false
+    this.dhtFastRetry = dhtFastRetry
+    this.connectionIdleTimeout = connectionIdleTimeout // no protocol traffic for this long is idle
+    this.connectionGc = connectionGc // drop idle connections even below maxPeers
 
     this.stats = {
       updates: 0,
@@ -161,9 +120,27 @@ module.exports = class Replicator extends ReadyResource {
       dht: {
         lookup: 0,
         announce: 0,
-        unannounce: 0
+        unannounce: 0,
+        errors: 0
       }
     }
+
+    this._dhtOwned = !opts.dht
+    this._firewall = firewall
+    this._suspending = Promise.resolve()
+
+    this._inflight = new Set() // hex(peerId), dedup in-flight dials
+    this._inflightCancel = new Set() // cancelCallbacks
+    this._minPeers = minPeers
+    this._maxPeers = maxPeers
+    this._wanderlust = wanderlust
+    this._lastConnectionEvict = 0
+
+    this._online = false
+    this._gcDisabled = gcDisabled
+    this._manual = !!manual
+    this._autoRefreshInterval = interval
+    this._refreshInterval = null
 
     this._handleNetworkChange = this._handleNetworkChange.bind(this)
     this.dht.on('network-change', this._handleNetworkChange)
@@ -176,9 +153,6 @@ module.exports = class Replicator extends ReadyResource {
 
     this.on('update', this._handleUpdate.bind(this))
 
-    this._gcDisabled = gcDisabled
-    this._manual = !!manual
-    this._refreshInterval = null
     if (!this._manual) this._startAutoRefresh()
   }
 
@@ -202,8 +176,14 @@ module.exports = class Replicator extends ReadyResource {
     return this.dialer.peers
   }
 
+  // @deprecated, use isBackgrounded
   get isPresuspended() {
-    return this._presuspended
+    return this.isBackgrounded
+  }
+
+  // announces, lookups and dials only run while resumed and in the foreground
+  get discoveryRunning() {
+    return !this.suspended && !this.isBackgrounded
   }
 
   *_connections() {
@@ -231,10 +211,12 @@ module.exports = class Replicator extends ReadyResource {
     return !!this.getConnection(peerId) || this._inflight.has(peerId)
   }
 
+  // sessions doing dht work right now
   get activeSessions() {
     const active = []
     for (const session of this.sessions.values()) {
-      if (!session.active || session._suspended) continue
+      if (session.suspended) continue
+      if (!session.isServer && !session.isClient) continue
       active.push(session)
     }
     return active
@@ -243,7 +225,7 @@ module.exports = class Replicator extends ReadyResource {
   get announcedSessions() {
     const announced = []
     for (const session of this.sessions.values()) {
-      if (!session.isAnnounced) continue
+      if (!session.announced) continue
       announced.push(session)
     }
     return announced
@@ -252,6 +234,65 @@ module.exports = class Replicator extends ReadyResource {
   _selectRelay(force) {
     if (!this.relayThrough) return null
     return this.relayThrough(force, this)
+  }
+
+  // Join a topic, like hyperswarm: `server` announces it, `client` looks it up
+  // and connects to its peers, at most `limit` of them.
+  // Every join returns its own handle, destroy it (or close `store`) to leave.
+  join(store, topic, { server = true, client = true, limit = Infinity } = {}) {
+    if (this.destroyed || this.closing) throw new Error('Replicator is destroyed')
+
+    const hex = toHex(topic)
+    let session = this.sessions.get(hex)
+
+    // a session that is closing is never reused, a fresh one replaces it
+    if (!session || session.closing) session = this._createSession(store, topic, session)
+
+    const discovery = new PeerDiscoverySession(session, { server, client, limit })
+    session.add(discovery)
+
+    session.ready().catch(safetyCatch)
+
+    return discovery
+  }
+
+  _createSession(store, topic, previous = null) {
+    const hex = toHex(topic)
+    const session = new Session(this, store, topic, { previous })
+
+    this.sessions.set(hex, session)
+
+    session.on('update', () => this._updateClient(hex))
+    session.on('close', () => {
+      if (this.sessions.get(hex) === session) {
+        this.sessions.delete(hex)
+        this._updateClient(hex)
+      }
+      this.emit('remove', session)
+    })
+
+    this.emit('join', session)
+
+    return session
+  }
+
+  // the dialer only connects to peers of topics we are a client of
+  _updateClient(hex) {
+    const session = this.sessions.get(hex)
+    if (session && session.isClient) this.dialer.topicEnable(hex)
+    else this.dialer.topicDisable(hex)
+  }
+
+  // Stay connected to a peer by public key, like hyperswarm.
+  // Refcounted, and never dropped by gc while joined.
+  joinPeer(publicKey) {
+    this.dialer.joinPeer(publicKey)
+    this.emit('update')
+  }
+
+  leavePeer(publicKey) {
+    this.dialer.leavePeer(publicKey)
+    this.emit('update')
   }
 
   suspend({ log = noop } = {}) {
@@ -290,74 +331,59 @@ module.exports = class Replicator extends ReadyResource {
     await Promise.all(pending)
   }
 
-  // unannounce sessions
-  presuspend() {
-    if (this._presuspended) return
-
-    this._presuspended = true
+  // The app went to the background: stop announcing, looking up and dialing.
+  // Connections stay up and inbound connections are still accepted.
+  async background() {
+    if (this.isBackgrounded) return
+    this.isBackgrounded = true
 
     this.dialer.suspend().catch(safetyCatch)
-    this.refresh().catch(safetyCatch)
+
+    const pending = []
+    for (const session of this.sessions.values()) pending.push(session.suspend())
+    await Promise.allSettled(pending)
   }
 
-  async resume({ log = noop } = {}) {
-    if (this._presuspended) {
-      this._presuspended = false
-      this.dialer.resume()
-      await this.refresh()
-    }
+  // Back in the foreground: announce, look up and dial again
+  async foreground() {
+    if (!this.isBackgrounded) return
+    this.isBackgrounded = false
 
-    if (!this.suspended) return
+    if (this.suspended) return // resume() brings everything back
+
+    this.dialer.resume()
+
+    const pending = []
+    for (const session of this.sessions.values()) pending.push(session.resume())
+    await Promise.allSettled(pending)
+
+    await this.refresh()
+  }
+
+  // @deprecated, use background()
+  presuspend() {
+    return this.background()
+  }
+
+  // Back from a suspend or the background: announce, look up and dial again
+  async resume({ log = noop } = {}) {
+    if (!this.suspended) return this.foreground()
 
     if (this._dhtOwned) await this.dht.resume({ log })
 
     await this.server.resume({ log })
 
+    this.isBackgrounded = false
     this.suspended = false
 
-    this.dialer.resume()
-
     const pending = []
-
-    for (const session of this.sessions.values()) {
-      pending.push(session.resume({ log }))
-    }
-
+    for (const session of this.sessions.values()) pending.push(session.resume({ log }))
     await Promise.all(pending)
 
+    // only dial once the replicator is fully resumed
+    this.dialer.resume()
+
     if (!this._manual) this._startAutoRefresh()
-  }
-
-  join(store, topic, { priority = 0, pin = false, discover = false, deferSwarming, limit } = {}) {
-    const dk = toHex(topic)
-    if (this.sessions.has(dk)) throw new Error('session exists')
-
-    const session = new Session(this, store, topic, {
-      priority,
-      pin,
-      discover,
-      limit,
-      deferSwarming
-    })
-    this.sessions.set(dk, session)
-
-    session.on('close', () => {
-      this.sessions.delete(dk)
-      this.emit('remove', session)
-    })
-
-    session.on('state', () => {
-      if (session.active) {
-        this.dialer.topicEnable(dk)
-      } else {
-        this.dialer.topicDisable(dk)
-      }
-    })
-    if (session.active) this.dialer.topicEnable(dk)
-
-    this.emit('join', session)
-
-    return session
   }
 
   _onincoming(conn) {
@@ -418,12 +444,14 @@ module.exports = class Replicator extends ReadyResource {
 
     if (map.has(hex)) throw new Error('unreachable: connection leak') // sanity check
 
+    // the connection and protomux attach their 'data' listeners in the same tick
     const connection = new Connection(this, stream, peerId, initiator)
 
     map.set(hex, connection)
 
+    if (this.wakeup) this.wakeup.addStream(connection.stream)
     this.root.replicate(connection.stream)
-    connection._watchChannels()
+    connection.watchChannels()
 
     if (initiator) this.stats.connects.client.opened++
     else this.stats.connects.server.opened++
@@ -488,18 +516,19 @@ module.exports = class Replicator extends ReadyResource {
     return firewalled
   }
 
+  // backgrounded still accepts inbound connections, see background()
   get _isTearingdown() {
     return (
       this.destroyed || // replicator begin-teardown
       this.suspended || // replicator
       this.closed || // ready-resource fully torn down
-      this.closing ||
-      this.isPresuspended // <-- unintentional artifact?
+      this.closing
     )
   }
 
-  async _connect(peer, topic) {
-    if (this._isTearingdown) return true
+  // Resolves to the dial's failure cause, falsy once connected. The dialer records the attempt.
+  async _connect(peer) {
+    if (this._isTearingdown || this.isBackgrounded) return true
 
     const hex = toHex(peer.publicKey)
     if (b4a.equals(peer.publicKey, this.peerId)) return true
@@ -508,13 +537,11 @@ module.exports = class Replicator extends ReadyResource {
     if (this.inbound.has(hex)) return true
     if (this._inflight.has(hex)) return true
 
-    const peerInfo = this.dialer.lookup(peer.publicKey)
-
     this._inflight.add(hex)
 
     let firewalled = true
     try {
-      firewalled = await this._handleFirewall(peerInfo.publicKey, null)
+      firewalled = await this._handleFirewall(peer.publicKey, null)
     } finally {
       // userhandler threw or firewalled - clear ref
       if (firewalled) this._inflight.delete(hex)
@@ -522,7 +549,8 @@ module.exports = class Replicator extends ReadyResource {
 
     if (firewalled) return true
 
-    if (this._isTearingdown) {
+    // no dials start in the background, it may have begun while the firewall ran
+    if (this._isTearingdown || this.isBackgrounded) {
       this._inflight.delete(hex)
       return true
     }
@@ -549,8 +577,8 @@ module.exports = class Replicator extends ReadyResource {
 
       stream = this.dht.connect(peer.publicKey, {
         keyPair: this.keyPair,
-        relayAddresses: peerInfo.relayAddresses,
-        relayThrough: this._selectRelay(peerInfo.forceRelaying)
+        relayAddresses: peer.relayAddresses,
+        relayThrough: this._selectRelay(peer.forceRelaying)
       })
 
       stream.once('error', onerror)
@@ -570,8 +598,7 @@ module.exports = class Replicator extends ReadyResource {
     // opened after teardown
     if (this._isTearingdown) {
       stream.once('error', noop)
-      const e = new Error(ERR_DESTROYED)
-      stream.destroy(e)
+      stream.destroy(new Error(ERR_DESTROYED))
       return ERR_DESTROYED
     }
 
@@ -581,8 +608,43 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     // stream opened - hand-off
-    this._initConnection(true, peer.publicKey, stream, topic)
+    this._initConnection(true, peer.publicKey, stream)
 
+    return false
+  }
+
+  // Order to drop connections in, first goes first. Connections the dialer
+  // does not want (it would not reconnect them) go before wanted ones, then
+  // pristine's heuristic: rookies before established, then the stalest.
+  // Joined peers (joinPeer) are never dropped.
+  _dropOrder(now) {
+    return Array.from(this.connections)
+      .filter((c) => !c.evicted && !c.info.isJoined)
+      .map((c) => ({ connection: c, wanted: this.dialer.wants(c.info), idle: c.isIdle(now) }))
+      .sort((a, b) => {
+        if (a.wanted !== b.wanted) return a.wanted ? 1 : -1
+        if (a.idle !== b.idle) return a.idle ? -1 : 1
+
+        const aRookie = a.connection.survived < 1
+        const bRookie = b.connection.survived < 1
+
+        // Evict rookie over established
+        if (aRookie !== bRookie) return aRookie ? -1 : 1
+
+        // Evict newest, comparing 2 rookies.
+        if (aRookie) return b.connection.connectedAt - a.connection.connectedAt
+
+        // Evict stale, comparing 2 established
+        return a.connection.lastActivity - b.connection.lastActivity
+      })
+      .map((e) => e.connection)
+  }
+
+  // a peer we want is waiting for a free connection slot
+  _isPeerWaiting(now) {
+    for (const peer of this.peers.values()) {
+      if (this.dialer.isEligable(peer, now)) return true
+    }
     return false
   }
 
@@ -591,7 +653,13 @@ module.exports = class Replicator extends ReadyResource {
 
     const evictions = []
     let connectionsEvicted = 0
-    let sessionsEvicted = 0
+
+    const drop = (connection, reason) => {
+      connection.evicted = true
+      evictions.push(this._evictConnection(connection, reason))
+      connectionsEvicted++
+      this._lastConnectionEvict = now
+    }
 
     // peer-dedupe
 
@@ -609,96 +677,64 @@ module.exports = class Replicator extends ReadyResource {
       // low-peerId keeps inbound
       const target = (cmp > 0) ^ connection.initiator ? connection : dst.get(key)
 
-      evictions.push(this._evictConnection(target, ERR_DUPLICATE))
-      connectionsEvicted++
+      drop(target, ERR_DUPLICATE)
     }
-
-    // GC idle sessions
-
-    for (const session of this.sessions.values()) {
-      if (!session._shouldEvict(now)) continue
-      evictions.push(session.destroy())
-      sessionsEvicted++
-    }
-
-    // GC Connections
 
     if (!this._lastConnectionEvict) this._lastConnectionEvict = now
 
-    const gcConn = (connection, reason = ERR_IDLE) => {
-      connection._evicted = true
-      evictions.push(this._evictConnection(connection, reason))
-      connectionsEvicted++
-      this._lastConnectionEvict = now
-    }
+    let open = 0
+    for (const connection of this.connections) if (!connection.evicted) open++
 
-    if (this.connectionCount > this._maxPeers) {
-      const nEvict = this.connectionCount - this._maxPeers
-
-      // Evict idle connections
+    // 1. idle connections the dialer would not reconnect, at any connection count.
+    // Wanted ones stay, dropping them would only make the dialer redial them.
+    if (this.connectionGc) {
       for (const connection of this.connections) {
-        if (!connection.isIdle(now)) continue
+        if (connection.evicted || connection.info.isJoined) continue
+        if (this.dialer.wants(connection.info) || !connection.isIdle(now)) continue
 
-        gcConn(connection, ERR_IDLE)
-
-        if (connectionsEvicted >= nEvict) {
-          break // target reached
-        }
-      }
-
-      // TODO: move to [lib|test]/heuristics.js
-      // Heuristic evict if still over max-cap
-      const nHeuristicEvict = nEvict - connectionsEvicted
-
-      if (nHeuristicEvict > 0) {
-        // TODO: avoid eviction for connection:
-        // - from pinned topic
-        // - good throughput
-        const connections = Array.from(this.connections)
-          .filter((c) => !c._evicted)
-          .sort((a, b) => {
-            const aRookie = a._survived < 1
-            const bRookie = b._survived < 1
-
-            // Evict rookie over established
-            if (aRookie !== bRookie) return aRookie ? -1 : 1
-
-            // Evict newest, comparing 2 rookies.
-            if (aRookie) return b.connectedAt - a.connectedAt
-
-            // Evict stale, comparing 2 established
-            return a.lastActivity - b.lastActivity
-          })
-
-        for (let i = 0; i < nHeuristicEvict; i++) {
-          gcConn(connections[i], ERR_MAXPEERS)
-        }
+        drop(connection, ERR_IDLE)
+        open--
       }
     }
 
-    // Force peer rotation when fully saturated over extend period of time.
+    // 2. over the cap
+    if (open > this._maxPeers) {
+      for (const connection of this._dropOrder(now)) {
+        if (open <= this._maxPeers) break
+        drop(connection, ERR_MAXPEERS)
+        open--
+      }
+    }
+
+    // 3. at the cap, a wanted peer is waiting: make room by dropping an unwanted connection
+    if (open >= this._maxPeers && this._isPeerWaiting(now)) {
+      const [first] = this._dropOrder(now)
+
+      if (first && !this.dialer.wants(first.info)) {
+        drop(first, ERR_MAXPEERS)
+        open--
+      }
+    }
+
+    // 4. force peer rotation when fully saturated over an extended period of time
     const treshold = this._wanderlust + Math.random() * Math.max(this._wanderlust, 10000)
     if (
       !connectionsEvicted && // nothing evicted
-      this.connectionCount === this._maxPeers && // at max cap
+      open === this._maxPeers && // at max cap
       now - this._lastConnectionEvict > treshold // topology growing stale
     ) {
-      const connections = Array.from(this.connections).filter((c) => !c._evicted)
+      const connections = this._dropOrder(now)
       const connection = connections[Math.floor(Math.random() * connections.length)]
 
-      if (connection) {
-        gcConn(connection, ERR_IDLE)
-      }
+      if (connection) drop(connection, ERR_IDLE)
     }
 
     for (const connection of this.connections) {
-      if (connection._evicted) continue
-      connection._survived++
+      if (connection.evicted) continue
+      connection.survived++
     }
 
     await Promise.all(evictions)
-
-    if (sessionsEvicted) this.emit('evicted', sessionsEvicted)
 
     if (connectionsEvicted) this.emit('dropped', connectionsEvicted)
   }
@@ -712,22 +748,9 @@ module.exports = class Replicator extends ReadyResource {
     this.destroy().catch((err) => this.emit('error', err))
   }
 
+  // Drops idle or surplus connections and reschedules dials.
+  // Manual replicators take no actions unless refresh is called.
   async refresh(now = Date.now()) {
-    this._autoselect(now) // updates sessions
-
-    const done = []
-
-    for (const sess of this.sessions.values()) {
-      if (sess.closing || sess.closed) continue
-      done.push(sess.refresh(now)) // applies state
-    }
-
-    for (const conn of this.connections) {
-      conn.refresh(now)
-    }
-
-    await Promise.all(done)
-
     await this._gc(now)
 
     this.dialer.refresh(now)
@@ -738,92 +761,14 @@ module.exports = class Replicator extends ReadyResource {
 
   async flush() {
     const pending = []
-    for (const sess of this.sessions.values()) {
-      if (sess.closing || sess.closed || sess.state === 'destroyed') continue
-      pending.push(sess.flush())
+    for (const session of this.sessions.values()) {
+      if (session.closing || session.closed) continue
+      pending.push(session.flush())
     }
     await Promise.all(pending)
 
     // pending connects
     await this.dialer.flush()
-  }
-
-  /**
-   * Autoswarm policies
-   */
-  _autoselect(now = Date.now()) {
-    const pool = []
-    let slots = this.slots
-
-    for (const session of this.sessions.values()) {
-      if (session.isDiscovering) continue
-      if (session.isPinned) continue
-      if (session.closing || session.closed) continue
-
-      // don't deactivate pending nor newly-started topics
-      if (session.isAuto) {
-        const timeActive = now - session._startTime
-        const minActive = session._startDelay + this._minActiveTime
-
-        if (this._autoswarm && timeActive < minActive) {
-          slots-- // reserved & immovable
-          continue
-        }
-      }
-
-      pool.push(session)
-    }
-
-    slots = Math.max(slots, 0) // `slots` reduced during runtime.
-
-    const order = new Map()
-    const priorities = pool.map((i) => i.priority).sort((a, b) => a - b)
-    for (let i = 0; i < priorities.length; i++) {
-      order.set(priorities[i], i)
-    }
-
-    function score(session) {
-      let v = 0
-      v += order.get(session.priority) // primary
-
-      // secondary; rotate over time by last start
-      if (session.isAuto) {
-        const uptime = now - session._startTime
-        v -= (uptime / 60_000) * 0.5
-      }
-
-      return v
-    }
-
-    function heuristicSort(a, b) {
-      return score(b) - score(a)
-    }
-
-    // rotate
-    pool.sort(heuristicSort)
-
-    if (!this._autoswarm) slots = 0
-
-    // autostop
-    for (let i = slots; i < pool.length; i++) {
-      pool[i]._autoStop(now)
-    }
-
-    // autostart
-    const limit = Math.min(pool.length, slots)
-
-    for (let i = 0; i < limit; i++) {
-      pool[i]._autoStart(now)
-    }
-  }
-
-  // @deprecated
-  async setAutoswarm(enabled) {
-    if (this._autoswarm === enabled) return
-
-    this._autoswarm = enabled
-    await this.refresh()
-    await this.flush()
   }
 
   async _handleNetworkUpdate() {
@@ -877,7 +822,7 @@ module.exports = class Replicator extends ReadyResource {
 
     const tasks = []
     for (const session of this.sessions.values()) {
-      tasks.push(session.destroy())
+      tasks.push(session.close())
     }
 
     // wait for all un-announces before dropping connections
