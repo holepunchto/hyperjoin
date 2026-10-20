@@ -241,7 +241,14 @@ module.exports = class Replicator extends ReadyResource {
     this._listened = true
     if (this.closing) return
 
-    await this.refresh().catch(safetyCatch)
+    // only re-apply session state (announce is gated on listening),
+    // selection policy stays with refresh()
+    const pending = []
+    for (const sess of this.sessions.values()) {
+      if (sess.closing || sess.closed) continue
+      pending.push(sess.refresh().catch(safetyCatch))
+    }
+    await Promise.all(pending)
   }
 
   getConnection(peerId) {
