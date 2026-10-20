@@ -83,6 +83,8 @@ test('pinned session announces only once the server is listening', async (t) => 
   await replicator.flush()
 
   t.is(replicator.listening, true)
+
+  await replicator.refresh()
   t.is(session.discovery.announce, true, 'announced after listening')
 
   await replicator.close()

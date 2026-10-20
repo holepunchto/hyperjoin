@@ -215,26 +215,17 @@ module.exports = class Replicator extends ReadyResource {
 
   async _open() {
     this.keyPair ||= await this.root.createKeyPair('replicator')
-    this._safeListen()
+    this._listening = this._safeListen()
   }
 
-  _safeListen() {
-    if (this._listening !== null || !this.keyPair || this.suspended || this.closing) return
-    this._listening = this.server.listen(this.keyPair).then(() => this._onlisten(), safetyCatch)
-  }
-
-  _onlisten() {
-    this.listening = true
-    return this._refreshSessions()
-  }
-
-  _refreshSessions(now = Date.now()) {
-    const pending = []
-    for (const sess of this.sessions.values()) {
-      if (sess.closing || sess.closed) continue
-      pending.push(sess.refresh(now))
+  async _safeListen() {
+    try {
+      await this.server.listen(this.keyPair)
+      this.listening = true
+      if (!this._manual) await this.refresh()
+    } catch (err) {
+      safetyCatch(err)
     }
-    return Promise.allSettled(pending)
   }
 
   getConnection(peerId) {
@@ -331,7 +322,6 @@ module.exports = class Replicator extends ReadyResource {
     await this.server.resume({ log })
 
     this.suspended = false
-    this._safeListen()
 
     this.dialer.resume()
 
