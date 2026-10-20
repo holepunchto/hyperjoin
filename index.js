@@ -444,6 +444,20 @@ module.exports = class Replicator extends ReadyResource {
 
     if (map.has(hex)) throw new Error('unreachable: connection leak') // sanity check
 
+    // Both peers dialed each other. Each side keeps the same stream:
+    // the peer with the lower key keeps its inbound one.
+    const crossed = (initiator ? this.inbound : this.outbound).get(hex)
+    const dialing = !initiator && this._inflight.has(hex)
+    if (crossed || dialing) {
+      const keepInbound = b4a.compare(this.peerId, peerId) < 0
+      if (keepInbound === initiator) {
+        stream.on('error', noop)
+        stream.destroy(new Error(ERR_DUPLICATE))
+        return null
+      }
+      if (crossed) crossed.destroy(ERR_DUPLICATE)
+    }
+
     // the connection and protomux attach their 'data' listeners in the same tick
     const connection = new Connection(this, stream, peerId, initiator)
 
@@ -659,25 +673,6 @@ module.exports = class Replicator extends ReadyResource {
       evictions.push(this._evictConnection(connection, reason))
       connectionsEvicted++
       this._lastConnectionEvict = now
-    }
-
-    // peer-dedupe
-
-    const [src, dst] =
-      this.inbound.size < this.outbound.size
-        ? [this.inbound, this.outbound]
-        : [this.outbound, this.inbound]
-
-    for (const [key, connection] of src) {
-      if (!dst.has(key)) continue
-
-      const cmp = b4a.compare(this.peerId, connection.peerId)
-      if (cmp === 0) throw new Error('unreachable: self connection')
-
-      // low-peerId keeps inbound
-      const target = (cmp > 0) ^ connection.initiator ? connection : dst.get(key)
-
-      drop(target, ERR_DUPLICATE)
     }
 
     if (!this._lastConnectionEvict) this._lastConnectionEvict = now

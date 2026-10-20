@@ -9,8 +9,7 @@ const {
   seedA,
   seedB,
   seedC,
-  timeout,
-  waitForEvents
+  timeout
 } = require('../helpers/backports')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('../..')
@@ -339,7 +338,7 @@ test('one server, two clients - first connection', async (t) => {
   await testnet.destroy()
 })
 
-test('GC dedupes connections', async (t) => {
+test('crossed dials keep one connection, the same on both sides', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -349,50 +348,22 @@ test('GC dedupes connections', async (t) => {
   await Promise.all([...p1.replicator.sessions.values()].map((s) => s.ready()))
   await Promise.all([...p2.replicator.sessions.values()].map((s) => s.ready()))
 
-  const p1Connections = waitForEvents(p1.replicator, 'connected', 2)
-  const p2Connections = waitForEvents(p2.replicator, 'connected', 2)
+  // both dial at once
+  await Promise.all([
+    p1.replicator._connect(p1.replicator.dialer.lookup(p2.replicator.peerId)),
+    p2.replicator._connect(p2.replicator.dialer.lookup(p1.replicator.peerId))
+  ])
 
-  let peerInfo = p1.replicator.dialer.lookup(p2.replicator.peerId)
-  p1.replicator._connect(peerInfo)
-  peerInfo = p2.replicator.dialer.lookup(p1.replicator.peerId)
-  p2.replicator._connect(peerInfo)
-
-  await Promise.all([p1Connections, p2Connections])
-
-  t.is(p1.replicator.connectionCount, 2)
-  t.is(p2.replicator.connectionCount, 2)
-  t.is(p1.replicator.inbound.size, 1)
-  t.is(p1.replicator.outbound.size, 1)
-  t.is(p2.replicator.inbound.size, 1)
-  t.is(p2.replicator.outbound.size, 1)
-
-  t.alike(
-    Array.from(p2.replicator.connections, (connection) => toHex(connection.peerId)),
-    [p1.peerId, p1.peerId],
-    'duplicate p1'
-  )
-  t.alike(
-    Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)),
-    [p2.peerId, p2.peerId],
-    'duplicate p2'
-  )
-
-  await p1.replicator._gc()
-  await p2.replicator._gc()
+  // the dropped streams close asynchronously, until both sides hold the same one
+  while (!sameStream(p1.replicator, p2.replicator)) await timeout(10)
 
   t.is(p1.replicator.connectionCount, 1)
   t.is(p2.replicator.connectionCount, 1)
 
-  t.alike(
-    Array.from(p2.replicator.connections, (connection) => toHex(connection.peerId)),
-    [p1.peerId],
-    'de-duped'
-  )
-  t.alike(
-    Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)),
-    [p2.peerId],
-    'de-duped'
-  )
+  const [low, high] =
+    b4a.compare(p1.replicator.peerId, p2.replicator.peerId) < 0 ? [p1, p2] : [p2, p1]
+  t.is(low.replicator.inbound.size, 1, 'the lower key keeps its inbound stream')
+  t.is(high.replicator.outbound.size, 1, 'which is the outbound stream of the other')
 
   await p1.destroy()
   await p2.destroy()
@@ -946,3 +917,10 @@ test('ban stat and event', async (t) => {
   await p2.destroy()
   await testnet.destroy()
 })
+
+function sameStream(a, b) {
+  if (a.connectionCount !== 1 || b.connectionCount !== 1) return false
+  const [ca] = a.connections
+  const [cb] = b.connections
+  return b4a.equals(ca.stream.handshakeHash, cb.stream.handshakeHash)
+}
