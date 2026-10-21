@@ -25,7 +25,6 @@ const DHT_FAST_RETRY = 3 * 1000 // 3s
 // connections
 const MIN_PEERS = 20
 const MAX_PEERS = 40
-const WANDERLUST_THRESHOLD = Infinity // deprecated
 
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
@@ -44,7 +43,6 @@ module.exports = class Replicator extends ReadyResource {
       minPeers = MIN_PEERS,
       maxPeers = MAX_PEERS,
       maxParallel,
-      wanderlust = WANDERLUST_THRESHOLD,
       firewall = allowAll,
       suspended,
       autoswarm = true,
@@ -128,7 +126,6 @@ module.exports = class Replicator extends ReadyResource {
     this._inflightCancel = new Set() // cancelCallbacks
     this._minPeers = minPeers
     this._maxPeers = maxPeers
-    this._wanderlust = wanderlust
     this._lastConnectionEvict = 0
 
     this.slots = slots
@@ -694,21 +691,6 @@ module.exports = class Replicator extends ReadyResource {
         for (let i = 0; i < nHeuristicEvict; i++) {
           gcConn(connections[i], ERR_MAXPEERS)
         }
-      }
-    }
-
-    // Force peer rotation when fully saturated over extend period of time.
-    const treshold = this._wanderlust + Math.random() * Math.max(this._wanderlust, 10000)
-    if (
-      !connectionsEvicted && // nothing evicted
-      this.connectionCount === this._maxPeers && // at max cap
-      now - this._lastConnectionEvict > treshold // topology growing stale
-    ) {
-      const connections = Array.from(this.connections).filter((c) => !c._evicted)
-      const connection = connections[Math.floor(Math.random() * connections.length)]
-
-      if (connection) {
-        gcConn(connection, ERR_IDLE)
       }
     }
 
