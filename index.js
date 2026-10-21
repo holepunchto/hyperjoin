@@ -184,7 +184,7 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._manual) this._startAutoRefresh()
   }
 
-  _safeIgnore (err) {
+  _safeIgnore(err) {
     if (!this._isTearingdown) {
       console.warn(err.message)
     }

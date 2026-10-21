@@ -563,7 +563,6 @@ test('failed listen ignores error and nothing announces', async (t) => {
 
   await replicator.ready()
 
-
   const core = store.get({ name: 'one' })
   await core.ready()
 
