@@ -1,6 +1,6 @@
 {
   "name": "@holepunchto/replicator",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "replicator",
   "main": "index.js",
   "exports": {
