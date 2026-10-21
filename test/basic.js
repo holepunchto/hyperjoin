@@ -32,89 +32,6 @@ test('default keypair from corestore', async (t) => {
   await testnet.destroy()
 })
 
-test('ready does not wait for the server to listen', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
-  const replicator = new Replicator(store, { bootstrap, manual: true })
-
-  await replicator.ready()
-
-  t.is(replicator.listening, false)
-  t.ok(replicator.peerId)
-
-  await replicator.flush()
-
-  t.is(replicator.listening, true)
-
-  await replicator.close()
-  await store.close()
-  await testnet.destroy()
-})
-
-test('pinned session announces only once the server is listening', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
-  const replicator = new Replicator(store, { bootstrap, manual: true })
-
-  let release = null
-  const gate = new Promise((resolve) => {
-    release = resolve
-  })
-  const listen = replicator.server.listen.bind(replicator.server)
-  replicator.server.listen = async (keyPair) => {
-    await gate
-    return listen(keyPair)
-  }
-
-  await replicator.ready()
-
-  const core = store.get({ name: 'one' })
-  await core.ready()
-
-  const session = replicator.join(store, core.discoveryKey, { pin: true })
-  await session.refresh()
-
-  t.is(replicator.listening, false)
-  t.is(session.discovery.announce, false, 'not announced before listening')
-
-  release()
-  await replicator.flush()
-
-  t.is(replicator.listening, true)
-
-  await replicator.refresh()
-  t.is(session.discovery.announce, true, 'announced after listening')
-
-  await replicator.close()
-  await store.close()
-  await testnet.destroy()
-})
-
-test('failed listen is swallowed and nothing announces', async (t) => {
-  const dht = new DHT({ bootstrap: [] })
-  await dht.destroy()
-
-  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
-  const replicator = new Replicator(store, { dht, manual: true })
-
-  await replicator.ready()
-
-  const core = store.get({ name: 'one' })
-  await core.ready()
-
-  const session = replicator.join(store, core.discoveryKey, { pin: true })
-  await session.refresh()
-  await replicator.flush()
-
-  t.is(replicator.listening, false)
-  t.is(session.discovery.announce, false, 'not announced')
-
-  await replicator.close()
-  await store.close()
-})
-
 test('basic replication', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
@@ -280,7 +197,7 @@ test('gc preserves stable connections over rookies', async (t) => {
   await testnet.destroy()
 })
 
-test('root close closes replicator', async (t) => {
+test('root close() closes replicator', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
   const store = new Corestore(await t.tmp())
@@ -507,7 +424,7 @@ test('holepunch failure switches the peer to relaying', async (t) => {
   await store.close()
 })
 
-test('regression: dialer.flush() resolves when replicator suspends', async (t) => {
+test('regression: Dialer.flush() resolves when replicator suspends', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -565,6 +482,97 @@ test('network coming back online resets dial backoff', async (t) => {
   replicator.dht.emit('network-update')
 
   t.is(peer._outboundAttempts, 0)
+
+  await replicator.close()
+  await store.close()
+})
+
+test('ready does not wait for the server to listen', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
+  const replicator = new Replicator(store, { bootstrap })
+
+  await replicator.ready()
+
+  t.is(replicator.listening, false)
+  t.ok(replicator.peerId)
+
+  await replicator.flush()
+
+  t.is(replicator.listening, true)
+
+  await replicator.close()
+  await store.close()
+  await testnet.destroy()
+})
+
+test('pinned session announces only once the server is listening', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
+  const core = store.get({ name: 'one' })
+  await core.ready()
+
+  const replicator = new Replicator(store, { bootstrap, manual: true })
+
+  let release = null
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+
+  const listen = replicator.server.listen.bind(replicator.server)
+  replicator.server.listen = async (keyPair) => {
+    await gate
+    return listen(keyPair)
+  }
+
+  await replicator.ready()
+
+  const session = replicator.join(store, core.discoveryKey, { pin: true })
+  await session.refresh()
+
+  t.is(replicator.listening, false)
+  t.is(session.discovery.announce, false, 'not announced before listening')
+
+  release()
+
+  await replicator.flush()
+
+  t.is(replicator.listening, true)
+
+  await replicator.refresh()
+
+  t.is(session.discovery.announce, true, 'announced after listening')
+
+  await replicator.close()
+  await store.close()
+  await testnet.destroy()
+})
+
+test('failed listen ignores error and nothing announces', async (t) => {
+  const dht = new DHT({ bootstrap: [] })
+
+  // TODO: creates a defunct replicator (see condition of warn)
+  // add tests that cover invalid states of injected dependencies
+  await dht.destroy()
+
+  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
+  const replicator = new Replicator(store, { dht })
+
+  await replicator.ready()
+
+
+  const core = store.get({ name: 'one' })
+  await core.ready()
+
+  const session = replicator.join(store, core.discoveryKey, { pin: true })
+  await session.refresh()
+  await replicator.flush()
+
+  t.is(replicator.listening, false)
+  t.is(session.discovery.announce, false, 'not announced')
 
   await replicator.close()
   await store.close()
