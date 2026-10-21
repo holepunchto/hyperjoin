@@ -1,9 +1,9 @@
 const ReadyResource = require('ready-resource')
 const DHT = require('hyperdht')
-const safetyCatch = require('safety-catch')
 const Dialer = require('./lib/dialer')
 const Connection = require('./lib/connection')
 const Session = require('./lib/session')
+const safetyCatch = require('safety-catch')
 
 const b4a = require('b4a')
 const { toHex } = b4a
@@ -25,7 +25,7 @@ const DHT_FAST_RETRY = 3 * 1000 // 3s
 // connections
 const MIN_PEERS = 20
 const MAX_PEERS = 40
-const WANDERLUST_THRESHOLD = 60 * 1000
+const WANDERLUST_THRESHOLD = Infinity // deprecated
 
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
@@ -81,10 +81,11 @@ module.exports = class Replicator extends ReadyResource {
       })
 
     this._firewall = firewall
+    this._safeIgnore = this._safeIgnore.bind(this)
 
     const handlers = {
       ondial: (peer) => this._connect(peer),
-      ondialerror: (err) => this.emit('error', err),
+      ondialerror: this._safeIgnore,
       isConnected: (key) => this.hasConnection(key),
       canRelay: () => !!this.relayThrough,
       want: () => {
@@ -116,6 +117,8 @@ module.exports = class Replicator extends ReadyResource {
     this.suspended = suspended
     this._presuspended = false
     this._suspending = Promise.resolve()
+    this.listening = false
+    this._pendingListen = null
 
     this.sessions = new Map() // hex(discoveryKey) -> Session
     this.inbound = new Map() // hex(peerId) -> Connection
@@ -147,7 +150,6 @@ module.exports = class Replicator extends ReadyResource {
       updates: 0,
       bannedPeers: 0,
       connects: {
-        // TODO: nit, flatten and 'connections'
         client: {
           attempted: 0,
           opened: 0,
@@ -182,8 +184,18 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._manual) this._startAutoRefresh()
   }
 
+  _safeIgnore(err) {
+    if (!this._isTearingdown) {
+      console.warn(err.message)
+    }
+
+    safetyCatch(err)
+  }
+
   get peerId() {
-    return this.server.publicKey
+    if (this.keyPair) return this.keyPair.publicKey
+
+    return null
   }
 
   get connectionCount() {
@@ -215,9 +227,18 @@ module.exports = class Replicator extends ReadyResource {
     // TODO: this await is the root cause
     // for `refresh()` being async.
     this.keyPair ||= await this.root.createKeyPair('replicator')
-    await this.dht.ready()
+    this._pendingListen = this._safeListen()
+  }
 
-    await this.server.listen(this.keyPair)
+  async _safeListen() {
+    try {
+      await this.server.listen(this.keyPair)
+      this.listening = true
+
+      if (!this._manual) await this.refresh()
+    } catch (err) {
+      this._safeIgnore(err)
+    }
   }
 
   getConnection(peerId) {
@@ -296,8 +317,8 @@ module.exports = class Replicator extends ReadyResource {
 
     this._presuspended = true
 
-    this.dialer.suspend().catch(safetyCatch)
-    this.refresh().catch(safetyCatch)
+    this.dialer.suspend().catch(this._safeIgnore)
+    this.refresh().catch(this._safeIgnore)
   }
 
   async resume({ log = noop } = {}) {
@@ -709,7 +730,7 @@ module.exports = class Replicator extends ReadyResource {
 
   _onrootclose() {
     if (this.destroyed || this.closing) return
-    this.destroy().catch((err) => this.emit('error', err))
+    this.destroy().catch(this._safeIgnore)
   }
 
   async refresh(now = Date.now()) {
@@ -737,6 +758,11 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async flush() {
+    if (this._pendingListen && !this.suspended) {
+      await this._pendingListen
+      this._pendingListen = null
+    }
+
     const pending = []
     for (const sess of this.sessions.values()) {
       if (sess.closing || sess.closed || sess.state === 'destroyed') continue
@@ -855,7 +881,7 @@ module.exports = class Replicator extends ReadyResource {
   _startAutoRefresh() {
     if (this._refreshInterval) return
     this._refreshInterval = setInterval(
-      () => this.refresh().catch(safetyCatch),
+      () => this.refresh().catch(this._safeIgnore),
       this._autoRefreshInterval
     )
     this._refreshInterval.unref()
