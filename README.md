@@ -136,6 +136,7 @@ Join topic, returns `ReplicatorSession`.
 - `pin`: same as `session.pin()`
 - `discover`: same as `session.discover()`
 - `limit`: maximum peers emitted per discovery query (default: `Infinity`)
+- `server`: whether the session can announce on the dht (default: `true`).
 
 ### `await rep.refresh()`
 

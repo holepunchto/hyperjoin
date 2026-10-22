@@ -346,7 +346,7 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._manual) this._startAutoRefresh()
   }
 
-  join(store, topic, { priority = 0, pin = false, discover = false, deferSwarming, limit } = {}) {
+  join(store, topic, { priority = 0, pin = false, discover = false, deferSwarming, limit, server = true, client = true } = {}) {
     const dk = toHex(topic)
     if (this.sessions.has(dk)) throw new Error('session exists')
 
@@ -355,7 +355,9 @@ module.exports = class Replicator extends ReadyResource {
       pin,
       discover,
       limit,
-      deferSwarming
+      deferSwarming,
+      server,
+      client
     })
     this.sessions.set(dk, session)
 
