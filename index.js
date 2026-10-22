@@ -113,7 +113,6 @@ module.exports = class Replicator extends ReadyResource {
       this._onincoming.bind(this)
     )
 
-    this.destroyed = false
     this.suspended = suspended
     this._presuspended = false
     this._suspending = Promise.resolve()
@@ -216,6 +215,10 @@ module.exports = class Replicator extends ReadyResource {
 
   get isPresuspended() {
     return this._presuspended
+  }
+
+  get destroyed() {
+    return !!(this.closing || this.closed)
   }
 
   *_connections() {
@@ -508,7 +511,6 @@ module.exports = class Replicator extends ReadyResource {
 
   get _isTearingdown() {
     return (
-      this.destroyed || // replicator begin-teardown
       this.suspended || // replicator
       this.closing ||
       this.closed
@@ -725,7 +727,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   _onrootclose() {
-    if (this.destroyed || this.closing) return
+    if (this._isTearingdown) return
     this.destroy().catch(this._safeIgnore)
   }
 
@@ -889,8 +891,6 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _close() {
-    this.destroyed = true
-
     this.root.removeListener('close', this._onrootclose)
     this.dht.removeListener('network-change', this._handleNetworkChange)
     this.dht.removeListener('network-update', this._handleNetworkUpdate)
