@@ -89,7 +89,7 @@ module.exports = class Replicator extends ReadyResource {
       isConnected: (key) => this.hasConnection(key),
       canRelay: () => !!this.relayThrough,
       want: () => {
-        if (this.suspended || this.isPresuspended) return 0
+        if (this._isTearingdown) return 0
 
         return this._maxPeers - this.connectionCount // throttle
       }
@@ -316,15 +316,12 @@ module.exports = class Replicator extends ReadyResource {
     if (this._presuspended) return
 
     this._presuspended = true
-
-    this.dialer.suspend().catch(this._safeIgnore)
     this.refresh().catch(this._safeIgnore)
   }
 
   async resume({ log = noop } = {}) {
     if (this._presuspended) {
       this._presuspended = false
-      this.dialer.resume()
       await this.refresh()
     }
 
@@ -513,9 +510,8 @@ module.exports = class Replicator extends ReadyResource {
     return (
       this.destroyed || // replicator begin-teardown
       this.suspended || // replicator
-      this.closed || // ready-resource fully torn down
       this.closing ||
-      this.isPresuspended // <-- unintentional artifact?
+      this.closed
     )
   }
 
