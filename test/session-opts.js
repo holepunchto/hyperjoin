@@ -57,6 +57,39 @@ test('join({ server: false }) prevents a pinned session from ever announcing', a
   await testnet.destroy()
 })
 
+test('join({ server: false }) still bootstraps a dht lookup for a pinned session (no peer needed)', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
+  const replicator = new Replicator(store, { bootstrap, manual: true })
+  await replicator.ready()
+
+  const core = store.get({ name: 'one' })
+  await core.ready()
+
+  const session = replicator.join(store, core.discoveryKey, { pin: true, server: false })
+  await session.refresh()
+  await replicator.flush()
+
+  t.is(replicator.listening, true)
+
+  // `shouldAnnounce` never flips for a `server: false` session, so the only
+  // thing that can kick off its (client-only) discovery query is the
+  // dedicated bootstrap condition in `refresh()`. After initial refresh
+  // discovery will continue triggering.
+  await replicator.refresh()
+  await replicator.refresh()
+
+  t.not(session.discovery.lastRefreshed, -1, 'a dht query was issued')
+  t.ok(session.discovery.stats.lookup > 0, 'it was a lookup')
+  t.is(session.discovery.stats.announce, 0, 'never an announce')
+
+  await replicator.close()
+  await store.close()
+  await testnet.destroy()
+})
+
 test('join({ server: false }) can still use outbound connections', async (t) => {
   const swarm = await spawnSwarm(t)
   const opts = { discoveryStartupDelay: 0, autoStartupDelay: 0 }
