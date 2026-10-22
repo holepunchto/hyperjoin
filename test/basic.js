@@ -487,6 +487,30 @@ test('network coming back online resets dial backoff', async (t) => {
   await store.close()
 })
 
+test('peer started offline connects soon after coming online', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
+  const p2 = await spawnPeer(t, { bootstrap: [], seed: seedB }) // no reachable nodes
+
+  await joinRemote(p2, p1) // announce fails
+  t.is(p2.replicator.connectionCount, 0)
+
+  const connected = onceEvent(p2.replicator, 'connected')
+  p2.replicator.dht.addNode(bootstrap[0]) // back online
+
+  const reconnected = await Promise.race([
+    connected.then(() => true),
+    timeout(15_000).then(() => false)
+  ])
+  t.ok(reconnected, 'connects before the next scheduled refresh')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
 test('ready does not wait for the server to listen', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
