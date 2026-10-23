@@ -263,6 +263,24 @@ test('Inbound peer gets banned for hammering', (t) => {
   t.is(b.banReason, 'hammering')
 })
 
+test('hammering counts short disconnects from the last 10 min', (t) => {
+  const { peer: a } = spawnPeer(1)
+  const { peer: b } = spawnPeer(2)
+
+  for (let n = 0; n < 20; n++) {
+    let now = T0 + n * 25 * 1000 // 20 within 10 min
+    a.markConnected(false, now)
+    a.markDisconnected(false, null, now + 1000)
+
+    now = T0 + n * 60 * 1000 // spread over 19 min
+    b.markConnected(false, now)
+    b.markDisconnected(false, null, now + 1000)
+  }
+
+  t.ok(a.isBanned, 'A banned')
+  t.ok(!b.isBanned, 'B not banned')
+})
+
 test('next retryAt must not occur before previous attempt finish', (t) => {
   const { peer } = spawnPeer()
   const attemptedAt = T0
