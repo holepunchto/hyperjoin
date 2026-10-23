@@ -293,7 +293,7 @@ module.exports = class Replicator extends ReadyResource {
     await this.flush()
 
     const pending = []
-    const suspending = [this.server.suspend({ log }), this.dialer.suspend({ log })]
+    const suspending = [this.server.suspend({ log }), this.dialer.suspend()]
 
     for (const session of this.sessions.values()) {
       suspending.push(session.suspend({ log }))
@@ -729,7 +729,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   _onrootclose() {
-    if (this._isTearingdown) return
+    if (this.destroyed) return
     this.destroy().catch(this._safeIgnore)
   }
 
