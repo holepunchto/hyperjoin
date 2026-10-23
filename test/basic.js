@@ -245,7 +245,7 @@ test('inbound peer gets banned for hammering', async (t) => {
   await testnet.destroy()
 })
 
-test('regression: presuspend() during async firewall leaked _inflight', async (t) => {
+test('regression: suspend() during async firewall leaked _inflight', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -281,8 +281,8 @@ test('regression: presuspend() during async firewall leaked _inflight', async (t
 
   await trapped // pending async firewall
 
-  p2.replicator.presuspend()
-  t.ok(p2.replicator.isPresuspended, 'presuspended')
+  const suspended = p2.replicator.suspend()
+  t.ok(p2.replicator.suspended, 'suspending')
 
   resolveFirewall(false) // release
 
@@ -290,6 +290,8 @@ test('regression: presuspend() during async firewall leaked _inflight', async (t
   await new Promise((resolve) => setImmediate(resolve))
   await new Promise((resolve) => setImmediate(resolve))
 
+  await suspended
+  t.ok('suspended')
   await p2.replicator.resume()
 
   t.is(p2.replicator._inflight.has(p1Hex), false, '_inflight cleared')
@@ -301,7 +303,7 @@ test('regression: presuspend() during async firewall leaked _inflight', async (t
   await testnet.destroy()
 })
 
-test('dialer is resumed after presuspend', async (t) => {
+test('dialer is resumed after suspend', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -312,11 +314,13 @@ test('dialer is resumed after presuspend', async (t) => {
   const remote = p1.replicator.peerId
 
   p2.replicator.dialer.topicEnable(topic)
-  p2.replicator.presuspend()
+  const suspended = p2.replicator.suspend()
   p2.replicator.dialer.seen({ publicKey: remote }, topic)
 
   const peer = p2.replicator.dialer.lookup(remote)
-  t.is(peer._outboundAttempts, 0, 'no dials when presuspended')
+  t.is(peer._outboundAttempts, 0, 'no dials')
+
+  await suspended
 
   await p2.replicator.resume()
   await p2.replicator.flush()
@@ -575,4 +579,51 @@ test('failed listen ignores error and nothing announces', async (t) => {
 
   await replicator.close()
   await store.close()
+})
+
+test('presuspend accepts inbound connections', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+
+  p2.replicator.presuspend()
+  await p2.replicator.flush()
+
+  const connected = onceEvent(p2.replicator, 'connected')
+  const stream = p1.replicator.dht.connect(p2.replicator.peerId, {
+    keyPair: p1.replicator.keyPair
+  })
+
+  await connected
+
+  t.ok(p2.replicator.inbound.has(p1.peerId), 'accepted inbound connection')
+
+  stream.destroy()
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
+test('presuspend allows outbound connections', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+
+  p2.replicator.presuspend()
+  await p2.replicator.flush()
+
+  const topic = b4a.alloc(32, 1)
+  p2.replicator.dialer.topicEnable(topic)
+  p2.replicator.dialer.seen({ publicKey: p1.replicator.peerId }, topic)
+  await p2.replicator.flush()
+
+  t.ok(p2.replicator.outbound.has(p1.peerId), 'opened outbound connection')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
 })

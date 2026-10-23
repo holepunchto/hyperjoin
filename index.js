@@ -87,7 +87,7 @@ module.exports = class Replicator extends ReadyResource {
       isConnected: (key) => this.hasConnection(key),
       canRelay: () => !!this.relayThrough,
       want: () => {
-        if (this.suspended || this.isPresuspended) return 0
+        if (this._isTearingdown) return 0
 
         return this._maxPeers - this.connectionCount // throttle
       }
@@ -111,7 +111,6 @@ module.exports = class Replicator extends ReadyResource {
       this._onincoming.bind(this)
     )
 
-    this.destroyed = false
     this.suspended = suspended
     this._presuspended = false
     this._suspending = Promise.resolve()
@@ -215,6 +214,10 @@ module.exports = class Replicator extends ReadyResource {
     return this._presuspended
   }
 
+  get destroyed() {
+    return !!(this.closing || this.closed)
+  }
+
   *_connections() {
     yield* this.inbound.values()
     yield* this.outbound.values()
@@ -287,7 +290,7 @@ module.exports = class Replicator extends ReadyResource {
     await this.flush()
 
     const pending = []
-    const suspending = [this.server.suspend({ log }), this.dialer.suspend({ log })]
+    const suspending = [this.server.suspend({ log }), this.dialer.suspend()]
 
     for (const session of this.sessions.values()) {
       suspending.push(session.suspend({ log }))
@@ -313,15 +316,12 @@ module.exports = class Replicator extends ReadyResource {
     if (this._presuspended) return
 
     this._presuspended = true
-
-    this.dialer.suspend().catch(this._safeIgnore)
     this.refresh().catch(this._safeIgnore)
   }
 
   async resume({ log = noop } = {}) {
     if (this._presuspended) {
       this._presuspended = false
-      this.dialer.resume()
       await this.refresh()
     }
 
@@ -344,6 +344,8 @@ module.exports = class Replicator extends ReadyResource {
     await Promise.all(pending)
 
     if (!this._manual) this._startAutoRefresh()
+
+    return this.refresh()
   }
 
   join(store, topic, { priority = 0, pin = false, discover = false, deferSwarming, limit } = {}) {
@@ -508,11 +510,9 @@ module.exports = class Replicator extends ReadyResource {
 
   get _isTearingdown() {
     return (
-      this.destroyed || // replicator begin-teardown
       this.suspended || // replicator
-      this.closed || // ready-resource fully torn down
       this.closing ||
-      this.isPresuspended // <-- unintentional artifact?
+      this.closed
     )
   }
 
@@ -711,7 +711,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   _onrootclose() {
-    if (this.destroyed || this.closing) return
+    if (this.destroyed) return
     this.destroy().catch(this._safeIgnore)
   }
 
@@ -875,8 +875,6 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _close() {
-    this.destroyed = true
-
     this.root.removeListener('close', this._onrootclose)
     this.dht.removeListener('network-change', this._handleNetworkChange)
     this.dht.removeListener('network-update', this._handleNetworkUpdate)

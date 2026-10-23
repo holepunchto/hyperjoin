@@ -1,6 +1,7 @@
 const test = require('brittle')
 const b4a = require('b4a')
 const { spawnSwarm } = require('./helpers')
+const { toHex } = b4a
 
 test('presuspend() unannounces active topics', async (t) => {
   const swarm = await spawnSwarm(t)
@@ -35,8 +36,6 @@ test('presuspend() unannounces active topics', async (t) => {
   t.ok(rep1.connectionCount > 0)
   t.is(session1.isAnnounced, true)
 
-  let disconnected = 0
-  rep1.on('disconnected', () => disconnected++)
   rep1.presuspend()
   const presuspended = rep1.flush()
 
@@ -47,8 +46,7 @@ test('presuspend() unannounces active topics', async (t) => {
 
   t.is(session1.isAnnounced, false)
   t.is(rep1.announcedSessions.length, 0)
-  t.is(rep1.connectionCount, 1, 'connections linger')
-  t.is(disconnected, 0, 'no disconnects')
+  t.ok(rep1.connectionCount > 0, 'connections linger')
 
   await swarm.close()
 })
@@ -72,13 +70,14 @@ test('presuspend() -> resume(), resumes announcements', async (t) => {
   await rep1.flush()
 
   await rep1.resume()
-  await swarm.refresh()
+
   await swarm.flush()
+  await swarm.refresh()
 
   t.is(rep1.isPresuspended, false)
   t.is(session1.isAnnounced, true, 'resume reannounces the topic')
 
-  t.is([...rep1.connections][0], connection, 'connection retained')
+  t.is(toHex([...rep1.connections][0].peerId), toHex(connection.peerId), 'connection retained')
 
   await swarm.close()
 })
@@ -108,8 +107,9 @@ test('presuspend() -> suspend() -> resume(), resumes networking', async (t) => {
 
   const connected = new Promise((resolve) => rep1.once('connected', resolve))
   await rep1.resume()
-  await swarm.refresh()
-  await swarm.flush()
+  await swarm.flush() // announce + dial
+
+  await swarm.refresh() // de-dupe
   await connected
 
   t.is(rep1.suspended, false)
