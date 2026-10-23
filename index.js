@@ -379,7 +379,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   _onincoming(conn) {
-    if (this._isTearingdown) {
+    if (this.destroyed || this.suspended || this.closed || this.closing) {
       conn.on('error', noop)
       return conn.destroy(ERR_DESTROYED)
     }
