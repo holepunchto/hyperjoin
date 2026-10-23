@@ -128,15 +128,24 @@ Resolves after dht.server port is bound and store is ready.
 
 ### `const rs = rep.join(storeSession, topic, opts)`
 
-Join topic, returns `ReplicatorSession`.
+Join a topic persistently, returning a `ReplicatorSession`. Joined topics
+participate in autoswarm pooling and announce while active.
 
 `opts`:
 
 - `priority`: autoswarm priority `number`
 - `pin`: same as `session.pin()`
-- `discover`: same as `session.discover()`
-- `limit`: maximum peers emitted per discovery query (default: `Infinity`)
-- `server`: whether the session can announce on the dht (default: `true`).
+- `deferSwarming`: defer autoswarm activation until the configured startup delay
+
+### `await rep.scan(storeSession, topic, opts)`
+
+Scan a topic momentarily. A scan performs discovery and may dial discovered
+peers, but never announces and is removed when the scan completes.
+
+`opts`:
+
+- `limit`: maximum peers emitted per DHT query (default: `1`)
+- `deferSwarming`: defer the scan until the configured startup delay
 
 ### `await rep.refresh()`
 
@@ -146,7 +155,7 @@ Manual replicators take no actions unless refresh is called.
 
 ### `await rep.flush()`
 
-Wait until current discovery and dial work settles.
+Wait until current scan and dial work settles.
 
 ### `await rep.setAutoswarm(enabled)`
 
@@ -159,7 +168,7 @@ Begins unannouncing all topics.
 
 ### `await rep.suspend()` / `await rep.resume()`
 
-Suspend and resume discovery, server, and connection activity.
+Suspend and resume session, server, and connection activity.
 
 ### `await rep.close()`
 
@@ -176,7 +185,7 @@ States:
 - `inactive`
 - `pinned`
 - `autostarted`
-- `discovering`
+- `scanning`
 - `destroyed`
 
 #### `rs.on('activate', (session) => {})`
@@ -191,25 +200,20 @@ Fired when the session becomes inactive a.k.a idle.
 
 Fired when a remote discovery bump is observed.
 
-#### `rs.on('discovered', () => {})`
+#### `rs.on('scanned', () => {})`
 
-Fired when the session exits discovery mode.
+Fired when the session exits scanning mode.
 
 ### `rs.pin()` / `rs.unpin()`
 
 Pin topic to announce itself on dht - bypasses `priority`, auto-rotation and
 forces the session to be active until manual call to `unpin()`.
 
-### `rs.discover()`
-
-Launch a dht lookup for the topic to discover peers and update version `seen`. (announce: false / client only)
-On pinned sessions, forces a discovery refresh without unpinning.
-
 ### `rs.bump(version = -1)`
 
 Announce local version on topic.
 
-If bump is called while in discovery mode, the discovery timeout is reset to
+If bump is called while in scanning mode, the scan timeout is reset to
 `updatedDiscoveryTimeout` as the discovery operation can be considered 'sucessful'
 
 ### `rs.priority = number`

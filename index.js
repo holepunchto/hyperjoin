@@ -3,6 +3,7 @@ const DHT = require('hyperdht')
 const Dialer = require('./lib/dialer')
 const Connection = require('./lib/connection')
 const Session = require('./lib/session')
+const Scanner = require('./lib/scan.js')
 const safetyCatch = require('safety-catch')
 
 const b4a = require('b4a')
@@ -14,9 +15,6 @@ const AUTO_REFRESH_INTERVAL = 5000
 const DEFAULT_AUTO_SLOTS = 8
 const DEFAULT_SWARM_GC_IDLE_TIME = 30 * 1000
 
-const DEFAULT_DISCOVERY_TIMEOUT = 60 * 1000
-const UPDATED_DISCOVERY_TIMEOUT = 10 * 1000
-const DISCOVERY_STARTUP_DELAY = 5 * 1000 // 5s
 const AUTO_STARTUP_DELAY = 5 * 1000 // 5s
 const MIN_ACTIVE_TIME = 30 * 1000
 
@@ -51,9 +49,6 @@ module.exports = class Replicator extends ReadyResource {
       gcDisabled = false,
 
       // Discovery
-      defaultDiscoveryTimeout = DEFAULT_DISCOVERY_TIMEOUT,
-      updatedDiscoveryTimeout = UPDATED_DISCOVERY_TIMEOUT,
-      discoveryStartupDelay = DISCOVERY_STARTUP_DELAY,
       dhtFastRetry = DHT_FAST_RETRY,
 
       // Idle
@@ -67,6 +62,8 @@ module.exports = class Replicator extends ReadyResource {
 
     if (seed) this.keyPair = DHT.keyPair(seed)
     if (keyPair) this.keyPair = keyPair
+
+    if (rootStore.root !== null) throw new Error('root corestore expected')
 
     this.root = rootStore
     this._dhtOwned = !opts.dht
@@ -117,6 +114,7 @@ module.exports = class Replicator extends ReadyResource {
     this._pendingListen = null
 
     this.sessions = new Map() // hex(discoveryKey) -> Session
+    this.scans = new Map() // hex(discoveryKey) -> Scanner
     this.inbound = new Map() // hex(peerId) -> Connection
     this.outbound = new Map() // hex(peerId) -> Connection
 
@@ -134,9 +132,6 @@ module.exports = class Replicator extends ReadyResource {
     this._autoStartupDelay = autoStartupDelay
     this._minActiveTime = minActiveTime
 
-    this._defaultDiscoveryTimeout = defaultDiscoveryTimeout
-    this._updatedDiscoveryTimeout = updatedDiscoveryTimeout
-    this._discoveryStartupDelay = discoveryStartupDelay
     this._dhtFastRetry = dhtFastRetry
 
     this._online = false
@@ -292,6 +287,10 @@ module.exports = class Replicator extends ReadyResource {
       pending.push(this._evictConnection(connection, ERR_SUSPEND))
     }
 
+    for (const scan of this.scans.values()) {
+      scan.destroy()
+    }
+
     this._inflight.clear()
     this._stopAutoRefresh()
 
@@ -339,19 +338,12 @@ module.exports = class Replicator extends ReadyResource {
     return this.refresh()
   }
 
-  join(
-    store,
-    topic,
-    {
-      priority = 0,
-      pin = false,
-      discover = false,
-      deferSwarming,
-      limit,
-      server = true,
-      client = true
-    } = {}
-  ) {
+  join(store, topic, {
+    priority = 0,
+    pin = false,
+    delay = 5000,
+    deferSwarming = true /* deprecated */
+  } = {}) {
     const dk = toHex(topic)
 
     const existing = this.sessions.get(dk)
@@ -365,16 +357,17 @@ module.exports = class Replicator extends ReadyResource {
       wait = existing.closing
     }
 
+    if (deferSwarming === false) {
+      delay = 0
+    }
+
     const session = new Session(this, store, topic, {
       priority,
       pin,
-      discover,
-      limit,
-      deferSwarming,
-      server,
-      client,
-      wait
+      wait,
+      delay,
     })
+
     this.sessions.set(dk, session)
 
     session.on('close', () => {
@@ -388,16 +381,69 @@ module.exports = class Replicator extends ReadyResource {
       if (this.sessions.get(dk) !== session) return
 
       if (session.active) {
-        this.dialer.topicEnable(dk)
+        this.dialer.refTopic(dk)
       } else {
-        this.dialer.topicDisable(dk)
+        this.dialer.unrefTopic(dk)
       }
     })
-    if (session.active) this.dialer.topicEnable(dk)
+
+    if (session.active) this.dialer.refTopic(dk)
 
     this.emit('join', session)
 
     return session
+  }
+
+  async scan(store, topic, {
+    limit = 1,
+    delay = 3000,
+    timeout = 60000,
+    updatedTimeout = 10000,
+    deferSwarming = true /* deprecated */
+  } = {}) {
+    if (this._isTearingdown && !this.isPresuspended) return
+    await this.ready()
+
+    const key = toHex(topic)
+
+    const existing = this.scans.get(key)
+    if (existing) {
+      existing.expire()
+
+      return existing.complete
+    }
+
+    if (deferSwarming === false) delay = 0
+
+    const onpeer = (peer) => {
+      // ignore self
+      if (b4a.equals(peer.publicKey, this.replicator.peerId)) return
+
+      this.dialer.seen(peer, topic)
+    }
+
+    const scan = new Scanner(this.dht, store, topic, {
+      limit,
+      delay,
+      timeout,
+      updatedTimeout,
+      onpeer,
+      onlookup: () => { this.stats.dht.lookup++ },
+      onerror: (err) => this._safeIgnore(err)
+    })
+
+    this.scans.set(key, scan)
+
+    scan.start()
+
+    this.dialer.refTopic(topic)
+
+    await scan.complete
+
+    if (this.scans.get(key) !== scan) throw new Error('unreachable')
+    this.scans.delete(key)
+
+    this.dialer.unrefTopic(topic)
   }
 
   _onincoming(conn) {
@@ -477,6 +523,7 @@ module.exports = class Replicator extends ReadyResource {
   async _evictConnection(connection, err) {
     if (connection.stream.closed) return
 
+    // TODO: make public / only used by sim
     this.emit('_evictConnection', connection.peerId, /* reason */ err)
 
     const closed = new Promise((resolve) => connection.stream.once('close', resolve))
@@ -904,6 +951,10 @@ module.exports = class Replicator extends ReadyResource {
     const tasks = []
     for (const session of this.sessions.values()) {
       tasks.push(session.destroy())
+    }
+
+    for (const scan of this.scans.values()) {
+      scan.destroy()
     }
 
     // wait for all un-announces before dropping connections
