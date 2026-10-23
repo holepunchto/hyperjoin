@@ -313,7 +313,7 @@ test('dialer is resumed after suspend', async (t) => {
   const topic = p1.cores[0].discoveryKey
   const remote = p1.replicator.peerId
 
-  p2.replicator.dialer.topicEnable(topic)
+  p2.replicator.dialer.refTopic(topic)
   const suspended = p2.replicator.suspend()
   p2.replicator.dialer.seen({ publicKey: remote }, topic)
 
@@ -340,7 +340,7 @@ test('regression: suspend() holds dials until resume()', async (t) => {
   const topic = b4a.alloc(32, 1)
   const remote = b4a.alloc(32, 2)
 
-  replicator.dialer.topicEnable(topic)
+  replicator.dialer.refTopic(topic)
 
   const suspended = replicator.suspend()
   replicator.dialer.seen({ publicKey: remote }, topic)
@@ -367,7 +367,7 @@ test('suspend resets dial attempts of dropped connections', async (t) => {
   const topic = p1.cores[0].discoveryKey
   const remote = p1.replicator.peerId
 
-  p2.replicator.dialer.topicEnable(topic)
+  p2.replicator.dialer.refTopic(topic)
   p2.replicator.dialer.seen({ publicKey: remote }, topic)
   await p2.replicator.flush()
 
@@ -416,7 +416,7 @@ test('holepunch failure switches the peer to relaying', async (t) => {
   const topic = b4a.alloc(32, 1)
   const remote = b4a.alloc(32, 2)
 
-  replicator.dialer.topicEnable(topic)
+  replicator.dialer.refTopic(topic)
   replicator.dialer.seen({ publicKey: remote }, topic)
   await replicator.dialer.flush()
 
@@ -453,7 +453,7 @@ test('regression: Dialer.flush() resolves when replicator suspends', async (t) =
   }
 
   const topic = p1.cores[0].discoveryKey
-  p2.replicator.dialer.topicEnable(topic)
+  p2.replicator.dialer.refTopic(topic)
   p2.replicator.dialer.seen({ publicKey: p1.replicator.peerId }, topic)
 
   await connectStarted
