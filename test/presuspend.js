@@ -3,7 +3,7 @@ const b4a = require('b4a')
 const { spawnSwarm } = require('./helpers')
 const { toHex } = b4a
 
-test.solo('presuspend() unannounces active topics', async (t) => {
+test('presuspend() unannounces active topics', async (t) => {
   const swarm = await spawnSwarm(t)
   const opts = {
     discoveryStartupDelay: 0,
