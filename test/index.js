@@ -14,6 +14,7 @@ async function runTests() {
   await import('./stats.js')
   await import('./presuspend.js')
   await import('./gc-connection.js')
+  await import('./session-opts.js')
   await import('./backports/firewall.js')
   await import('./backports/stats.js')
   await import('./backports/suspend.js')
