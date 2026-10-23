@@ -347,6 +347,8 @@ module.exports = class Replicator extends ReadyResource {
     await Promise.all(pending)
 
     if (!this._manual) this._startAutoRefresh()
+
+    return this.refresh()
   }
 
   join(store, topic, { priority = 0, pin = false, discover = false, deferSwarming, limit } = {}) {
