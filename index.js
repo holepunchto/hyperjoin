@@ -319,9 +319,9 @@ module.exports = class Replicator extends ReadyResource {
     this.refresh().catch(this._safeIgnore)
   }
 
-  async resume({ log = noop } = {}) {
-    if (this._presuspended) {
-      this._presuspended = false
+  async resume({ log = noop, presuspended = false } = {}) {
+    if (this._presuspended !== presuspended) {
+      this._presuspended = presuspended
       await this.refresh()
     }
 

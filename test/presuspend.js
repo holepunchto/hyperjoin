@@ -105,6 +105,16 @@ test('presuspend() -> suspend() -> resume(), resumes networking', async (t) => {
   t.is(rep1.connectionCount, 0, 'suspend drops the connection')
   t.is(session1.isAnnounced, false)
 
+  const { announce, unannounce } = rep1.stats.dht
+  await rep1.resume({ presuspended: true })
+  await rep1.flush()
+  t.absent(rep1.suspended, 'wakeup resumes networking')
+  t.ok(rep1.isPresuspended, 'wakeup preserves presuspend')
+  t.absent(rep1.dialer.suspended, 'wakeup resumes the dialer')
+  t.is(rep1.stats.dht.announce, announce, 'wakeup does not announce')
+  t.is(rep1.stats.dht.unannounce, unannounce, 'wakeup does not unannounce')
+
+  await rep1.suspend()
   const connected = new Promise((resolve) => rep1.once('connected', resolve))
   await rep1.resume()
   await swarm.flush() // announce + dial
