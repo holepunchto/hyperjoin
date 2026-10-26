@@ -162,6 +162,45 @@ test('join({ server: false }) also masks announcing for autostarted (non-pinned)
   await swarm.destroy()
 })
 
+test('stale closing session cant disable the dialer topic for its replacement', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
+  const replicator = new Replicator(store, { bootstrap, manual: true })
+  // replicator.ready() is NOT awaited yet intentionally
+
+  const core = store.get({ name: 'one' })
+  await core.ready()
+  const dk = core.discoveryKey
+  const hex = b4a.toHex(dk)
+
+  const session1 = replicator.join(store, dk, { pin: true })
+  const opening = session1.ready() // also kicks off replicator._open(); won't resolve until replicator.createKeyPair() does
+
+  t.ok(replicator.dialer._activeTopics.has(hex), 'session1 pinned & active -> topic enabled')
+
+  session1.close() // opened === false, opening !== null -> close() defers _close() until `opening` settles
+  const closing = session1.closing
+
+  // Replace session1 while it's still "closing" which still waiting on its own first _open().
+  replicator.join(store, dk, { pin: true })
+
+  t.ok(replicator.dialer._activeTopics.has(hex), 'session2 pinned & active -> topic (re)enabled')
+
+  await opening.catch(() => {})
+  await closing // session1's deferred _close() now runs: _stop()/_transition(DESTROYED) fire 'state' on session1
+
+  t.ok(
+    replicator.dialer._activeTopics.has(hex),
+    'topic should stay enabled for the active replacement session (fails: session1 stale "state" listener disables it)'
+  )
+
+  await replicator.close()
+  await store.close()
+  await testnet.destroy()
+})
+
 test('join() on a topic whose session is still closing replaces it and waits before announcing', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet

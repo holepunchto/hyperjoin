@@ -393,6 +393,9 @@ module.exports = class Replicator extends ReadyResource {
     })
 
     session.on('state', () => {
+      // Don't update dialer if not the current session (aka replaced while closing)
+      if (this.sessions.get(dk) !== session) return
+
       if (session.active) {
         this.dialer.topicEnable(dk)
       } else {
