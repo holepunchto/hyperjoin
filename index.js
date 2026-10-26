@@ -362,7 +362,17 @@ module.exports = class Replicator extends ReadyResource {
     } = {}
   ) {
     const dk = toHex(topic)
-    if (this.sessions.has(dk)) throw new Error('session exists')
+
+    const existing = this.sessions.get(dk)
+
+    let wait = null
+    if (existing) {
+      if (existing.closing === null) throw new Error('session exists')
+
+      // Replace closing session but defer announcing until it finishes closing
+      this.sessions.delete(dk)
+      wait = existing.closing
+    }
 
     const session = new Session(this, store, topic, {
       priority,
@@ -371,12 +381,14 @@ module.exports = class Replicator extends ReadyResource {
       limit,
       deferSwarming,
       server,
-      client
+      client,
+      wait
     })
     this.sessions.set(dk, session)
 
     session.on('close', () => {
-      this.sessions.delete(dk)
+      // don't delete session that replaced this session while closing
+      if (this.sessions.get(dk) === session) this.sessions.delete(dk)
       this.emit('remove', session)
     })
 

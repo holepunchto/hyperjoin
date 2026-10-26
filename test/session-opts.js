@@ -161,3 +161,51 @@ test('join({ server: false }) also masks announcing for autostarted (non-pinned)
 
   await swarm.destroy()
 })
+
+test('join() on a topic whose session is still closing replaces it and waits before announcing', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
+  const replicator = new Replicator(store, { bootstrap, manual: true })
+  await replicator.ready()
+
+  const core = store.get({ name: 'one' })
+  await core.ready()
+  const dk = core.discoveryKey
+
+  const session1 = replicator.join(store, dk, { pin: true })
+  await session1.ready()
+  await session1.refresh()
+  await replicator.flush()
+
+  t.is(session1.isAnnounced, true, 'session1 announced')
+
+  session1.close() // not awaited - still in-flight
+  const closing = session1.closing // same promise the replicator hands to the replacement session
+
+  // rejoin immediately, while session1 is still closing (unannouncing)
+  const session2 = replicator.join(store, dk, { pin: true })
+
+  t.not(session2, session1, 'join() returns a fresh session')
+  t.absent(session1.closed, 'session1 has not finished closing yet')
+
+  // the replicator's map already points at the replacement
+  const keyedSession = replicator.sessions.get(b4a.toHex(dk))
+  t.is(keyedSession, session2, 'session2 is tracked in replicator.sessions')
+  t.is([...replicator.sessions.values()].includes(session1), false, 'session1 removed from map immediately')
+
+  await session2.ready()
+  t.is(session2.discovery._wait, closing, 'session2 defers its first discovery refresh/abort on session1 fully closing')
+
+  await closing
+  t.is(session1.closed, true)
+
+  await session2.refresh()
+  await replicator.flush()
+  t.is(session2.isAnnounced, true, 'session2 announced after session1 finished closing')
+
+  await replicator.close()
+  await store.close()
+  await testnet.destroy()
+})
