@@ -193,10 +193,18 @@ test('join() on a topic whose session is still closing replaces it and waits bef
   // the replicator's map already points at the replacement
   const keyedSession = replicator.sessions.get(b4a.toHex(dk))
   t.is(keyedSession, session2, 'session2 is tracked in replicator.sessions')
-  t.is([...replicator.sessions.values()].includes(session1), false, 'session1 removed from map immediately')
+  t.is(
+    [...replicator.sessions.values()].includes(session1),
+    false,
+    'session1 removed from map immediately'
+  )
 
   await session2.ready()
-  t.is(session2.discovery._wait, closing, 'session2 defers its first discovery refresh/abort on session1 fully closing')
+  t.is(
+    session2.discovery._wait,
+    closing,
+    'session2 defers its first discovery refresh/abort on session1 fully closing'
+  )
 
   await closing
   t.is(session1.closed, true)
