@@ -4,7 +4,7 @@ const createTestnet = require('hyperdht/testnet')
 const Corestore = require('corestore')
 const Replicator = require('..')
 const { spawnSwarm } = require('./helpers')
-const { seedA } = require('./helpers/backports')
+const { seedA, timeout } = require('./helpers/backports')
 
 test('join() defaults: server and client both default to true', async (t) => {
   const testnet = await createTestnet()
@@ -256,3 +256,74 @@ test('join() on a topic whose session is still closing replaces it and waits bef
   await store.close()
   await testnet.destroy()
 })
+
+test('replicator.close() waits for a replaced closing session', async (t) => {
+  const { testnet, store, replicator, session } = await announced(t)
+  slowUnannounce(replicator)
+
+  session.close()
+  replicator.join(store, session.topic, { pin: true })
+  await replicator.close()
+
+  t.ok(session.closed)
+
+  await store.close()
+  await testnet.destroy()
+})
+
+test('replicator.suspend() waits for a replaced closing session', async (t) => {
+  const { testnet, store, replicator, session } = await announced(t)
+  slowUnannounce(replicator)
+
+  session.close()
+  replicator.join(store, session.topic, { pin: true })
+  await replicator.suspend()
+
+  t.ok(session.closed)
+
+  await replicator.resume()
+  await replicator.close()
+  await store.close()
+  await testnet.destroy()
+})
+
+test('closing a replacement session waits for the session it replaced', async (t) => {
+  const { testnet, store, replicator, session } = await announced(t)
+
+  session.close()
+  const replacement = replicator.join(store, session.topic, { pin: true })
+  await replacement.close()
+
+  t.ok(session.closed)
+
+  await replicator.close()
+  await store.close()
+  await testnet.destroy()
+})
+
+async function announced(t) {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
+  const replicator = new Replicator(store, { bootstrap, manual: true })
+  await replicator.ready()
+
+  const core = store.get({ name: 'one' })
+  await core.ready()
+
+  const session = replicator.join(store, core.discoveryKey, { pin: true })
+  await session.refresh()
+  await replicator.flush()
+
+  return { testnet, store, replicator, session }
+}
+
+// a slow network: unannounce takes longer than local teardown
+function slowUnannounce(replicator) {
+  const unannounce = replicator.dht.unannounce.bind(replicator.dht)
+  replicator.dht.unannounce = async (...args) => {
+    await timeout(500)
+    return unannounce(...args)
+  }
+}
