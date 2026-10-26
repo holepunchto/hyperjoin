@@ -4,7 +4,7 @@ const createTestnet = require('hyperdht/testnet')
 const Corestore = require('corestore')
 const Replicator = require('..')
 const { spawnSwarm } = require('./helpers')
-const { seedA } = require('./helpers/backports')
+const { seedA, timeout } = require('./helpers/backports')
 
 test('join() defaults: server and client both default to true', async (t) => {
   const testnet = await createTestnet()
@@ -161,3 +161,169 @@ test('join({ server: false }) also masks announcing for autostarted (non-pinned)
 
   await swarm.destroy()
 })
+
+test('stale closing session cant disable the dialer topic for its replacement', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
+  const replicator = new Replicator(store, { bootstrap, manual: true })
+  // replicator.ready() is NOT awaited yet intentionally
+
+  const core = store.get({ name: 'one' })
+  await core.ready()
+  const dk = core.discoveryKey
+  const hex = b4a.toHex(dk)
+
+  const session1 = replicator.join(store, dk, { pin: true })
+  const opening = session1.ready() // also kicks off replicator._open(); won't resolve until replicator.createKeyPair() does
+
+  t.ok(replicator.dialer._activeTopics.has(hex), 'session1 pinned & active -> topic enabled')
+
+  session1.close() // opened === false, opening !== null -> close() defers _close() until `opening` settles
+  const closing = session1.closing
+
+  // Replace session1 while it's still "closing" which still waiting on its own first _open().
+  replicator.join(store, dk, { pin: true })
+
+  t.ok(replicator.dialer._activeTopics.has(hex), 'session2 pinned & active -> topic (re)enabled')
+
+  await opening.catch(() => {})
+  await closing // session1's deferred _close() now runs: _stop()/_transition(DESTROYED) fire 'state' on session1
+
+  t.ok(
+    replicator.dialer._activeTopics.has(hex),
+    'topic should stay enabled for the active replacement session (fails: session1 stale "state" listener disables it)'
+  )
+
+  await replicator.close()
+  await store.close()
+  await testnet.destroy()
+})
+
+test('join() on a topic whose session is still closing replaces it and waits before announcing', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
+  const replicator = new Replicator(store, { bootstrap, manual: true })
+  await replicator.ready()
+
+  const core = store.get({ name: 'one' })
+  await core.ready()
+  const dk = core.discoveryKey
+
+  const session1 = replicator.join(store, dk, { pin: true })
+  await session1.ready()
+  await session1.refresh()
+  await replicator.flush()
+
+  t.is(session1.isAnnounced, true, 'session1 announced')
+
+  session1.close() // not awaited - still in-flight
+  const closing = session1.closing // same promise the replicator hands to the replacement session
+
+  // rejoin immediately, while session1 is still closing (unannouncing)
+  const session2 = replicator.join(store, dk, { pin: true })
+
+  t.not(session2, session1, 'join() returns a fresh session')
+  t.absent(session1.closed, 'session1 has not finished closing yet')
+
+  // the replicator's map already points at the replacement
+  const keyedSession = replicator.sessions.get(b4a.toHex(dk))
+  t.is(keyedSession, session2, 'session2 is tracked in replicator.sessions')
+  t.is(
+    [...replicator.sessions.values()].includes(session1),
+    false,
+    'session1 removed from map immediately'
+  )
+
+  await session2.ready()
+  t.is(
+    session2.discovery._wait,
+    closing,
+    'session2 defers its first discovery refresh/abort on session1 fully closing'
+  )
+
+  await closing
+  t.is(session1.closed, true)
+
+  await session2.refresh()
+  await replicator.flush()
+  t.is(session2.isAnnounced, true, 'session2 announced after session1 finished closing')
+
+  await replicator.close()
+  await store.close()
+  await testnet.destroy()
+})
+
+test('replicator.close() waits for a replaced closing session', async (t) => {
+  const { testnet, store, replicator, session } = await announced(t)
+  slowUnannounce(replicator)
+
+  session.close()
+  replicator.join(store, session.topic, { pin: true })
+  await replicator.close()
+
+  t.ok(session.closed)
+
+  await store.close()
+  await testnet.destroy()
+})
+
+test('replicator.suspend() waits for a replaced closing session', async (t) => {
+  const { testnet, store, replicator, session } = await announced(t)
+  slowUnannounce(replicator)
+
+  session.close()
+  replicator.join(store, session.topic, { pin: true })
+  await replicator.suspend()
+
+  t.ok(session.closed)
+
+  await replicator.resume()
+  await replicator.close()
+  await store.close()
+  await testnet.destroy()
+})
+
+test('closing a replacement session waits for the session it replaced', async (t) => {
+  const { testnet, store, replicator, session } = await announced(t)
+
+  session.close()
+  const replacement = replicator.join(store, session.topic, { pin: true })
+  await replacement.close()
+
+  t.ok(session.closed)
+
+  await replicator.close()
+  await store.close()
+  await testnet.destroy()
+})
+
+async function announced(t) {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
+  const replicator = new Replicator(store, { bootstrap, manual: true })
+  await replicator.ready()
+
+  const core = store.get({ name: 'one' })
+  await core.ready()
+
+  const session = replicator.join(store, core.discoveryKey, { pin: true })
+  await session.refresh()
+  await replicator.flush()
+
+  return { testnet, store, replicator, session }
+}
+
+// a slow network: unannounce takes longer than local teardown
+function slowUnannounce(replicator) {
+  const unannounce = replicator.dht.unannounce.bind(replicator.dht)
+  replicator.dht.unannounce = async (...args) => {
+    await timeout(500)
+    return unannounce(...args)
+  }
+}
