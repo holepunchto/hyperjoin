@@ -397,7 +397,7 @@ module.exports = class Replicator extends ReadyResource {
     updatedTimeout = 10000,
     deferSwarming = true /* deprecated */
   } = {}) {
-    if (this._isTearingdown && !this.isPresuspended) return
+    if (this._isTearingdown) return
     await this.ready()
 
     const key = toHex(topic)
@@ -430,11 +430,15 @@ module.exports = class Replicator extends ReadyResource {
 
     this.scans.set(key, scan)
 
-    scan.start()
-
     this.dialer.refTopic(topic)
 
+    scan.start()
+
+    this.emit('scan', topic)
+
     await scan.complete
+
+    this.emit('scanned', topic)
 
     if (this.scans.get(key) !== scan) throw new Error('unreachable')
     this.scans.delete(key)
