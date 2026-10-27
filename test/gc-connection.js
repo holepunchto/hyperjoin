@@ -91,9 +91,15 @@ test('connection becomes idle after three minutes without traffic', async (t) =>
   const p2 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 1)
 
-  await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
+  const [session1, session2] = await Promise.all([
+    p1.join(topic, { pin: true }),
+    p2.join(topic, { pin: true })
+  ])
   await swarm.propagateWriters()
   await swarm.refresh()
+  await swarm.flush()
+  session1.discovery.refresh()
+  session2.discovery.refresh()
   await swarm.flush()
 
   const [connection] = p1.replicator.connections

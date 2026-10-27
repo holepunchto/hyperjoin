@@ -107,6 +107,9 @@ test('join({ server: false }) can still use outbound connections', async (t) => 
   await swarm.propagateWriters()
   await swarm.refresh()
   await swarm.flush()
+  session1.discovery.refresh()
+  session2.discovery.refresh()
+  await swarm.flush()
   await Promise.all([p1Connected, p2Connected])
 
   // p1 opted out of announcing, and never shows up as announced
@@ -144,6 +147,9 @@ test('join({ server: false }) also masks announcing for autostarted (non-pinned)
 
   await swarm.propagateWriters()
   await swarm.refresh() // announce & lookup
+  await swarm.flush() // dht-query + dials
+  session1.discovery.refresh()
+  session2.discovery.refresh()
   await swarm.flush() // dht-query + dials
   await Promise.all([p1Connected, p2Connected])
   await swarm.gc() // de-dupe

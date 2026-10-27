@@ -20,7 +20,7 @@ const DISCOVERY_STARTUP_DELAY = 5 * 1000 // 5s
 const AUTO_STARTUP_DELAY = 5 * 1000 // 5s
 const MIN_ACTIVE_TIME = 30 * 1000
 
-const DHT_FAST_RETRY = 3 * 1000 // 3s
+const DHT_FAST_RETRY = 0 // disabled
 
 // connections
 const MIN_PEERS = 20
