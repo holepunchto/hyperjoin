@@ -79,11 +79,10 @@ module.exports = class Replicator extends ReadyResource {
       })
 
     this._firewall = firewall
-    this._safeIgnore = this._safeIgnore.bind(this)
 
     const handlers = {
       ondial: (peer) => this._connect(peer),
-      ondialerror: this._safeIgnore,
+      ondialerror: safetyCatch,
       isConnected: (key) => this.hasConnection(key),
       canRelay: () => !!this.relayThrough,
       want: () => {
@@ -180,14 +179,6 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._manual) this._startAutoRefresh()
   }
 
-  _safeIgnore(err) {
-    if (!this._isTearingdown) {
-      console.warn(err.message)
-    }
-
-    safetyCatch(err)
-  }
-
   get peerId() {
     if (this.keyPair) return this.keyPair.publicKey
 
@@ -237,7 +228,7 @@ module.exports = class Replicator extends ReadyResource {
 
       if (!this._manual) await this.refresh()
     } catch (err) {
-      this._safeIgnore(err)
+      safetyCatch(err)
     }
   }
 
@@ -316,7 +307,7 @@ module.exports = class Replicator extends ReadyResource {
     if (this._presuspended) return
 
     this._presuspended = true
-    this.refresh().catch(this._safeIgnore)
+    this.refresh().catch(safetyCatch)
   }
 
   async resume({ log = noop, presuspended = false } = {}) {
@@ -741,7 +732,7 @@ module.exports = class Replicator extends ReadyResource {
 
   _onrootclose() {
     if (this.destroyed) return
-    this.destroy().catch(this._safeIgnore)
+    this.destroy().catch(safetyCatch)
   }
 
   async refresh(now = Date.now()) {
@@ -892,7 +883,7 @@ module.exports = class Replicator extends ReadyResource {
   _startAutoRefresh() {
     if (this._refreshInterval) return
     this._refreshInterval = setInterval(
-      () => this.refresh().catch(this._safeIgnore),
+      () => this.refresh().catch(safetyCatch),
       this._autoRefreshInterval
     )
     this._refreshInterval.unref()
