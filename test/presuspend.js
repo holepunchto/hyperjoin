@@ -22,10 +22,13 @@ test('presuspend() unannounces active topics', async (t) => {
   const connected = new Promise((resolve) => p1.replicator.on('connected', resolve))
 
   const session1 = await p1.join(topic)
-  await p2.join(topic)
+  const session2 = await p2.join(topic)
 
   await swarm.propagateWriters()
   await swarm.refresh()
+  await swarm.flush()
+  session1.discovery.refresh()
+  session2.discovery.refresh()
   await swarm.flush()
 
   await connected
@@ -60,9 +63,12 @@ test('presuspend() -> resume(), resumes announcements', async (t) => {
   const rep1 = p1.replicator
 
   const session1 = await p1.join(topic)
-  await p2.join(topic)
+  const session2 = await p2.join(topic)
   await swarm.propagateWriters()
   await swarm.refresh()
+  await swarm.flush()
+  session1.discovery.refresh()
+  session2.discovery.refresh()
   await swarm.flush()
 
   const [connection] = rep1.connections
@@ -91,9 +97,12 @@ test('presuspend() -> suspend() -> resume(), resumes networking', async (t) => {
   const rep1 = p1.replicator
 
   const session1 = await p1.join(topic)
-  await p2.join(topic)
+  const session2 = await p2.join(topic)
   await swarm.propagateWriters()
   await swarm.refresh()
+  await swarm.flush()
+  session1.discovery.refresh()
+  session2.discovery.refresh()
   await swarm.flush()
 
   rep1.presuspend()

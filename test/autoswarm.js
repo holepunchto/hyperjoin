@@ -9,10 +9,16 @@ test('autoswarm: all topics pinned (hyperswarm mode)', async (t) => {
   const p1 = await swarm.spawnPeer()
   const p2 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 0x1)
-  await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
+  const [session1, session2] = await Promise.all([
+    p1.join(topic, { pin: true }),
+    p2.join(topic, { pin: true })
+  ])
 
   await swarm.propagateWriters()
   await swarm.refresh()
+  await swarm.flush()
+  session1.discovery.refresh()
+  session2.discovery.refresh()
   await swarm.flush()
   await swarm.gc()
 
@@ -51,13 +57,16 @@ test('autoswarm: deferSwarming disabled', async (t) => {
   const p2 = await swarm.spawnPeer()
 
   const topic = b4a.alloc(32, 0x1)
-  await Promise.all([
+  const [session1, session2] = await Promise.all([
     p1.join(topic, { deferSwarming: false }),
     p2.join(topic, { deferSwarming: false })
   ])
 
   await swarm.propagateWriters()
   await swarm.refresh() // announce & lookup
+  await swarm.flush() // dht-query + dials
+  session1.discovery.refresh()
+  session2.discovery.refresh()
   await swarm.flush() // dht-query + dials
   await swarm.gc() // de-dupe
 
@@ -87,6 +96,9 @@ test('autoswarm: manually activated instances', async (t) => {
 
   await swarm.propagateWriters()
   await swarm.refresh()
+  await swarm.flush()
+  session1.discovery.refresh()
+  session2.discovery.refresh()
   await swarm.flush()
   await swarm.gc() // de-dupe
 
@@ -200,7 +212,7 @@ test('autoswarm: discover() -> pin() upgrades the session, keeping discovery int
 
   const topic = b4a.alloc(32, 0x1)
   const session1 = await p1.join(topic)
-  await p2.join(topic, { pin: true })
+  const session2 = await p2.join(topic, { pin: true })
   await swarm.propagateWriters()
 
   t.is(session1.isDiscovering, false)
@@ -222,6 +234,9 @@ test('autoswarm: discover() -> pin() upgrades the session, keeping discovery int
   )
 
   await swarm.refresh()
+  await swarm.flush()
+  session1.discovery.refresh()
+  session2.discovery.refresh()
   await swarm.flush()
 
   t.is(session1.isPinned, true, 'still pinned after refresh')

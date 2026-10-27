@@ -65,7 +65,7 @@ exports.spawnPeer = async function spawnPeer(t, opts = {}) {
     manual: true,
     autoswarm: false,
     discoveryStartupDelay: 0,
-    dhtFastRetry: 50,
+    dhtFastRetry: 0,
     ...opts
   })
 
