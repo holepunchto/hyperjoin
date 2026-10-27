@@ -48,10 +48,6 @@ General
 - `maxParallel`: max parallel outbound dials
 - `slots`: auto-rotation slots
 - `gcIdleTime`: Evict idle sessions exceeding time
-- `defaultDiscoveryTimeout`: initial discovery lifetime
-- `updatedDiscoveryTimeout`: shortened discovery lifetime after `session.bump()`
-- `discoveryStartupDelay`: delay before discovery lookups
-- `autoStartupDelay`: delay before autoswarm announcements
 - `minActiveTime`: minimum time an autoswarmed session stays active
 - `manual`: don't launch internal `refresh()` interval (default: `false`)
 - `interval`: Auto-refresh interval (default: `5000`)
@@ -128,24 +124,32 @@ Resolves after dht.server port is bound and store is ready.
 
 ### `const rs = rep.join(storeSession, topic, opts)`
 
-Join a topic persistently, returning a `ReplicatorSession`. Joined topics
-participate in autoswarm pooling and announce while active.
+Join a topic announcing presence.
+Joined topics participate in autoswarm pool.
+
+returns `ReplicatorSession`
 
 `opts`:
 
-- `priority`: autoswarm priority `number`
+- `priority`: autoswarm priority `number`, high number equals higher priority.
 - `pin`: same as `session.pin()`
-- `deferSwarming`: defer autoswarm activation until the configured startup delay
+- `delay`: delay before autoswarm activation (default: `5000`)
 
 ### `await rep.scan(storeSession, topic, opts)`
 
-Scan a topic momentarily. A scan performs discovery and may dial discovered
-peers, but never announces and is removed when the scan completes.
+Scan a topic for peers without announcing.
+A scan is removed upon completion.
+
+Returns non-rejecting `Promise` that resolves on scan complete.
 
 `opts`:
 
 - `limit`: maximum peers emitted per DHT query (default: `1`)
-- `deferSwarming`: defer the scan until the configured startup delay
+- `delay`: delay before the DHT lookup (default: `3000`)
+- `timeout`: initial scan lifetime (default: `60000`)
+- `updatedTimeout`: shortened scan lifetime after the scan is refreshed (default: `10000`)
+
+emits events `scan` on scan start and `scanned` on scan complete
 
 ### `await rep.refresh()`
 
