@@ -354,7 +354,7 @@ module.exports = class Replicator extends ReadyResource {
 
       // Replace closing session but defer announcing until it finishes closing
       this.sessions.delete(dk)
-      wait = existing.closing
+      wait = existing.closing // <-- `wait` used to be part of public api, it's no-longer required?
     }
 
     if (deferSwarming === false) {
@@ -371,23 +371,19 @@ module.exports = class Replicator extends ReadyResource {
     this.sessions.set(dk, session)
 
     session.on('close', () => {
-      // don't delete session that replaced this session while closing
       if (this.sessions.get(dk) === session) this.sessions.delete(dk)
       this.emit('remove', session)
     })
 
-    session.on('state', () => {
-      // Don't update dialer if not the current session (aka replaced while closing)
-      if (this.sessions.get(dk) !== session) return
+    if (session.active) this.dialer.refTopic(dk)
 
+    session.on('state', () => {
       if (session.active) {
         this.dialer.refTopic(dk)
       } else {
         this.dialer.unrefTopic(dk)
       }
     })
-
-    if (session.active) this.dialer.refTopic(dk)
 
     this.emit('join', session)
 
