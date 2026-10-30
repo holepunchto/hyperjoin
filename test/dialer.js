@@ -463,6 +463,23 @@ test('flush() settles when a dial makes no attempt', async (t) => {
   t.pass('flush settled')
 })
 
+test('seen() hardcaps peers to 150', (t) => {
+  const ctx = spawnDialer(t, { suspended: true })
+
+  t.is(ctx.dialer.peers.size, 0)
+
+  let i = 0
+
+  ctx.dialer.seen({ publicKey: asKey(i++) }, TOPIC)
+  t.is(ctx.dialer.peers.size, 1)
+
+  while (i < 151) {
+    ctx.dialer.seen({ publicKey: asKey(i++) }, TOPIC)
+  }
+
+  t.is(ctx.dialer.peers.size, 150)
+})
+
 function spawnDialer(
   t,
   {
