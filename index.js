@@ -413,16 +413,18 @@ module.exports = class Replicator extends ReadyResource {
 
     const onpeer = (peer) => {
       // ignore self
-      if (b4a.equals(peer.publicKey, this.replicator.peerId)) return
+      if (b4a.equals(peer.publicKey, this.peerId)) return
 
       this.dialer.seen(peer, topic)
     }
 
     const scan = new Scanner(this.dht, store, topic, {
+      keyPair: this.keyPair,
       limit,
       delay,
       timeout,
       updatedTimeout,
+      suspended: this.suspended,
       onpeer,
       onlookup: () => { this.stats.dht.lookup++ },
       onerror: (err) => this._safeIgnore(err)
@@ -817,6 +819,11 @@ module.exports = class Replicator extends ReadyResource {
       if (sess.closing || sess.closed || sess.state === 'destroyed') continue
       pending.push(sess.flush())
     }
+
+    for (const scan of this.scans.values()) {
+      pending.push(scan.flush())
+    }
+
     await Promise.all(pending)
 
     // pending connects
