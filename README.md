@@ -135,19 +135,19 @@ returns `ReplicatorSession`
 - `pin`: same as `session.pin()`
 - `delay`: delay before autoswarm activation (default: `5000`)
 
-### `await rep.scan(storeSession, topic, opts)`
+### `const op = rep.scan(topic, opts)`
 
 Scan a topic for peers without announcing.
-A scan is removed upon completion.
+A scan is removed when `op.complete` resolves.
 
-Returns non-rejecting `Promise` that resolves on scan complete.
+`op.expire(timeout)` shortens the scan lifetime.
 
 `opts`:
 
 - `limit`: maximum peers emitted per DHT query (default: `1`)
 - `delay`: delay before the DHT lookup (default: `3000`)
 - `timeout`: initial scan lifetime (default: `60000`)
-- `updatedTimeout`: shortened scan lifetime after the scan is refreshed (default: `10000`)
+- `onconnected(op, connection)`: called when a scanned peer connects
 
 emits events `scan` on scan start and `scanned` on scan complete
 

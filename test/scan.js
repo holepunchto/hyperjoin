@@ -24,7 +24,8 @@ test('scan() finds peers without announcing', async (t) => {
   const topic = p1.cores[0].discoveryKey
   const { announce, lookup } = rep.stats.dht
 
-  await rep.scan(p2.session, topic, { delay: 0, timeout: 1000 })
+  const op = rep.scan(topic, { delay: 0, timeout: 1000 })
+  await op.complete
 
   t.ok(rep.peers.size > 0, 'scan discovers peers')
 
@@ -61,9 +62,16 @@ test('scan() can be externally expired', async (t) => {
   const topic = p1.cores[0].discoveryKey
   const { announce, lookup } = rep.stats.dht
 
-  await rep.scan(p2.session, topic, { delay: 0, timeout: 10000, updatedTimeout: 50 })
-
-  // TODO: intuitive expire
+  let connected = false
+  const op = rep.scan(topic, {
+    delay: 0,
+    timeout: 10000,
+    onconnected(op) {
+      connected = true
+      op.expire(50)
+    }
+  })
+  await op.complete
 
   t.ok(rep.peers.size > 0, 'scan discovers peers')
 
@@ -73,11 +81,44 @@ test('scan() can be externally expired', async (t) => {
   t.is(rep.connectionCount, 1)
   t.is(p1.replicator.connectionCount, 1)
   t.is(cores[0].length, 2, 'replicated')
+  t.ok(connected, 'scan expires after connecting')
 
   t.is(p2.replicator.stats.dht.announce, announce, 'scan does not announce')
   t.ok(p2.replicator.stats.dht.lookup > lookup, 'scan looks up the topic')
 
   await p1.destroy()
   await p2.destroy()
+  await testnet.destroy()
+})
+
+test('scan() resumes after suspension', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const rep = p2.replicator
+
+  const cores = p1.cores.map((core) => p2.session.get(core.key))
+  await Promise.all(cores.map((core) => core.ready()))
+
+  const topic = p1.cores[0].discoveryKey
+  const op = rep.scan(topic, { delay: 0, timeout: 60000 })
+
+  await rep.flush()
+
+  const { lookup } = rep.stats.dht
+
+  await rep.suspend()
+  t.ok(rep.scans.size > 0, 'scan remains active while suspended')
+
+  await rep.resume()
+  await rep.flush()
+
+  t.ok(rep.stats.dht.lookup > lookup, 'scan looks up after resume')
+
+  await p1.destroy()
+  await p2.destroy()
+  await op.complete
   await testnet.destroy()
 })

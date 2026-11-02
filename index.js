@@ -288,7 +288,7 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     for (const scan of this.scans.values()) {
-      scan.destroy()
+      suspending.push(scan.suspend({ log }))
     }
 
     this._inflight.clear()
@@ -329,6 +329,10 @@ module.exports = class Replicator extends ReadyResource {
 
     for (const session of this.sessions.values()) {
       pending.push(session.resume({ log }))
+    }
+
+    for (const scan of this.scans.values()) {
+      scan.resume()
     }
 
     await Promise.all(pending)
@@ -390,23 +394,20 @@ module.exports = class Replicator extends ReadyResource {
     return session
   }
 
-  async scan(store, topic, {
+  scan(topic, {
     limit = 1,
     delay = 3000,
     timeout = 60000,
-    updatedTimeout = 10000,
+    onconnected = noop,
     deferSwarming = true /* deprecated */
   } = {}) {
     if (this._isTearingdown) return
-    await this.ready()
 
     const key = toHex(topic)
 
     const existing = this.scans.get(key)
     if (existing) {
-      existing.expire()
-
-      return existing.complete
+      return existing
     }
 
     if (deferSwarming === false) delay = 0
@@ -418,14 +419,15 @@ module.exports = class Replicator extends ReadyResource {
       this.dialer.seen(peer, topic)
     }
 
-    const scan = new Scanner(this.dht, store, topic, {
-      keyPair: this.keyPair,
+    const scan = new Scanner(this.dht, topic, {
+      ready: this.ready(),
+      getKeyPair: () => this.keyPair,
       limit,
       delay,
       timeout,
-      updatedTimeout,
       suspended: this.suspended,
       onpeer,
+      onconnected,
       onlookup: () => { this.stats.dht.lookup++ },
       onerror: (err) => this._safeIgnore(err)
     })
@@ -438,14 +440,16 @@ module.exports = class Replicator extends ReadyResource {
 
     this.emit('scan', topic)
 
-    await scan.complete
+    scan.complete.then(() => {
+      this.emit('scanned', topic)
 
-    this.emit('scanned', topic)
+      if (this.scans.get(key) !== scan) return
 
-    if (this.scans.get(key) !== scan) throw new Error('unreachable')
-    this.scans.delete(key)
+      this.scans.delete(key)
+      this.dialer.unrefTopic(topic)
+    })
 
-    this.dialer.unrefTopic(topic)
+    return scan
   }
 
   _onincoming(conn) {
@@ -517,6 +521,12 @@ module.exports = class Replicator extends ReadyResource {
     else this.stats.connects.server.opened++
 
     this.emit('connected', connection)
+
+    const peer = this.dialer.lookup(peerId)
+    for (const [topic, scan] of this.scans) {
+      if (peer._topics.has(topic)) scan.connected(connection)
+    }
+
     this.emit('update')
 
     return connection
