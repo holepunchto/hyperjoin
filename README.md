@@ -1,7 +1,6 @@
 # poolreplicator
 
-Replacement of `hyperswarm` to replicate \
-large sets of cores across many topics.
+Replicates many groups of cores across many topics using pooled resources
 
 ## Usage
 
@@ -197,6 +196,10 @@ Total amount of active connections.
 #### `rep.connecting`
 
 Amount of outbound connections in-flight.
+
+#### `rep.collected`
+
+Renewed after each `refresh()` and resolves on GC flush
 
 #### `rep.connections`
 

@@ -31,12 +31,16 @@ const ERR_SUSPEND = 'SuspendDrop'
 const ERR_MAXPEERS = 'MaxPeersCap'
 
 module.exports = class Replicator extends ReadyResource {
-  constructor(rootStore, opts = {}) {
+  constructor(onreplicate, whoHas, opts = {}) {
     super()
 
+    if (typeof onreplicate !== 'function') throw new Error('function `onreplicate` required')
+    if (typeof whoHas !== 'function') throw new Error('function `whoHas` required')
+
     const {
-      seed,
-      keyPair,
+      seed = null,
+      keyPair = DHT.keyPair(seed),
+
       relayThrough,
       minPeers = MIN_PEERS,
       maxPeers = MAX_PEERS,
@@ -60,12 +64,10 @@ module.exports = class Replicator extends ReadyResource {
       minActiveTime = MIN_ACTIVE_TIME
     } = opts
 
-    if (seed) this.keyPair = DHT.keyPair(seed)
-    if (keyPair) this.keyPair = keyPair
+    this.keyPair = keyPair
+    this._onreplicate = onreplicate
+    this._whoHas = whoHas
 
-    if (rootStore.root !== null) throw new Error('root corestore expected')
-
-    this.root = rootStore
     this._dhtOwned = !opts.dht
     this.dht =
       opts.dht ||
@@ -76,10 +78,11 @@ module.exports = class Replicator extends ReadyResource {
       })
 
     this._firewall = firewall
+    this._safeIgnore = this._safeIgnore.bind(this)
 
     const handlers = {
       ondial: (peer) => this._connect(peer),
-      ondialerror: safetyCatch,
+      ondialerror: this._safeIgnore,
       isConnected: (key) => this.hasConnection(key),
       canRelay: () => !!this.relayThrough,
       want: () => {
@@ -128,6 +131,7 @@ module.exports = class Replicator extends ReadyResource {
     this._autoswarm = autoswarm
     this._autoRefreshInterval = interval
     this._gcIdleTime = gcIdleTime
+    this.collected = Promise.resolve()
 
     this._autoStartupDelay = autoStartupDelay
     this._minActiveTime = minActiveTime
@@ -163,15 +167,23 @@ module.exports = class Replicator extends ReadyResource {
     this._handleNetworkUpdate = this._handleNetworkUpdate.bind(this)
     this.dht.on('network-update', this._handleNetworkUpdate)
 
-    this._onrootclose = this._onrootclose.bind(this)
-    this.root.once('close', this._onrootclose)
-
     this.on('update', this._handleUpdate.bind(this))
 
     this._gcDisabled = gcDisabled
     this._manual = !!manual
     this._refreshInterval = null
     if (!this._manual) this._startAutoRefresh()
+  }
+
+  _safeIgnore(err) {
+    // if and only if an error occurs here
+    // for any other reason than teardown
+    // it must be addressed and not ignored
+    if (!this._isTearingdown) {
+      this.emit('error', err)
+    }
+
+    safetyCatch(err)
   }
 
   get peerId() {
@@ -210,9 +222,6 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _open() {
-    // TODO: this await is the root cause
-    // for `refresh()` being async.
-    this.keyPair ||= await this.root.createKeyPair('replicator')
     this._pendingListen = this._safeListen()
   }
 
@@ -223,7 +232,7 @@ module.exports = class Replicator extends ReadyResource {
 
       if (!this._manual) await this.refresh()
     } catch (err) {
-      safetyCatch(err)
+      this._safeIgnore(err)
     }
   }
 
@@ -306,7 +315,7 @@ module.exports = class Replicator extends ReadyResource {
     if (this._presuspended) return
 
     this._presuspended = true
-    this.refresh().catch(safetyCatch)
+    this.refresh().catch(this._safeIgnore)
   }
 
   async resume({ log = noop, presuspended = false } = {}) {
@@ -342,7 +351,7 @@ module.exports = class Replicator extends ReadyResource {
     return this.refresh()
   }
 
-  join(store, topic, {
+  join(topic, {
     priority = 0,
     pin = false,
     delay = 5000,
@@ -358,14 +367,14 @@ module.exports = class Replicator extends ReadyResource {
 
       // Replace closing session but defer announcing until it finishes closing
       this.sessions.delete(dk)
-      wait = existing.closing // <-- `wait` used to be part of public api, it's no-longer required?
+      wait = existing.closing
     }
 
     if (deferSwarming === false) {
       delay = 0
     }
 
-    const session = new Session(this, store, topic, {
+    const session = new Session(this, topic, {
       priority,
       pin,
       wait,
@@ -392,6 +401,30 @@ module.exports = class Replicator extends ReadyResource {
     this.emit('join', session)
 
     return session
+  }
+
+  leave(topic) {
+    const session = this.sessions.get(toHex(topic))
+    if (!session) return
+    return session.destroy()
+  }
+
+  pin(topic) {
+    const session = this.sessions.get(toHex(topic))
+    if (!session) return
+    session.pin()
+  }
+
+  unpin(topic) {
+    const session = this.sessions.get(toHex(topic))
+    if (!session) return
+    session.unpin()
+  }
+
+  bump(topic, value = -1) {
+    const session = this.sessions.get(toHex(topic))
+    if (!session) return
+    session.bump(value)
   }
 
   scan(topic, {
@@ -514,7 +547,7 @@ module.exports = class Replicator extends ReadyResource {
 
     map.set(hex, connection)
 
-    this.root.replicate(connection.stream)
+    this._onreplicate(connection.stream)
     connection._watchChannels()
 
     if (initiator) this.stats.connects.client.opened++
@@ -684,8 +717,6 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _gc(now = Date.now()) {
-    if (this._gcDisabled) return
-
     const evictions = []
     let connectionsEvicted = 0
     let sessionsEvicted = 0
@@ -789,28 +820,22 @@ module.exports = class Replicator extends ReadyResource {
     this.stats.updates++
   }
 
-  _onrootclose() {
-    if (this.destroyed) return
-    this.destroy().catch(safetyCatch)
-  }
-
-  async refresh(now = Date.now()) {
+  refresh(now = Date.now()) {
     this._autoselect(now) // updates sessions
-
-    const done = []
 
     for (const sess of this.sessions.values()) {
       if (sess.closing || sess.closed) continue
-      done.push(sess.refresh(now)) // applies state
+      sess.refresh(now) // applies state
     }
 
     for (const conn of this.connections) {
       conn.refresh(now)
     }
 
-    await Promise.all(done)
-
-    await this._gc(now)
+    if (!this._gcDisabled) {
+      const gcDone = this._gc(now).catch(this._safeIgnore)
+      this.collected = this.collected.then(gcDone)
+    }
 
     this.dialer.refresh(now)
 
@@ -825,6 +850,9 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     const pending = []
+
+    pending.push(this.collected)
+
     for (const sess of this.sessions.values()) {
       if (sess.closing || sess.closed || sess.state === 'destroyed') continue
       pending.push(sess.flush())
@@ -947,7 +975,7 @@ module.exports = class Replicator extends ReadyResource {
   _startAutoRefresh() {
     if (this._refreshInterval) return
     this._refreshInterval = setInterval(
-      () => this.refresh().catch(safetyCatch),
+      () => this.refresh().catch(this._safeIgnore),
       this._autoRefreshInterval
     )
     this._refreshInterval.unref()
@@ -959,7 +987,6 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _close() {
-    this.root.removeListener('close', this._onrootclose)
     this.dht.removeListener('network-change', this._handleNetworkChange)
     this.dht.removeListener('network-update', this._handleNetworkUpdate)
 
