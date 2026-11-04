@@ -1,7 +1,7 @@
 {
-  "name": "contextreplicator",
+  "name": "poolreplicator",
   "version": "1.3.0",
-  "description": "context aware hyperswarm alternative",
+  "description": "Large topic collider",
   "main": "index.js",
   "exports": {
     "./package": "./package.json",
