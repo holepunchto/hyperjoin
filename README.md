@@ -152,28 +152,32 @@ const opts = {
 
   manual: false,      // disable auto-refresh interval
   gcDisabled: false,  // prevent garbage collection on `refresh()`
-  autoswarm: true,    // topic rotation pool enabled
+  pooling: true,      // enable topic rotation
 }
 ```
 
 
 ### Events
 
+#### `rep.on('join', (session) => {})`
+
+Fired when topic is added to pool
+
+#### `rep.on('leave, (session) => {})`
+
+Fired when topic is unannounced and removed from pool
+
 #### `rep.on('activate', (session) => {})`
 
-Fired when a session becomes active.
+Fired when a topic becomes active.
 
 #### `rep.on('deactivate', (session) => {})`
 
-Fired when a session becomes inactive a.k.a idle.
-
-#### `rep.on('remove', (session) => {})`
-
-Fired when a session is removed from the replicator.
+Fired when a topic becomes inactive a.k.a idle.
 
 #### `rep.on('evicted', (count) => {})`
 
-Fired after GC evicts idle sessions. `count` is the number removed.
+Fired after GC evicts idle topics. `count` is the number removed.
 
 Can be used as signal to add more sessions through `join()`
 
@@ -188,6 +192,10 @@ for (const [topic, session] of rep.sessions) {
 Fired after GC drops connections. `count` is the number dropped.
 
 ### Getters
+
+#### `rep.pooling`
+
+Enable|disable topic rotation pool, is writable and applied on `refresh()`
 
 #### `rep.connectionCount`
 
@@ -223,7 +231,8 @@ Connection and DHT activity counters:
 
 #### `rep.activeSessions`
 
-Returns list of active sessions.
+Returns list of active sessions
+A session is an internal representation of topic.
 
 #### `rep.announcedSessions`
 

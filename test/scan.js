@@ -1,4 +1,5 @@
 const { test } = require('brittle')
+const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 const {
   seedA,
@@ -41,6 +42,23 @@ test('scan() finds peers without announcing', async (t) => {
 
   await p1.destroy()
   await p2.destroy()
+  await testnet.destroy()
+})
+
+test('scan() forwards the peer limit', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+  const peer = await spawnPeer(t, { bootstrap, seed: seedA })
+
+  const limited = peer.replicator.scan(b4a.alloc(32, 42), { limit: 1 })
+  const unlimited = peer.replicator.scan(b4a.alloc(32, 43), { limit: Infinity })
+
+  await Promise.all([limited.flush(), unlimited.flush()])
+
+  t.is(limited.discovery.limit, 1)
+  t.is(unlimited.discovery.limit, Infinity)
+
+  await peer.destroy()
   await testnet.destroy()
 })
 

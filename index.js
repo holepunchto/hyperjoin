@@ -12,13 +12,9 @@ const { toHex } = b4a
 const AUTO_REFRESH_INTERVAL = 5000
 
 // sessions
-const DEFAULT_AUTO_SLOTS = 8
-const DEFAULT_SWARM_GC_IDLE_TIME = 30 * 1000
-
-const AUTO_STARTUP_DELAY = 5 * 1000 // 5s
-const MIN_ACTIVE_TIME = 30 * 1000
-
-const DHT_FAST_RETRY = 0 // disabled
+const POOL_SLOTS = 8
+const SESSION_MAX_IDLE = 30 * 1000
+const SESSION_MIN_ACTIVE = 30 * 1000
 
 // connections
 const MIN_PEERS = 20
@@ -47,21 +43,17 @@ module.exports = class Replicator extends ReadyResource {
       maxParallel,
       firewall = allowAll,
       suspended,
-      autoswarm = true,
+      pooling = true,
       manual = false,
       interval = AUTO_REFRESH_INTERVAL,
       gcDisabled = false,
 
-      // Discovery
-      dhtFastRetry = DHT_FAST_RETRY,
-
       // Idle
-      gcIdleTime = DEFAULT_SWARM_GC_IDLE_TIME,
+      gcIdleTime = SESSION_MAX_IDLE,
 
       // autoswarm
-      slots = DEFAULT_AUTO_SLOTS,
-      autoStartupDelay = AUTO_STARTUP_DELAY,
-      minActiveTime = MIN_ACTIVE_TIME
+      slots = POOL_SLOTS,
+      minActiveTime = SESSION_MIN_ACTIVE
     } = opts
 
     this.keyPair = keyPair
@@ -128,16 +120,12 @@ module.exports = class Replicator extends ReadyResource {
     this._lastConnectionEvict = 0
 
     this.slots = slots
-    this._autoswarm = autoswarm
+    this.pooling = pooling
     this._autoRefreshInterval = interval
     this._gcIdleTime = gcIdleTime
-    this.collected = Promise.resolve()
-
-    this._autoStartupDelay = autoStartupDelay
     this._minActiveTime = minActiveTime
 
-    this._dhtFastRetry = dhtFastRetry
-
+    this.collected = Promise.resolve()
     this._online = false
 
     this.stats = {
@@ -230,7 +218,7 @@ module.exports = class Replicator extends ReadyResource {
       await this.server.listen(this.keyPair)
       this.listening = true
 
-      if (!this._manual) await this.refresh()
+      if (!this._manual) this.refresh()
     } catch (err) {
       this._safeIgnore(err)
     }
@@ -315,13 +303,13 @@ module.exports = class Replicator extends ReadyResource {
     if (this._presuspended) return
 
     this._presuspended = true
-    this.refresh().catch(this._safeIgnore)
+    this.refresh()
   }
 
   async resume({ log = noop, presuspended = false } = {}) {
     if (this._presuspended !== presuspended) {
       this._presuspended = presuspended
-      await this.refresh()
+      this.refresh()
     }
 
     if (!this.suspended) return
@@ -348,7 +336,7 @@ module.exports = class Replicator extends ReadyResource {
 
     if (!this._manual) this._startAutoRefresh()
 
-    return this.refresh()
+    this.refresh()
   }
 
   join(topic, {
@@ -385,7 +373,7 @@ module.exports = class Replicator extends ReadyResource {
 
     session.on('close', () => {
       if (this.sessions.get(dk) === session) this.sessions.delete(dk)
-      this.emit('remove', session)
+      this.emit('leave', session)
     })
 
     if (session.active) this.dialer.refTopic(dk)
@@ -406,6 +394,8 @@ module.exports = class Replicator extends ReadyResource {
   leave(topic) {
     const session = this.sessions.get(toHex(topic))
     if (!session) return
+
+    session.once('close', () => this.emit('leave', session))
     return session.destroy()
   }
 
@@ -833,8 +823,9 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     if (!this._gcDisabled) {
-      const gcDone = this._gc(now).catch(this._safeIgnore)
-      this.collected = this.collected.then(gcDone)
+      this.collected = this.collected.then(() =>
+        this._gc(now).catch(this._safeIgnore)
+      )
     }
 
     this.dialer.refresh(now)
@@ -876,7 +867,6 @@ module.exports = class Replicator extends ReadyResource {
     let slots = this.slots
 
     for (const session of this.sessions.values()) {
-      if (session.isDiscovering) continue
       if (session.isPinned) continue
       if (session.closing || session.closed) continue
 
@@ -885,7 +875,7 @@ module.exports = class Replicator extends ReadyResource {
         const timeActive = now - session._startTime
         const minActive = session._startDelay + this._minActiveTime
 
-        if (this._autoswarm && timeActive < minActive) {
+        if (this.pooling && timeActive < minActive) {
           slots-- // reserved & immovable
           continue
         }
@@ -922,7 +912,7 @@ module.exports = class Replicator extends ReadyResource {
     // rotate
     pool.sort(heuristicSort)
 
-    if (!this._autoswarm) slots = 0
+    if (!this.pooling) slots = 0
 
     // autostop
     for (let i = slots; i < pool.length; i++) {
@@ -935,15 +925,6 @@ module.exports = class Replicator extends ReadyResource {
     for (let i = 0; i < limit; i++) {
       pool[i]._autoStart(now)
     }
-  }
-
-  // @deprecated
-  async setAutoswarm(enabled) {
-    if (this._autoswarm === enabled) return
-
-    this._autoswarm = enabled
-    await this.refresh()
-    await this.flush()
   }
 
   async _handleNetworkUpdate() {
@@ -963,7 +944,7 @@ module.exports = class Replicator extends ReadyResource {
       connection.stream.sendKeepAlive()
     }
 
-    await this.refresh()
+    this.refresh()
   }
 
   _stopAutoRefresh() {
@@ -975,7 +956,7 @@ module.exports = class Replicator extends ReadyResource {
   _startAutoRefresh() {
     if (this._refreshInterval) return
     this._refreshInterval = setInterval(
-      () => this.refresh().catch(this._safeIgnore),
+      () => this.refresh(),
       this._autoRefreshInterval
     )
     this._refreshInterval.unref()

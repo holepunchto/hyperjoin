@@ -42,7 +42,7 @@ test.skip('core-index: connections with no active session are evicted', async (t
 
   await swarm.propagateWriters()
 
-  await swarm.refresh() // announce
+  swarm.refresh() // announce
   await swarm.flush() // wait for dials
 
   const { replicator } = p1
@@ -91,15 +91,14 @@ test('connection becomes idle after three minutes without traffic', async (t) =>
   const p2 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 1)
 
-  const [session1, session2] = await Promise.all([
+  await swarm.flush() // TODO: do not await server.listen
+
+  await Promise.all([
     p1.join(topic, { pin: true }),
     p2.join(topic, { pin: true })
   ])
   await swarm.propagateWriters()
-  await swarm.refresh()
-  await swarm.flush()
-  session1.discovery.refresh()
-  session2.discovery.refresh()
+  swarm.refresh()
   await swarm.flush()
 
   const [connection] = p1.replicator.connections
@@ -119,6 +118,122 @@ test('connection becomes idle after three minutes without traffic', async (t) =>
 
   t.is(connection.isIdle(now + IDLE_TIMEOUT - 1), false, 'recent traffic keeps connection active')
   t.is(connection.isIdle(now + IDLE_TIMEOUT + 1), true, 'stale traffic makes connection idle')
+
+  await swarm.destroy()
+})
+
+test('connections are unconditionally evicted at max capacity', async (t) => {
+  const swarm = await spawnSwarm(t)
+  const p1 = await swarm.spawnPeer({ maxPeers: 1, gcDisabled: true })
+  const p2 = await swarm.spawnPeer()
+  const p3 = await swarm.spawnPeer()
+  const topic = b4a.alloc(32, 1)
+
+  await swarm.flush() // TODO: do not await server.listen
+
+  await Promise.all([
+    p1.join(topic, { pin: true }),
+    p2.join(topic, { pin: true })
+  ])
+  await swarm.propagateWriters()
+  swarm.refresh()
+  await swarm.flush()
+
+  const p2Key = toHex(p2.replicator.peerId)
+  t.is(p1.replicator.connectionCount, 1, 'one connection at capacity')
+
+  await p1.replicator._gc()
+
+  await p3.join(topic, { pin: true })
+  await swarm.propagateWriters()
+  swarm.refresh()
+  await swarm.flush()
+
+  t.is(p1.replicator.connectionCount, 2, 'connection exceeds capacity')
+
+  await p1.replicator._gc()
+
+  t.is(p1.replicator.connectionCount, 1, 'connection at capacity after gc')
+  t.ok(p1.replicator.getConnection(p2Key), 'keeps established connection')
+
+  await swarm.destroy()
+})
+
+test('connection becomes idle when no topic owns its core', async (t) => {
+  const swarm = await spawnSwarm(t)
+  const topic = b4a.alloc(32, 1)
+
+  let owned = true
+  const whoHas = () => (owned ? topic : null)
+
+  const p1 = await swarm.spawnPeer({ whoHas })
+  const p2 = await swarm.spawnPeer()
+
+  await swarm.flush() // TODO: do not await server.listen
+
+  await Promise.all([
+    p1.join(topic, { pin: true }),
+    p2.join(topic, { pin: true })
+  ])
+  await swarm.propagateWriters()
+  swarm.refresh()
+  await swarm.flush()
+
+  const [connection] = p1.replicator.connections
+  await connection.replicating
+
+  t.is(connection.isIdle(), false, 'has active core')
+
+  owned = false
+
+  t.is(connection.isIdle(), true, 'no active core')
+
+  await swarm.destroy()
+})
+
+test('gc preserves stable connections over new', async (t) => {
+  const swarm = await spawnSwarm(t)
+  const p1 = await swarm.spawnPeer({ maxPeers: 1, gcDisabled: true })
+  const p2 = await swarm.spawnPeer()
+  const p3 = await swarm.spawnPeer()
+  const topic = b4a.alloc(32, 1)
+
+  await swarm.flush() // TODO: do not await server.listen
+
+  await Promise.all([
+    p1.join(topic, { pin: true }),
+    p2.join(topic, { pin: true })
+  ])
+  await swarm.propagateWriters()
+  swarm.refresh()
+  await swarm.flush()
+
+  const p2Key = toHex(p2.replicator.peerId)
+  const p3Key = toHex(p3.replicator.peerId)
+  const a = p1.replicator.getConnection(p2Key)
+
+  t.ok(a, 'p2 connected')
+  t.is(a._survived, 0, 'not yet swept')
+
+  await p1.replicator._gc()
+  t.is(a._survived, 1, 'passed gc')
+
+  await p3.join(topic, { pin: true })
+  await swarm.propagateWriters()
+  swarm.refresh()
+  await swarm.flush()
+
+  const b = p1.replicator.getConnection(p3Key)
+
+  t.is(p1.replicator.connectionCount, 2, 'over capacity')
+  t.ok(b, 'p3 connected')
+  t.ok(a._survived > b._survived, 'new connection will be dropped')
+
+  await p1.replicator._gc()
+
+  t.is(p1.replicator.connectionCount, 1, 'gc dropped overflow')
+  t.ok(p1.replicator.getConnection(p2Key), 'p2 remains connected')
+  t.is(a._survived, 2, 'passed gc twice')
 
   await swarm.destroy()
 })
