@@ -395,25 +395,27 @@ module.exports = class Replicator extends ReadyResource {
     const session = this.sessions.get(toHex(topic))
     if (!session) return
 
-    session.once('close', () => this.emit('leave', session))
     return session.destroy()
   }
 
   pin(topic) {
     const session = this.sessions.get(toHex(topic))
     if (!session) return
+
     session.pin()
   }
 
   unpin(topic) {
     const session = this.sessions.get(toHex(topic))
     if (!session) return
+
     session.unpin()
   }
 
   bump(topic, value = -1) {
     const session = this.sessions.get(toHex(topic))
     if (!session) return
+
     session.bump(value)
   }
 
