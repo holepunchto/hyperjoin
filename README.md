@@ -1,4 +1,4 @@
-# poolreplicator
+# hyperreplicator
 
 Replicates many groups of cores across many topics using pooled resources
 
@@ -11,10 +11,10 @@ Automatic pooling by application context
 ```js
 const b4a = require('b4a')
 const Corestore = require('corestore')
-const Replicator = require('poolreplicator')
+const Replicator = require('hyperreplicator)
 
 const store = new Corestore()
-const keyPair = await store.createKeyPair('replicator')
+const keyPair = await store.createKeyPair('hyperreplicator')
 
 const groups = {
   A: [

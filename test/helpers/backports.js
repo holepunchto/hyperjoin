@@ -14,7 +14,16 @@ function seed(byte) {
   return Buffer.alloc(32, byte)
 }
 
-// TODO: use of timeouts is banned outside of test/backports/
+function unpromise() {
+  let complete, abort
+  return [
+    new Promise((resolve, reject) => { complete = resolve, abort = reject }),
+    complete,
+    abort
+  ]
+}
+
+// TODO: remove this helper, use of timeouts is banned outside of test/backports/
 function timeout(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -125,6 +134,7 @@ module.exports = {
   seedC,
   seed,
   timeout,
+  unpromise,
   onceEvent,
   waitForEvents,
   joinRemote,

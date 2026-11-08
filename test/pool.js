@@ -8,6 +8,10 @@ test('pool: join() pinned (hyperswarm mode)', async (t) => {
   const p1 = await swarm.spawnPeer()
   const p2 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 0x1)
+
+  let joined = false
+  p1.replicator.once('join', () => { joined = true })
+
   await Promise.all([
     p1.join(topic, { pin: true }),
     p2.join(topic, { pin: true })
@@ -20,6 +24,7 @@ test('pool: join() pinned (hyperswarm mode)', async (t) => {
 
   t.is(p1.replicator.connectionCount, 1)
   t.is(p2.replicator.connectionCount, 1)
+  t.ok(joined, 'join fired')
 
   await swarm.destroy()
 })
@@ -136,6 +141,7 @@ test('pool: refresh() populates slots', async (t) => {
   const topics = new Array(10).fill(null).map((_, i) => b4a.alloc(32, i))
 
   const p1 = await swarm.spawnPeer({ slots, gcIdleTime })
+  await p1.replicator._pendingListen
 
   const joins = []
   const nCores = 5

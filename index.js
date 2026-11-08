@@ -218,7 +218,7 @@ module.exports = class Replicator extends ReadyResource {
       await this.server.listen(this.keyPair)
       this.listening = true
 
-      if (!this._manual) this.refresh()
+      this.refresh()
     } catch (err) {
       this._safeIgnore(err)
     }
