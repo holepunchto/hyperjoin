@@ -1,6 +1,7 @@
 const { test } = require('brittle')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
+const Replicator = require('..')
 const {
   seedA,
   seedB,
@@ -45,6 +46,50 @@ test('scan() finds peers without announcing', async (t) => {
   await testnet.destroy()
 })
 
+test('scan().connected resolves when a peer is acquired', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+
+  const cores = p1.cores.map((core) => p2.session.get(core.key))
+  await Promise.all(cores.map((core) => core.ready()))
+
+  const op = p2.replicator.scan(p1.cores[0].discoveryKey, { delay: 0 })
+
+  t.ok(op.connected instanceof Promise, 'scan has a connected promise')
+
+  if (op.connected instanceof Promise) {
+    await op.connected
+    t.is(p2.replicator.connectionCount, 1, 'scan connected to the topic peer')
+  }
+
+  op.destroy()
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
+test('scan() deduplicates active scans by topic', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+  const replicator = new Replicator(() => {}, () => null, { bootstrap, manual: true })
+  const topic = b4a.alloc(32, 1)
+
+  await replicator.ready()
+
+  const first = replicator.scan(topic, { delay: 10000 })
+  const second = replicator.scan(topic)
+
+  t.is(second, first, 'returns the active scan')
+  t.is(replicator.scans.size, 1, 'only one scan is active')
+
+  first.destroy()
+  await replicator.close()
+  await testnet.destroy()
+})
+
 test('scan() forwards the peer limit', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
@@ -81,13 +126,10 @@ test('scan() can be externally expired', async (t) => {
   const { announce, lookup } = rep.stats.dht
 
   let connected = false
-  const op = rep.scan(topic, {
-    delay: 0,
-    timeout: 10000,
-    onconnected(op) {
-      connected = true
-      op.expire(50)
-    }
+  const op = rep.scan(topic, { delay: 0, timeout: 10000 })
+  op.connected.then(() => {
+    connected = true
+    op.expire(50)
   })
   await op.complete
 

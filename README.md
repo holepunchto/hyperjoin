@@ -101,11 +101,11 @@ contrary to `lookup` operation - `scan` discovers _and connects_ to peers.
 It completes when scan window (`timeout`) ends.
 
 ```js
-const op = replicator.scan(topic, { onconnected, delay: 3000, timeout: 60000 })
+const op = replicator.scan(topic, { delay: 3000, timeout: 60000 })
 
-function onconnected(op, connection) {
+op.connected.then(() => {
   op.expire(10000) // reduce & linger upto 10s
-}
+})
 
 op.complete.then(() => {
   console.log('scan stopped & removed')
@@ -278,10 +278,12 @@ Pin a joined topic to keep it active bypassing `priority`
 
 Unpins a topic and returns it to the pool
 
-#### `const op = rep.scan(topic, { limit: 1, delay: 3000, timeout: 60000, onconnected = noop })`
+#### `const op = rep.scan(topic, { limit: 1, delay: 3000, timeout: 60000 })`
 
 Scan a topic for peers without announcing.
-A `op.complete` resolves when a scan is removed.
+
+Promise `op.connected` does not throw and resolves when first peer is connected on the scanned topic or scan removed.
+Promise `op.complete` does not throw and resolves when a scan is removed
 
 `op.expire(timeout)` shortens the scan lifetime.
 
@@ -290,7 +292,6 @@ A `op.complete` resolves when a scan is removed.
 - `limit`: maximum peers emitted per DHT query
 - `delay`: delay before the DHT lookup
 - `timeout`: initial scan lifetime
-- `onconnected(op, connection)`: called when a scanned peer connects
 
 emits events `scan` on scan start and `scanned` on scan complete
 

@@ -423,7 +423,6 @@ module.exports = class Replicator extends ReadyResource {
     limit = 1,
     delay = 3000,
     timeout = 60000,
-    onconnected = noop,
     deferSwarming = true /* deprecated */
   } = {}) {
     if (this._isTearingdown) return
@@ -452,7 +451,6 @@ module.exports = class Replicator extends ReadyResource {
       timeout,
       suspended: this.suspended,
       onpeer,
-      onconnected,
       onlookup: () => { this.stats.dht.lookup++ },
       onerror: (err) => this._safeIgnore(err)
     })
@@ -549,7 +547,7 @@ module.exports = class Replicator extends ReadyResource {
 
     const peer = this.dialer.lookup(peerId)
     for (const [topic, scan] of this.scans) {
-      if (peer._topics.has(topic)) scan.connected(connection)
+      if (peer._topics.has(topic)) scan._resolveConnected()
     }
 
     this.emit('update')
