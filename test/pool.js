@@ -102,7 +102,7 @@ test('pool: pin()/unpin()', async (t) => {
   swarm.refresh() // unnanounce
 
   await c.join(topic)
-  c.replicator.pin(topic) // TODO: use discover()
+  c.replicator.pin(topic) // TODO: use scan()
 
   await swarm.propagateWriters()
   swarm.refresh()

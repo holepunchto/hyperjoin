@@ -64,7 +64,6 @@ class TestSwarm extends ReadyResource {
   async spawnPeer(opts) {
     const peer = new TestPeer(++this._peerCounter, this.rootPath, {
       bootstrap: this.bootstrap,
-      autoswarm: true,
       ...opts
     })
 
@@ -121,9 +120,7 @@ class TestPeer extends ReadyResource {
       whoHas || this._whoHas.bind(this),
       {
         manual: true,
-        autoswarm: true,
         keyPair,
-        dhtFastRetry: 0,
         ...opts
       }
     )

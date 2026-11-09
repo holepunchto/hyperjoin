@@ -26,9 +26,9 @@ const { toHex } = b4a
 test.skip('core-index: connections with no active session are evicted', async (t) => {
   const swarm = await spawnSwarm(t)
 
-  const p1 = await swarm.spawnPeer({ autoswarm: false })
-  const p2 = await swarm.spawnPeer({ autoswarm: false })
-  const p3 = await swarm.spawnPeer({ autoswarm: false })
+  const p1 = await swarm.spawnPeer({ pooling: false })
+  const p2 = await swarm.spawnPeer({ pooling: false })
+  const p3 = await swarm.spawnPeer({ pooling: false })
 
   const topicA = b4a.alloc(32, 0xa)
   const topicB = b4a.alloc(32, 0xb)
@@ -91,8 +91,6 @@ test('connection becomes idle after three minutes without traffic', async (t) =>
   const p2 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 1)
 
-  await swarm.flush() // TODO: do not await server.listen
-
   await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
   await swarm.propagateWriters()
   swarm.refresh()
@@ -125,8 +123,6 @@ test('connections are unconditionally evicted at max capacity', async (t) => {
   const p2 = await swarm.spawnPeer()
   const p3 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 1)
-
-  await swarm.flush() // TODO: do not await server.listen
 
   await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
   await swarm.propagateWriters()
@@ -163,8 +159,6 @@ test('connection becomes idle when no topic owns its core', async (t) => {
   const p1 = await swarm.spawnPeer({ whoHas })
   const p2 = await swarm.spawnPeer()
 
-  await swarm.flush() // TODO: do not await server.listen
-
   await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
   await swarm.propagateWriters()
   swarm.refresh()
@@ -188,8 +182,6 @@ test('gc preserves stable connections over new', async (t) => {
   const p2 = await swarm.spawnPeer()
   const p3 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 1)
-
-  await swarm.flush() // TODO: do not await server.listen
 
   await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
   await swarm.propagateWriters()

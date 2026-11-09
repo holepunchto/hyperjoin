@@ -63,6 +63,8 @@ test('presuspend() -> resume(), resumes announcements', async (t) => {
   await swarm.flush()
 
   const [connection] = rep1.connections
+  t.ok(connection, 'connected')
+
   rep1.presuspend()
   await rep1.flush()
 

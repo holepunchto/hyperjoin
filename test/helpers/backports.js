@@ -80,10 +80,7 @@ async function spawnPeer(t, opts = {}) {
     opts.whoHas || ((discoveryKey) => whoHas(sessions, discoveryKey)),
     {
       manual: true,
-      autoswarm: false,
       keyPair,
-      discoveryStartupDelay: 0,
-      dhtFastRetry: 0,
       ...opts
     }
   )
@@ -119,7 +116,6 @@ async function spawnPeer(t, opts = {}) {
 
 function whoHas(sessions, discoveryKey) {
   const dkey = toHex(discoveryKey)
-  console.log('whohas', discoveryKey)
   for (const { session, topic } of sessions) {
     const core = session.cores.get(dkey)
     if (!core) continue

@@ -438,10 +438,9 @@ test('failed listen ignores error and nothing announces', async (t) => {
 
   // This test is not entierly valid;
   // It produces a replicator instance that silently does not replicate.
-  // TODO: harden conditions of invalid dependencies.
-  replicator.once('error', (err) => {
-    t.is(err.code, 'NODE_DESTROYED')
-  })
+  // TODO: harden conditions against defunct dependencies.
+  let error = null
+  replicator.once('error', (err) => { error = err })
 
   await replicator.ready()
 
@@ -449,6 +448,7 @@ test('failed listen ignores error and nothing announces', async (t) => {
   session.refresh()
   await replicator.flush()
 
+  t.is(error.code, 'NODE_DESTROYED')
   t.is(replicator.listening, false)
   t.is(session.discovery.announce, false, 'not announced')
 
