@@ -58,7 +58,7 @@ async function joinRemote(peer, remotePeer) {
     pin: true
   })
   await repSession.ready()
-  await repSession.refresh()
+  peer.replicator.refresh()
   await peer.replicator.flush()
 
   return remote
@@ -96,7 +96,7 @@ async function spawnPeer(t, opts = {}) {
 
   const repSession = replicator.join(one.discoveryKey, { pin: true })
   await repSession.ready()
-  await repSession.refresh()
+  replicator.refresh()
   await replicator.flush()
 
   const two = session.get({ name: 'two' })
