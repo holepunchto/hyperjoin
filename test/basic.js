@@ -440,7 +440,9 @@ test('failed listen ignores error and nothing announces', async (t) => {
   // It produces a replicator instance that silently does not replicate.
   // TODO: harden conditions against defunct dependencies.
   let error = null
-  replicator.once('error', (err) => { error = err })
+  replicator.once('error', (err) => {
+    error = err
+  })
 
   await replicator.ready()
 
