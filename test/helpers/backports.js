@@ -17,7 +17,9 @@ function seed(byte) {
 function unpromise() {
   let complete, abort
   return [
-    new Promise((resolve, reject) => { complete = resolve, abort = reject }),
+    new Promise((resolve, reject) => {
+      ;((complete = resolve), (abort = reject))
+    }),
     complete,
     abort
   ]

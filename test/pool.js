@@ -10,12 +10,11 @@ test('pool: join() pinned (hyperswarm mode)', async (t) => {
   const topic = b4a.alloc(32, 0x1)
 
   let joined = false
-  p1.replicator.once('join', () => { joined = true })
+  p1.replicator.once('join', () => {
+    joined = true
+  })
 
-  await Promise.all([
-    p1.join(topic, { pin: true }),
-    p2.join(topic, { pin: true })
-  ])
+  await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
 
   await swarm.propagateWriters()
   swarm.refresh()
@@ -57,10 +56,7 @@ test('pool: join() delay=0 announces topics without jitter', async (t) => {
   const p2 = await swarm.spawnPeer()
 
   const topic = b4a.alloc(32, 0x1)
-  await Promise.all([
-    p1.join(topic, { delay: 0 }),
-    p2.join(topic, { delay: 0 })
-  ])
+  await Promise.all([p1.join(topic, { delay: 0 }), p2.join(topic, { delay: 0 })])
 
   await swarm.propagateWriters()
   swarm.refresh() // announce & lookup

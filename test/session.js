@@ -8,7 +8,11 @@ const { toHex } = b4a
 test('join() waits for a prior leave() on slow unannounce', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
-  const replicator = new Replicator(() => {}, () => null, { bootstrap, manual: true })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    { bootstrap, manual: true }
+  )
   const topic = b4a.alloc(32, 1)
 
   await replicator.ready()
@@ -46,7 +50,11 @@ test('join() waits for a prior leave() on slow unannounce', async (t) => {
 test('replicator.close() waits for a replaced closing session', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
-  const replicator = new Replicator(() => {}, () => null, { bootstrap, manual: true })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    { bootstrap, manual: true }
+  )
   const topic = b4a.alloc(32, 1)
 
   await replicator.ready()
@@ -69,7 +77,9 @@ test('replicator.close() waits for a replaced closing session', async (t) => {
   replicator.join(session1.topic, { pin: true })
 
   let closed = false
-  const closing = replicator.close().then(() => { closed = true })
+  const closing = replicator.close().then(() => {
+    closed = true
+  })
 
   await unannouncing
   t.absent(session1.closed, 'replaced session is still closing')
@@ -88,7 +98,11 @@ test('replicator.close() waits for a replaced closing session', async (t) => {
 test('replicator.suspend() waits for a replaced closing session', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
-  const replicator = new Replicator(() => {}, () => null, { bootstrap, manual: true })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    { bootstrap, manual: true }
+  )
   const topic = b4a.alloc(32, 1)
 
   await replicator.ready()
@@ -132,7 +146,11 @@ test('replicator.suspend() waits for a replaced closing session', async (t) => {
 test('closing a replacement session waits for the session it replaced', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
-  const replicator = new Replicator(() => {}, () => null, { bootstrap, manual: true })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    { bootstrap, manual: true }
+  )
   const topic = b4a.alloc(32, 1)
 
   await replicator.ready()

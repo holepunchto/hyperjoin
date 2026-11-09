@@ -93,10 +93,7 @@ test('connection becomes idle after three minutes without traffic', async (t) =>
 
   await swarm.flush() // TODO: do not await server.listen
 
-  await Promise.all([
-    p1.join(topic, { pin: true }),
-    p2.join(topic, { pin: true })
-  ])
+  await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
   await swarm.propagateWriters()
   swarm.refresh()
   await swarm.flush()
@@ -131,10 +128,7 @@ test('connections are unconditionally evicted at max capacity', async (t) => {
 
   await swarm.flush() // TODO: do not await server.listen
 
-  await Promise.all([
-    p1.join(topic, { pin: true }),
-    p2.join(topic, { pin: true })
-  ])
+  await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
   await swarm.propagateWriters()
   swarm.refresh()
   await swarm.flush()
@@ -171,10 +165,7 @@ test('connection becomes idle when no topic owns its core', async (t) => {
 
   await swarm.flush() // TODO: do not await server.listen
 
-  await Promise.all([
-    p1.join(topic, { pin: true }),
-    p2.join(topic, { pin: true })
-  ])
+  await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
   await swarm.propagateWriters()
   swarm.refresh()
   await swarm.flush()
@@ -200,10 +191,7 @@ test('gc preserves stable connections over new', async (t) => {
 
   await swarm.flush() // TODO: do not await server.listen
 
-  await Promise.all([
-    p1.join(topic, { pin: true }),
-    p2.join(topic, { pin: true })
-  ])
+  await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
   await swarm.propagateWriters()
   swarm.refresh()
   await swarm.flush()

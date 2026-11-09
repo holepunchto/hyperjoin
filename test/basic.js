@@ -4,14 +4,7 @@ const Corestore = require('corestore')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 const DHT = require('hyperdht')
-const {
-  joinRemote,
-  onceEvent,
-  seedA,
-  seedB,
-  spawnPeer,
-  timeout
-} = require('./helpers/backports')
+const { joinRemote, onceEvent, seedA, seedB, spawnPeer, timeout } = require('./helpers/backports')
 const Replicator = require('..')
 
 const { toHex } = b4a
@@ -21,7 +14,11 @@ test('default keypair from corestore', async (t) => {
   const { bootstrap } = testnet
   const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
   const keyPair = await store.createKeyPair('replicator')
-  const replicator = await new Replicator((stream) => store.replicate(stream), () => null, { keyPair, bootstrap, manual: true })
+  const replicator = await new Replicator(
+    (stream) => store.replicate(stream),
+    () => null,
+    { keyPair, bootstrap, manual: true }
+  )
 
   await replicator.ready()
 
@@ -188,12 +185,16 @@ test('dialer is resumed after suspend', async (t) => {
 test('regression: suspend() holds dials until resume()', async (t) => {
   const store = new Corestore(await t.tmp())
   const keyPair = await store.createKeyPair('replicator')
-  const replicator = new Replicator((stream) => store.replicate(stream), () => null, {
-    keyPair,
-    bootstrap: [],
-    manual: true,
-    jitter: 0
-  })
+  const replicator = new Replicator(
+    (stream) => store.replicate(stream),
+    () => null,
+    {
+      keyPair,
+      bootstrap: [],
+      manual: true,
+      jitter: 0
+    }
+  )
   await replicator.ready()
 
   const topic = b4a.alloc(32, 1)
@@ -243,7 +244,11 @@ test('suspend resets dial attempts of dropped connections', async (t) => {
 })
 
 test('replicator enables dialer throttle', async (t) => {
-  const replicator = new Replicator(() => {}, () => null, { bootstrap: [], maxPeers: 2 })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    { bootstrap: [], maxPeers: 2 }
+  )
 
   t.is(replicator.dialer._want(), 2)
 
@@ -251,12 +256,16 @@ test('replicator enables dialer throttle', async (t) => {
 })
 
 test('holepunch failure switches the peer to relaying', async (t) => {
-  const replicator = new Replicator(() => {}, () => null, {
-    bootstrap: [],
-    manual: true,
-    jitter: 0,
-    relayThrough: b4a.alloc(32, 7)
-  })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    {
+      bootstrap: [],
+      manual: true,
+      jitter: 0,
+      relayThrough: b4a.alloc(32, 7)
+    }
+  )
   await replicator.ready()
 
   replicator.dht.connect = () => {
@@ -328,7 +337,11 @@ test('regression: Dialer.flush() resolves when replicator suspends', async (t) =
 })
 
 test('network coming back online resets dial backoff', async (t) => {
-  const replicator = new Replicator(() => {}, () => null, { bootstrap: [], manual: true })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    { bootstrap: [], manual: true }
+  )
   await replicator.ready()
 
   const peer = replicator.dialer.lookup(b4a.alloc(32, 2))
@@ -347,7 +360,11 @@ test('network coming back online resets dial backoff', async (t) => {
 test('ready does not wait for the server to listen', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
-  const replicator = new Replicator(() => {}, () => null, { bootstrap })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    { bootstrap }
+  )
 
   await replicator.ready()
 
@@ -366,7 +383,11 @@ test('pinned session announces only once the server is listening', async (t) => 
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const replicator = new Replicator(() => {}, () => null, { bootstrap, manual: true })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    { bootstrap, manual: true }
+  )
   const topic = b4a.alloc(32, 1)
 
   let release = null
@@ -408,7 +429,11 @@ test('failed listen ignores error and nothing announces', async (t) => {
   // creates a defunct replicator
   await dht.destroy()
 
-  const replicator = new Replicator(() => {}, () => null, { dht })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    { dht }
+  )
   const topic = b4a.alloc(32, 1)
 
   // This test is not entierly valid;

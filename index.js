@@ -339,12 +339,10 @@ module.exports = class Replicator extends ReadyResource {
     this.refresh()
   }
 
-  join(topic, {
-    priority = 0,
-    pin = false,
-    delay = 5000,
-    deferSwarming = true /* deprecated */
-  } = {}) {
+  join(
+    topic,
+    { priority = 0, pin = false, delay = 5000, deferSwarming = true /* deprecated */ } = {}
+  ) {
     const dk = toHex(topic)
 
     const existing = this.sessions.get(dk)
@@ -366,7 +364,7 @@ module.exports = class Replicator extends ReadyResource {
       priority,
       pin,
       wait,
-      delay,
+      delay
     })
 
     this.sessions.set(dk, session)
@@ -419,13 +417,16 @@ module.exports = class Replicator extends ReadyResource {
     session.bump(value)
   }
 
-  scan(topic, {
-    limit = 1,
-    delay = 3000,
-    timeout = 60000,
-    force = false,
-    deferSwarming = true /* deprecated */
-  } = {}) {
+  scan(
+    topic,
+    {
+      limit = 1,
+      delay = 3000,
+      timeout = 60000,
+      force = false,
+      deferSwarming = true /* deprecated */
+    } = {}
+  ) {
     if (this._isTearingdown) return
 
     const key = toHex(topic)
@@ -455,7 +456,9 @@ module.exports = class Replicator extends ReadyResource {
       timeout,
       suspended: this.suspended,
       onpeer,
-      onlookup: () => { this.stats.dht.lookup++ },
+      onlookup: () => {
+        this.stats.dht.lookup++
+      },
       onerror: (err) => this._safeIgnore(err)
     })
 
@@ -827,9 +830,7 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     if (!this._gcDisabled) {
-      this.collected = this.collected.then(() =>
-        this._gc(now).catch(this._safeIgnore)
-      )
+      this.collected = this.collected.then(() => this._gc(now).catch(this._safeIgnore))
     }
 
     this.dialer.refresh(now)
@@ -959,10 +960,7 @@ module.exports = class Replicator extends ReadyResource {
 
   _startAutoRefresh() {
     if (this._refreshInterval) return
-    this._refreshInterval = setInterval(
-      () => this.refresh(),
-      this._autoRefreshInterval
-    )
+    this._refreshInterval = setInterval(() => this.refresh(), this._autoRefreshInterval)
     this._refreshInterval.unref()
   }
 

@@ -686,10 +686,14 @@ test('port opt gets passed on to hyperdht', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const replicator = new Replicator(() => {}, () => null, {
-    bootstrap,
-    port: [10000, 10100]
-  })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    {
+      bootstrap,
+      port: [10000, 10100]
+    }
+  )
   await replicator.ready()
 
   t.alike(replicator.dht.io.portRange, [10000, 10100])

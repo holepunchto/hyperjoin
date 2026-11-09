@@ -2,12 +2,7 @@ const { test } = require('brittle')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('..')
-const {
-  seedA,
-  seedB,
-  spawnPeer,
-  unpromise
-} = require('./helpers/backports')
+const { seedA, seedB, spawnPeer, unpromise } = require('./helpers/backports')
 
 test('scan() finds peers without announcing', async (t) => {
   const testnet = await createTestnet()
@@ -75,7 +70,11 @@ test('scan().connected resolves when a peer is acquired', async (t) => {
 test('scan() deduplicates active scans by topic', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
-  const replicator = new Replicator(() => {}, () => null, { bootstrap, manual: true })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    { bootstrap, manual: true }
+  )
   const topic = b4a.alloc(32, 1)
 
   await replicator.ready()

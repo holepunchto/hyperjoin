@@ -126,36 +126,35 @@ Options:
 const opts = {
   // initialization
 
-  interval: 5000,     // auto-refresh interval
-  suspended: false,   // start in suspended state
+  interval: 5000, // auto-refresh interval
+  suspended: false, // start in suspended state
 
   // Replication
 
-  slots: 8,           // max active topics
-  maxPeers: 40,       // drop connections when above
-  minPeers: 5,        // minimum connections to keep
-  maxParallel: 3,     // max parallel outbound dials
-  minActiveTime: 5000,  // prevent rotation after activation
-  autoleave: 60000,   // leave topics when idle time exceeded (`evicted` event)
+  slots: 8, // max active topics
+  maxPeers: 40, // drop connections when above
+  minPeers: 5, // minimum connections to keep
+  maxParallel: 3, // max parallel outbound dials
+  minActiveTime: 5000, // prevent rotation after activation
+  autoleave: 60000, // leave topics when idle time exceeded (`evicted` event)
 
   // Transport
 
-  keyPair,            // use keypair
-  bootstrap: null,    // DHT bootstrap nodes
-  nodes: null,        // explicit DHT nodes
-  dht: null,          // external HyperDHT instance
-  port: null,         // bind the DHT socket to a fixed port
+  keyPair, // use keypair
+  bootstrap: null, // DHT bootstrap nodes
+  nodes: null, // explicit DHT nodes
+  dht: null, // external HyperDHT instance
+  port: null, // bind the DHT socket to a fixed port
   firewall: () => false, // allow all inbound and outbound peers
   relayThrough: null, // relay selector for outbound connections
 
   // Debug
 
-  manual: false,      // disable auto-refresh interval
-  gcDisabled: false,  // prevent garbage collection on `refresh()`
-  pooling: true,      // enable topic rotation
+  manual: false, // disable auto-refresh interval
+  gcDisabled: false, // prevent garbage collection on `refresh()`
+  pooling: true // enable topic rotation
 }
 ```
-
 
 ### Events
 
