@@ -278,7 +278,7 @@ Pin a joined topic to keep it active bypassing `priority`
 
 Unpins a topic and returns it to the pool
 
-#### `const op = rep.scan(topic, { limit: 1, delay: 3000, timeout: 60000 })`
+#### `const op = rep.scan(topic, { limit: 1, delay: 3000, timeout: 60000, force: false })`
 
 Scan a topic for peers without announcing.
 
@@ -290,8 +290,9 @@ Promise `op.complete` does not throw and resolves when a scan is removed
 `opts`:
 
 - `limit`: maximum peers emitted per DHT query
-- `delay`: delay before the DHT lookup
+- `delay`: delay before the DHT query
 - `timeout`: initial scan lifetime
+- `force`: force new DHT query if existing topic scan is scheduled
 
 emits events `scan` on scan start and `scanned` on scan complete
 

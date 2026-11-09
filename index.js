@@ -423,18 +423,23 @@ module.exports = class Replicator extends ReadyResource {
     limit = 1,
     delay = 3000,
     timeout = 60000,
+    force = false,
     deferSwarming = true /* deprecated */
   } = {}) {
     if (this._isTearingdown) return
 
     const key = toHex(topic)
 
+    if (deferSwarming === false) delay = 0
+
     const existing = this.scans.get(key)
-    if (existing) {
+    if (existing && !existing.destroyed) {
+      if (force) {
+        existing._forceRefresh(delay)
+      }
+
       return existing
     }
-
-    if (deferSwarming === false) delay = 0
 
     const onpeer = (peer) => {
       // ignore self
@@ -445,7 +450,6 @@ module.exports = class Replicator extends ReadyResource {
 
     const scan = new Scanner(this.dht, topic, {
       ready: this.ready(),
-      getKeyPair: () => this.keyPair,
       limit,
       delay,
       timeout,
@@ -464,12 +468,12 @@ module.exports = class Replicator extends ReadyResource {
     this.emit('scan', topic)
 
     scan.complete.then(() => {
-      this.emit('scanned', topic)
+      this.dialer.unrefTopic(topic)
 
       if (this.scans.get(key) !== scan) return
-
       this.scans.delete(key)
-      this.dialer.unrefTopic(topic)
+
+      this.emit('scanned', topic)
     })
 
     return scan
@@ -547,7 +551,7 @@ module.exports = class Replicator extends ReadyResource {
 
     const peer = this.dialer.lookup(peerId)
     for (const [topic, scan] of this.scans) {
-      if (peer._topics.has(topic)) scan._resolveConnected()
+      if (peer._topics.has(topic)) scan.resolveConnected()
     }
 
     this.emit('update')

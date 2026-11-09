@@ -5,7 +5,8 @@ const Replicator = require('..')
 const {
   seedA,
   seedB,
-  spawnPeer
+  spawnPeer,
+  unpromise
 } = require('./helpers/backports')
 
 test('scan() finds peers without announcing', async (t) => {
@@ -180,5 +181,51 @@ test('scan() resumes after suspension', async (t) => {
   await p1.destroy()
   await p2.destroy()
   await op.complete
+  await testnet.destroy()
+})
+
+test('scan() "force: true" forces discovery to re-query', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const p3 = await spawnPeer(t, { bootstrap, seed: b4a.alloc(32, 3) })
+
+  const topic = p1.cores[0].discoveryKey
+  const core = p3.session.get(p1.cores[0].key)
+  await core.ready()
+
+  let connections = 0
+  const [connected, setConnected] = unpromise()
+
+  p3.replicator.on('connected', () => {
+    connections++
+    if (connections > 1) setConnected()
+  })
+
+  const scan = p3.replicator.scan(topic, { delay: 0, limit: 10 })
+  await scan.connected
+
+  t.is(connections, 1, 'connected to the first server')
+
+  p2.replicator.join(topic, { pin: true })
+  p2.replicator.refresh()
+  await p2.replicator.flush()
+
+  t.is(connections, 1, 'second server joined after the scan')
+
+  const { lookup } = p3.replicator.stats.dht
+  const forced = p3.replicator.scan(topic, { delay: 1, force: true })
+
+  await connected
+
+  t.is(forced, scan, 'reuses the active scan')
+  t.ok(p3.replicator.stats.dht.lookup > lookup, 'forces another lookup')
+  t.is(connections, 2, 'connected to the second server')
+
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
   await testnet.destroy()
 })
