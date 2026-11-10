@@ -67,7 +67,7 @@ test('gc connections with no active mux sessions', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minPeers: 1, maxPeers: 1 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minPeers: 1, maxPeers: 2 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
   const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
 
@@ -94,6 +94,7 @@ test('gc connections with no active mux sessions', async (t) => {
     'p3 connection has no protomux sessions'
   )
 
+  p1.replicator._maxPeers = 1
   await p1.replicator._gc()
 
   t.is(
@@ -146,7 +147,7 @@ test('gc preserves stable connections over rookies', async (t) => {
     bootstrap,
     seed: seedA,
     minPeers: 0,
-    maxPeers: 1
+    maxPeers: 2
   })
   const p2Connected = onceEvent(p1.replicator, 'connected')
 
@@ -175,6 +176,7 @@ test('gc preserves stable connections over rookies', async (t) => {
 
   await joinRemote(p3, p1)
   await p3Connected
+  p1.replicator._maxPeers = 1
 
   active = Array.from(p1.replicator.connections)
   t.is(active.length, 2, 'over capacity')
@@ -190,6 +192,97 @@ test('gc preserves stable connections over rookies', async (t) => {
   t.is(active.length, 1, 'GC dropped overflow')
   t.is(toHex(a.peerId), p2Key, 'p2 remains connected')
   t.is(a._survived, 2, 'passed gc twice')
+
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await testnet.destroy()
+})
+
+test('inbound at max peers is closed before replicating', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
+
+  await joinRemote(p2, p1)
+  t.is(p1.replicator.connectionCount, 1, 'p1 at max peers')
+
+  let accepted = 0
+  p1.replicator.on('connected', () => accepted++)
+
+  const started = Date.now()
+  await p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
+  const connection = p3.replicator.getConnection(p1.peerId)
+  if (connection) await Promise.race([onceEvent(connection.stream, 'close'), timeout(5000)])
+
+  t.is(accepted, 0, 'p1 did not replicate the inbound')
+  t.is(p1.replicator.connectionCount, 1, 'p1 still at max peers')
+  t.is(p3.replicator.connectionCount, 0, 'p3 was closed')
+  t.ok(Date.now() - started < 5000, 'p3 saw a close, not a timeout')
+
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await testnet.destroy()
+})
+
+test('inbound at max peers is accepted from a peer we dialed', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+
+  await joinRemote(p1, p2)
+  t.ok(p1.replicator.outbound.has(p2.peerId), 'p1 dialed p2')
+
+  // p2 reconnects without its end of the old link, as after a network change
+  const connected = onceEvent(p1.replicator, 'connected')
+  const stream = p2.replicator.dht.connect(p1.replicator.peerId, { keyPair: p2.replicator.keyPair })
+  stream.on('error', () => {})
+
+  const res = await Promise.race([connected.then(() => 'connected'), timeout(5000)])
+  t.is(res, 'connected', 'p1 accepted the inbound')
+
+  await p1.replicator._gc()
+  t.is(p1.replicator.connectionCount, 1, 'gc kept one connection to p2')
+
+  stream.destroy()
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
+test('inbound at max peers is accepted when a connection is idle', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
+
+  await joinRemote(p2, p1)
+  const idle = p1.replicator.getConnection(p2.peerId)
+  await idle.replicating
+  idle.lastActivity = Date.now() - 3 * 60 * 1000 - 1 // no traffic for 3 minutes
+
+  const connected = onceEvent(p1.replicator, 'connected')
+  await p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
+  await Promise.race([connected, timeout(5000)])
+
+  t.is(p1.replicator.connectionCount, 2, 'p3 accepted over the cap')
+
+  await p1.replicator._gc()
+
+  t.is(idle.stream.destroyed, true, 'gc evicted the idle connection')
+  t.alike(
+    Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)),
+    [p3.peerId],
+    'p3 remains connected'
+  )
 
   await p1.destroy()
   await p2.destroy()

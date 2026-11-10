@@ -444,6 +444,17 @@ module.exports = class Replicator extends ReadyResource {
       return conn.destroy(ERR_MAXPEERS)
     }
 
+    // at the cap, refuse before replicating unless gc can make room by dropping an idle or duplicate connection
+    if (
+      this.connectionCount >= this._maxPeers &&
+      !this.outbound.has(hex) &&
+      !this._hasIdleConnection()
+    ) {
+      attemptDone(true, ERR_MAXPEERS)
+      conn.on('error', noop)
+      return conn.destroy(new Error(ERR_MAXPEERS))
+    }
+
     attemptDone()
 
     // connection 'opened' on next tick
@@ -502,6 +513,13 @@ module.exports = class Replicator extends ReadyResource {
     function onclose() {
       closed = true
     }
+  }
+
+  _hasIdleConnection(now = Date.now()) {
+    for (const connection of this.connections) {
+      if (connection.isIdle(now)) return true
+    }
+    return false
   }
 
   _handleBan(peer) {
