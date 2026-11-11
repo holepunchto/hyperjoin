@@ -513,21 +513,22 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
-  // at the cap, unless the peer is already connected or gc can drop an idle connection
+  // at the cap, unless the peer is already connected or gc can drop an idle connection for it
   _isFull(hex) {
     return (
       this.connectionCount >= this._maxPeers &&
       !this.inbound.has(hex) &&
       !this.outbound.has(hex) &&
-      !this._hasIdleConnection()
+      this.connectionCount - this._idleConnections() >= this._maxPeers
     )
   }
 
-  _hasIdleConnection(now = Date.now()) {
+  _idleConnections(now = Date.now()) {
+    let idle = 0
     for (const connection of this.connections) {
-      if (connection.isIdle(now)) return true
+      if (connection.isIdle(now)) idle++
     }
-    return false
+    return idle
   }
 
   _handleBan(peer) {

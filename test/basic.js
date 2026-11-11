@@ -8,6 +8,7 @@ const Replicator = require('..')
 const {
   joinRemote,
   onceEvent,
+  seed,
   seedA,
   seedB,
   seedC,
@@ -288,13 +289,14 @@ test('refuseAtMaxPeers accepts an inbound from a peer we dialed', async (t) => {
   await testnet.destroy()
 })
 
-test('refuseAtMaxPeers accepts an inbound when a connection is idle', async (t) => {
+test('refuseAtMaxPeers accepts one inbound per idle connection', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1, refuseAtMaxPeers: true })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
   const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
+  const p4 = await spawnPeer(t, { bootstrap, seed: seed(0xd) })
 
   await joinRemote(p2, p1)
   const idle = p1.replicator.getConnection(p2.peerId)
@@ -306,6 +308,9 @@ test('refuseAtMaxPeers accepts an inbound when a connection is idle', async (t) 
   await Promise.race([connected, timeout(5000)])
 
   t.is(p1.replicator.connectionCount, 2, 'p3 accepted over the cap')
+
+  const err = await p4.replicator._connect(p4.replicator.dialer.lookup(p1.replicator.peerId))
+  t.is(err.code, 'PEER_CONNECTION_FAILED', 'p4 refused, p3 took the idle slot')
 
   await p1.replicator._gc()
 
@@ -319,6 +324,7 @@ test('refuseAtMaxPeers accepts an inbound when a connection is idle', async (t) 
   await p1.destroy()
   await p2.destroy()
   await p3.destroy()
+  await p4.destroy()
   await testnet.destroy()
 })
 
