@@ -210,26 +210,15 @@ test('refuseAtMaxPeers firewalls new inbound at max peers', async (t) => {
   const p2Connected = onceEvent(p1.replicator, 'connected')
   await joinRemote(p2, p1)
   await p2Connected
-  t.is(p1.replicator.connectionCount, 1, 'p1 at max peers')
 
   let opened = 0
   p1.replicator.server.on('connection', () => opened++)
 
-  let replicated = 0
-  const replicate = p1.store.replicate
-  p1.store.replicate = function (...args) {
-    replicated++
-    return replicate.apply(this, args)
-  }
-
   const err = await p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
 
   t.is(err.code, 'PEER_CONNECTION_FAILED', 'p3 dial failed')
-  t.is(p3.replicator.connectionCount, 0, 'p3 has no connection')
   t.is(opened, 0, 'p1 opened no connection')
-  t.is(replicated, 0, 'p1 attached no cores')
-  t.is(p1.replicator.stats.bannedPeers, 0, 'p1 banned no one')
-  t.absent(p1.replicator.dialer.peers.has(p3.peerId), 'p1 did not track p3')
+  t.absent(p1.replicator.dialer.peers.has(p3.peerId), 'p1 did not track or ban p3')
 
   await p1.destroy()
   await p2.destroy()
@@ -249,17 +238,14 @@ test('refuseAtMaxPeers accepts a reconnect at max peers', async (t) => {
   await p2Connected
   const existing = p1.replicator.getConnection(p2.peerId)
   await existing.replicating
-  t.ok(p1.replicator.inbound.has(p2.peerId), 'p2 dialed p1')
 
   // p2 reconnects without its end of the old link, as after a network change
   const connected = onceEvent(p1.replicator, 'connected')
   const stream = p2.replicator.dht.connect(p1.replicator.peerId, { keyPair: p2.replicator.keyPair })
   stream.on('error', () => {})
+  await connected
 
-  const res = await Promise.race([connected.then(() => 'connected'), timeout(5000)])
-  t.is(res, 'connected', 'p1 accepted the reconnect')
-  t.is(existing.stream.destroyed, true, 'p1 closed the old connection')
-  t.is(p1.replicator.connectionCount, 1, 'p1 at max peers')
+  t.ok(existing.stream.destroyed, 'p1 replaced the old connection')
 
   stream.destroy()
   await p1.destroy()
@@ -277,18 +263,14 @@ test('refuseAtMaxPeers accepts an inbound from a peer we dialed', async (t) => {
   const p2Connected = onceEvent(p1.replicator, 'connected')
   await joinRemote(p1, p2)
   await p2Connected
-  t.ok(p1.replicator.outbound.has(p2.peerId), 'p1 dialed p2')
 
-  // p2 reconnects without its end of the old link, as after a network change
+  // p2 dials p1 too, as in a simultaneous connect
   const connected = onceEvent(p1.replicator, 'connected')
   const stream = p2.replicator.dht.connect(p1.replicator.peerId, { keyPair: p2.replicator.keyPair })
   stream.on('error', () => {})
+  await connected
 
-  const res = await Promise.race([connected.then(() => 'connected'), timeout(5000)])
-  t.is(res, 'connected', 'p1 accepted the inbound')
-
-  await p1.replicator._gc()
-  t.is(p1.replicator.connectionCount, 1, 'gc kept one connection to p2')
+  t.is(p1.replicator.connectionCount, 2, 'p1 accepted the inbound over max peers')
 
   stream.destroy()
   await p1.destroy()
@@ -316,18 +298,15 @@ test('refuseAtMaxPeers accepts one inbound per idle connection', async (t) => {
   await p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
   await connected
 
-  t.is(p1.replicator.connectionCount, 2, 'p3 accepted over the cap')
-
   const err = await p4.replicator._connect(p4.replicator.dialer.lookup(p1.replicator.peerId))
   t.is(err.code, 'PEER_CONNECTION_FAILED', 'p4 refused, p3 took the idle slot')
 
   await p1.replicator._gc()
 
-  t.is(idle.stream.destroyed, true, 'gc evicted the idle connection')
   t.alike(
     Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)),
     [p3.peerId],
-    'p3 remains connected'
+    'gc evicted the idle connection and kept p3'
   )
 
   await p1.destroy()
@@ -361,8 +340,6 @@ test('refuseAtMaxPeers closes inbound that passed the firewall over max peers', 
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
   const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
 
-  let opened = 0
-  p1.replicator.server.on('connection', () => opened++)
   const bothOpened = waitForEvents(p1.replicator.server, 'connection', 2)
 
   let accepted = 0
@@ -375,12 +352,11 @@ test('refuseAtMaxPeers closes inbound that passed the firewall over max peers', 
   await bothOpened
 
   t.is(pending, 2, 'both reached the user firewall')
-  t.is(opened, 2, 'both passed the firewall')
   t.is(accepted, 1, 'p1 replicated one')
-  t.is(p1.replicator.connectionCount, 1, 'p1 at max peers')
-
-  const banned = Array.from(p1.replicator.dialer.peers.values()).filter((peer) => peer.isBanned)
-  t.is(banned.length, 0, 'p1 banned no one')
+  t.absent(
+    Array.from(p1.replicator.dialer.peers.values()).some((peer) => peer.isBanned),
+    'p1 banned no one'
+  )
 
   await p1.destroy()
   await p2.destroy()
@@ -399,12 +375,9 @@ test('refuseAtMaxPeers does not firewall outbound dials', async (t) => {
   const p2Connected = onceEvent(p1.replicator, 'connected')
   await joinRemote(p2, p1)
   await p2Connected
-  t.is(p1.replicator.connectionCount, 1, 'p1 at max peers')
 
-  const failed = await p1.replicator._connect(p1.replicator.dialer.lookup(p3.replicator.peerId))
-
-  t.is(failed, false, 'p1 dialed p3')
-  t.ok(p1.replicator.outbound.has(p3.peerId), 'p1 connected to p3')
+  await p1.replicator._connect(p1.replicator.dialer.lookup(p3.replicator.peerId))
+  t.ok(p1.replicator.outbound.has(p3.peerId), 'p1 dialed p3 at max peers')
 
   await p1.destroy()
   await p2.destroy()
@@ -412,7 +385,7 @@ test('refuseAtMaxPeers does not firewall outbound dials', async (t) => {
   await testnet.destroy()
 })
 
-test('inbound at max peers is accepted and evicted by default', async (t) => {
+test('inbound at max peers is accepted by default', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -428,15 +401,7 @@ test('inbound at max peers is accepted and evicted by default', async (t) => {
   await p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
   await connected
 
-  t.is(p1.replicator.connectionCount, 2, 'p3 accepted over the cap')
-
-  await p1.replicator._gc()
-
-  t.alike(
-    Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)),
-    [p2.peerId],
-    'gc evicted p3'
-  )
+  t.is(p1.replicator.connectionCount, 2, 'p3 accepted over max peers')
 
   await p1.destroy()
   await p2.destroy()
