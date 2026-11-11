@@ -197,7 +197,7 @@ test('gc preserves stable connections over rookies', async (t) => {
   await testnet.destroy()
 })
 
-test('inbound at max peers is closed before replicating', async (t) => {
+test('refuseAtMaxPeers firewalls new inbound at max peers', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -208,18 +208,24 @@ test('inbound at max peers is closed before replicating', async (t) => {
   await joinRemote(p2, p1)
   t.is(p1.replicator.connectionCount, 1, 'p1 at max peers')
 
-  let accepted = 0
-  p1.replicator.on('connected', () => accepted++)
+  let opened = 0
+  p1.replicator.server.on('connection', () => opened++)
 
-  const started = Date.now()
-  await p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
-  const connection = p3.replicator.getConnection(p1.peerId)
-  if (connection) await Promise.race([onceEvent(connection.stream, 'close'), timeout(5000)])
+  let replicated = 0
+  const replicate = p1.store.replicate
+  p1.store.replicate = function (...args) {
+    replicated++
+    return replicate.apply(this, args)
+  }
 
-  t.is(accepted, 0, 'p1 did not replicate the inbound')
-  t.is(p1.replicator.connectionCount, 1, 'p1 still at max peers')
-  t.is(p3.replicator.connectionCount, 0, 'p3 was closed')
-  t.ok(Date.now() - started < 5000, 'p3 saw a close, not a timeout')
+  const err = await p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
+
+  t.is(err.code, 'PEER_CONNECTION_FAILED', 'p3 dial failed')
+  t.is(p3.replicator.connectionCount, 0, 'p3 has no connection')
+  t.is(opened, 0, 'p1 opened no connection')
+  t.is(replicated, 0, 'p1 attached no cores')
+  t.is(p1.replicator.stats.bannedPeers, 0, 'p1 banned no one')
+  t.absent(p1.replicator.dialer.peers.has(p3.peerId), 'p1 did not track p3')
 
   await p1.destroy()
   await p2.destroy()
@@ -227,7 +233,35 @@ test('inbound at max peers is closed before replicating', async (t) => {
   await testnet.destroy()
 })
 
-test('inbound at max peers is accepted from a peer we dialed', async (t) => {
+test('refuseAtMaxPeers accepts a reconnect at max peers', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1, refuseAtMaxPeers: true })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+
+  await joinRemote(p2, p1)
+  const existing = p1.replicator.getConnection(p2.peerId)
+  await existing.replicating
+  t.ok(p1.replicator.inbound.has(p2.peerId), 'p2 dialed p1')
+
+  // p2 reconnects without its end of the old link, as after a network change
+  const connected = onceEvent(p1.replicator, 'connected')
+  const stream = p2.replicator.dht.connect(p1.replicator.peerId, { keyPair: p2.replicator.keyPair })
+  stream.on('error', () => {})
+
+  const res = await Promise.race([connected.then(() => 'connected'), timeout(5000)])
+  t.is(res, 'connected', 'p1 accepted the reconnect')
+  t.is(existing.stream.destroyed, true, 'p1 closed the old connection')
+  t.is(p1.replicator.connectionCount, 1, 'p1 at max peers')
+
+  stream.destroy()
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
+test('refuseAtMaxPeers accepts an inbound from a peer we dialed', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -254,7 +288,7 @@ test('inbound at max peers is accepted from a peer we dialed', async (t) => {
   await testnet.destroy()
 })
 
-test('inbound at max peers is accepted when a connection is idle', async (t) => {
+test('refuseAtMaxPeers accepts an inbound when a connection is idle', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -281,6 +315,73 @@ test('inbound at max peers is accepted when a connection is idle', async (t) => 
     [p3.peerId],
     'p3 remains connected'
   )
+
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await testnet.destroy()
+})
+
+test('refuseAtMaxPeers closes inbound that passed the firewall over max peers', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  let release = null
+  const released = new Promise((resolve) => {
+    release = resolve
+  })
+
+  let pending = 0
+  const p1 = await spawnPeer(t, {
+    bootstrap,
+    seed: seedA,
+    maxPeers: 1,
+    refuseAtMaxPeers: true,
+    firewall: async () => {
+      if (++pending === 2) release() // both handshakes are past the max peers check
+      await released
+      return false
+    }
+  })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
+
+  let opened = 0
+  p1.replicator.server.on('connection', () => opened++)
+
+  let accepted = 0
+  p1.replicator.on('connected', () => accepted++)
+
+  await Promise.all([
+    p2.replicator._connect(p2.replicator.dialer.lookup(p1.replicator.peerId)),
+    p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
+  ])
+
+  t.is(opened, 2, 'both passed the firewall')
+  t.is(accepted, 1, 'p1 replicated one')
+  t.is(p1.replicator.connectionCount, 1, 'p1 at max peers')
+
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await testnet.destroy()
+})
+
+test('refuseAtMaxPeers does not firewall outbound dials', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1, refuseAtMaxPeers: true })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
+
+  await joinRemote(p2, p1)
+  t.is(p1.replicator.connectionCount, 1, 'p1 at max peers')
+
+  const failed = await p1.replicator._connect(p1.replicator.dialer.lookup(p3.replicator.peerId))
+
+  t.is(failed, false, 'p1 dialed p3')
+  t.ok(p1.replicator.outbound.has(p3.peerId), 'p1 connected to p3')
 
   await p1.destroy()
   await p2.destroy()

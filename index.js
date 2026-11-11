@@ -104,7 +104,7 @@ module.exports = class Replicator extends ReadyResource {
 
     this.server = this.dht.createServer(
       {
-        firewall: this._handleFirewall.bind(this),
+        firewall: this._handleServerFirewall.bind(this),
         relayThrough: this._selectRelay.bind(this),
         handshakeClearWait: opts.handshakeClearWait
       },
@@ -446,6 +446,7 @@ module.exports = class Replicator extends ReadyResource {
       return conn.destroy(ERR_MAXPEERS)
     }
 
+    // handshakes that passed the firewall together can still go over the cap
     if (this._refuseAtMaxPeers && this._isFull(hex)) {
       attemptDone(true, ERR_MAXPEERS)
       conn.on('error', noop)
@@ -512,10 +513,11 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
-  // at the cap, unless gc can make room by dropping an idle or duplicate connection
+  // at the cap, unless the peer is already connected or gc can drop an idle connection
   _isFull(hex) {
     return (
       this.connectionCount >= this._maxPeers &&
+      !this.inbound.has(hex) &&
       !this.outbound.has(hex) &&
       !this._hasIdleConnection()
     )
@@ -550,6 +552,13 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     return firewalled
+  }
+
+  _handleServerFirewall(remotePublicKey, payload) {
+    // refuse at the cap before connecting, without banning
+    if (this._refuseAtMaxPeers && this._isFull(toHex(remotePublicKey))) return true
+
+    return this._handleFirewall(remotePublicKey, payload)
   }
 
   get _isTearingdown() {
