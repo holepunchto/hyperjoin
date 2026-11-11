@@ -13,7 +13,8 @@ const {
   seedB,
   seedC,
   spawnPeer,
-  timeout
+  timeout,
+  waitForEvents
 } = require('./helpers/backports')
 
 const { toHex } = b4a
@@ -362,16 +363,16 @@ test('refuseAtMaxPeers closes inbound that passed the firewall over max peers', 
 
   let opened = 0
   p1.replicator.server.on('connection', () => opened++)
+  const bothOpened = waitForEvents(p1.replicator.server, 'connection', 2)
 
   let accepted = 0
   p1.replicator.on('connected', () => accepted++)
-  const connected = onceEvent(p1.replicator, 'connected')
 
   await Promise.all([
     p2.replicator._connect(p2.replicator.dialer.lookup(p1.replicator.peerId)),
     p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
   ])
-  await connected
+  await Promise.race([bothOpened, timeout(5000)])
 
   t.is(pending, 2, 'both reached the user firewall')
   t.is(opened, 2, 'both passed the firewall')
