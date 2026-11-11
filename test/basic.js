@@ -8,6 +8,7 @@ const Replicator = require('..')
 const {
   joinRemote,
   onceEvent,
+  seed,
   seedA,
   seedB,
   seedC,
@@ -392,6 +393,60 @@ test('replicator enables dialer throttle', async (t) => {
 
   await replicator.close()
   await store.close()
+})
+
+test('peer watermarks: minPeers, gcThreshold, maxPeers', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const hub = await spawnPeer(t, {
+    bootstrap,
+    seed: seedA,
+    minPeers: 1, // low: dialer fills up to
+    gcThreshold: 2, // gc evicts above
+    maxPeers: 3 // high: inbound refused at
+  })
+  const rep = hub.replicator
+
+  t.is(rep.dialer._want(), 1, 'low: dialer wants minPeers')
+
+  const peers = []
+  for (const s of [seedB, seedC, seed(0xd)]) {
+    const connected = onceEvent(rep, 'connected')
+    const peer = await spawnPeer(t, { bootstrap, seed: s })
+    await joinRemote(peer, hub)
+    await connected
+    peers.push(peer)
+  }
+
+  t.is(rep.connectionCount, 3, 'inbound accepted above minPeers')
+  t.is(rep.outbound.size, 0, 'low: nothing dialed above minPeers')
+  t.ok(rep.dialer._want() < 1, 'low: dialer wants nothing above minPeers')
+
+  // high
+
+  const attempted = onceEvent(rep.server, 'connection')
+  const refused = await spawnPeer(t, { bootstrap, seed: seed(0xe) })
+  await joinRemote(refused, hub)
+  await attempted
+
+  t.is(rep.connectionCount, 3, 'high: inbound refused at maxPeers')
+
+  await refused.destroy() // stop redials
+
+  // threshold
+
+  await rep._gc()
+
+  t.is(rep.connectionCount, 2, 'threshold: gc sheds down to gcThreshold')
+
+  await rep._gc()
+
+  t.is(rep.connectionCount, 2, 'threshold: gc idles at gcThreshold')
+
+  await hub.destroy()
+  for (const peer of peers) await peer.destroy()
+  await testnet.destroy()
 })
 
 test('holepunch failure switches the peer to relaying', async (t) => {
