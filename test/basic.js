@@ -363,9 +363,13 @@ test('refuseAtMaxPeers closes inbound that passed the firewall over max peers', 
     p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
   ])
 
+  t.is(pending, 2, 'both reached the user firewall')
   t.is(opened, 2, 'both passed the firewall')
   t.is(accepted, 1, 'p1 replicated one')
   t.is(p1.replicator.connectionCount, 1, 'p1 at max peers')
+
+  const banned = Array.from(p1.replicator.dialer.peers.values()).filter((peer) => peer.isBanned)
+  t.is(banned.length, 0, 'p1 banned no one')
 
   await p1.destroy()
   await p2.destroy()
