@@ -4,12 +4,7 @@ const { sortConnections } = require('../lib/heuristics')
 const T0 = Date.now()
 
 function stub(id, props = {}) {
-  const {
-    survived = 0,
-    connectedAt = T0,
-    lastActivity = T0,
-    initiator = true
-  } = props
+  const { survived = 0, connectedAt = T0, lastActivity = T0, initiator = true } = props
 
   return { id, _survived: survived, connectedAt, lastActivity, initiator }
 }
@@ -19,10 +14,7 @@ function ids(connections) {
 }
 
 test('rookie sorted before established', (t) => {
-  const sorted = sortConnections([
-    stub(1, { survived: 1 }),
-    stub(2, { survived: 0 })
-  ])
+  const sorted = sortConnections([stub(1, { survived: 1 }), stub(2, { survived: 0 })])
 
   t.alike(ids(sorted), [2, 1])
 })
@@ -46,10 +38,7 @@ test('stalest established sorted first', (t) => {
 })
 
 test('inbound rookie sorted before outbound rookie', (t) => {
-  const sorted = sortConnections([
-    stub(1, { initiator: true }),
-    stub(2, { initiator: false })
-  ])
+  const sorted = sortConnections([stub(1, { initiator: true }), stub(2, { initiator: false })])
 
   t.alike(ids(sorted), [2, 1])
 })
