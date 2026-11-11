@@ -333,6 +333,25 @@ test('Dialer throttles when host is at max capacity', async (t) => {
   t.is(dialed.length, 4, 'refilled')
 })
 
+test('Dialer dials scanning peers at max capacity', async (t) => {
+  const ctx = spawnDialer(t, { handlers: { want: () => 0 } })
+  const { dialer, dialed } = ctx
+
+  spawnPeer(ctx, 1)
+  const scanned = spawnPeer(ctx, 2)
+  scanned.scanning = true // discovered by an active scan a.k.a discovering session
+  spawnPeer(ctx, 3)
+
+  dialer.refresh()
+  await dialer.flush()
+
+  t.alike(
+    dialed.map((p) => p.publicKey[0]),
+    [2],
+    'only the scanning peer bypasses want()'
+  )
+})
+
 test('Dialer throttles when max inflight is at cap', async (t) => {
   const N_PEERS = 80
   const ctx = spawnDialer(t)
