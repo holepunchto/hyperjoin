@@ -206,7 +206,9 @@ test('refuseAtMaxPeers firewalls new inbound at max peers', async (t) => {
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
   const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
 
+  const p2Connected = onceEvent(p1.replicator, 'connected')
   await joinRemote(p2, p1)
+  await p2Connected
   t.is(p1.replicator.connectionCount, 1, 'p1 at max peers')
 
   let opened = 0
@@ -241,7 +243,9 @@ test('refuseAtMaxPeers accepts a reconnect at max peers', async (t) => {
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1, refuseAtMaxPeers: true })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
+  const p2Connected = onceEvent(p1.replicator, 'connected')
   await joinRemote(p2, p1)
+  await p2Connected
   const existing = p1.replicator.getConnection(p2.peerId)
   await existing.replicating
   t.ok(p1.replicator.inbound.has(p2.peerId), 'p2 dialed p1')
@@ -269,7 +273,9 @@ test('refuseAtMaxPeers accepts an inbound from a peer we dialed', async (t) => {
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1, refuseAtMaxPeers: true })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
+  const p2Connected = onceEvent(p1.replicator, 'connected')
   await joinRemote(p1, p2)
+  await p2Connected
   t.ok(p1.replicator.outbound.has(p2.peerId), 'p1 dialed p2')
 
   // p2 reconnects without its end of the old link, as after a network change
@@ -298,7 +304,9 @@ test('refuseAtMaxPeers accepts one inbound per idle connection', async (t) => {
   const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
   const p4 = await spawnPeer(t, { bootstrap, seed: seed(0xd) })
 
+  const p2Connected = onceEvent(p1.replicator, 'connected')
   await joinRemote(p2, p1)
+  await p2Connected
   const idle = p1.replicator.getConnection(p2.peerId)
   await idle.replicating
   idle.lastActivity = Date.now() - 3 * 60 * 1000 - 1 // no traffic for 3 minutes
@@ -357,11 +365,13 @@ test('refuseAtMaxPeers closes inbound that passed the firewall over max peers', 
 
   let accepted = 0
   p1.replicator.on('connected', () => accepted++)
+  const connected = onceEvent(p1.replicator, 'connected')
 
   await Promise.all([
     p2.replicator._connect(p2.replicator.dialer.lookup(p1.replicator.peerId)),
     p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
   ])
+  await connected
 
   t.is(pending, 2, 'both reached the user firewall')
   t.is(opened, 2, 'both passed the firewall')
@@ -385,7 +395,9 @@ test('refuseAtMaxPeers does not firewall outbound dials', async (t) => {
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
   const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
 
+  const p2Connected = onceEvent(p1.replicator, 'connected')
   await joinRemote(p2, p1)
+  await p2Connected
   t.is(p1.replicator.connectionCount, 1, 'p1 at max peers')
 
   const failed = await p1.replicator._connect(p1.replicator.dialer.lookup(p3.replicator.peerId))
@@ -407,7 +419,9 @@ test('inbound at max peers is accepted and evicted by default', async (t) => {
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
   const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
 
+  const p2Connected = onceEvent(p1.replicator, 'connected')
   await joinRemote(p2, p1)
+  await p2Connected
 
   const connected = onceEvent(p1.replicator, 'connected')
   await p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
