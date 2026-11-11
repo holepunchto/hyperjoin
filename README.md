@@ -44,6 +44,7 @@ General
 - `suspended`: start suspended
 - `seed`: derive the replicator keypair from a seed
 - `maxPeers`: drop connections above
+- `refuseAtMaxPeers`: refuse new inbound peers at `maxPeers` instead of evicting them in gc (default: `false`)
 - `minPeers`: minimum connections to keep
 - `maxParallel`: max parallel outbound dials
 - `slots`: auto-rotation slots

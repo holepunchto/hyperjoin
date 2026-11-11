@@ -42,6 +42,7 @@ module.exports = class Replicator extends ReadyResource {
       relayThrough,
       minPeers = MIN_PEERS,
       maxPeers = MAX_PEERS,
+      refuseAtMaxPeers = false,
       maxParallel,
       firewall = allowAll,
       suspended,
@@ -124,6 +125,7 @@ module.exports = class Replicator extends ReadyResource {
     this._inflightCancel = new Set() // cancelCallbacks
     this._minPeers = minPeers
     this._maxPeers = maxPeers
+    this._refuseAtMaxPeers = refuseAtMaxPeers
     this._lastConnectionEvict = 0
 
     this.slots = slots
@@ -444,12 +446,7 @@ module.exports = class Replicator extends ReadyResource {
       return conn.destroy(ERR_MAXPEERS)
     }
 
-    // at the cap, refuse before replicating unless gc can make room by dropping an idle or duplicate connection
-    if (
-      this.connectionCount >= this._maxPeers &&
-      !this.outbound.has(hex) &&
-      !this._hasIdleConnection()
-    ) {
+    if (this._refuseAtMaxPeers && this._isFull(hex)) {
       attemptDone(true, ERR_MAXPEERS)
       conn.on('error', noop)
       return conn.destroy(new Error(ERR_MAXPEERS))
@@ -513,6 +510,15 @@ module.exports = class Replicator extends ReadyResource {
     function onclose() {
       closed = true
     }
+  }
+
+  // at the cap, unless gc can make room by dropping an idle or duplicate connection
+  _isFull(hex) {
+    return (
+      this.connectionCount >= this._maxPeers &&
+      !this.outbound.has(hex) &&
+      !this._hasIdleConnection()
+    )
   }
 
   _hasIdleConnection(now = Date.now()) {
