@@ -183,6 +183,7 @@ test('pool: topics exceeding idle threshold are evicted', async (t) => {
   p1.replicator.on('evicted', (n) => (nEvicted += n))
 
   p1.replicator.refresh()
+  await p1.replicator.collected
   t.is(p1.replicator.sessions.size, topics.length, 'all topics pooled')
   t.is(p1.replicator.activeSessions.length, slots, 'topics auto activate')
 

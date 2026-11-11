@@ -299,6 +299,11 @@ emits events `scan` on scan start and `scanned` on scan complete
 
 Rotates pool, recalculates dialer work and applies new state then finally runs garbage-collector.
 
+#### `await rep.gc()`
+
+Schedules a garbage-collection pass on the next event-loop turn and resolves when it completes.
+Calls made while a pass is pending return the same promise. Resolves immediately during teardown.
+
 #### `await rep.flush()`
 
 Wait until current scan and dial, and announcement work settles.

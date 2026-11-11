@@ -124,8 +124,8 @@ module.exports = class Replicator extends ReadyResource {
     this._autoRefreshInterval = interval
     this._gcIdleTime = gcIdleTime
     this._minActiveTime = minActiveTime
+    this._gcPending = null
 
-    this.collected = Promise.resolve()
     this._online = false
 
     this.stats = {
@@ -202,6 +202,10 @@ module.exports = class Replicator extends ReadyResource {
 
   get destroyed() {
     return !!(this.closing || this.closed)
+  }
+
+  get collected() {
+    return this._gcPending || Promise.resolve()
   }
 
   *_connections() {
@@ -714,6 +718,8 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _gc(now = Date.now()) {
+    if (this._isTearingdown) return
+
     const evictions = []
     let connectionsEvicted = 0
     let sessionsEvicted = 0
@@ -829,14 +835,32 @@ module.exports = class Replicator extends ReadyResource {
       conn.refresh(now)
     }
 
-    if (!this._gcDisabled) {
-      this.collected = this.collected.then(() => this._gc(now).catch(this._safeIgnore))
-    }
+    if (!this._gcDisabled) this.gc(now)
 
     this.dialer.refresh(now)
 
     const { banned } = this.dialer.checkBans()
     for (const p of banned) this._handleBan(p)
+  }
+
+  gc(now = Date.now()) {
+    if (this._gcPending || this._isTearingdown) return this.collected
+
+    const nextTick = async () => {
+      try {
+        await new Promise((resolve) => setImmediate(resolve))
+
+        await this._gc(now)
+      } catch (err) {
+        this._safeIgnore(err)
+      } finally {
+        this._gcPending = null
+      }
+    }
+
+    this._gcPending = nextTick()
+
+    return this._gcPending
   }
 
   async flush() {
