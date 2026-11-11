@@ -133,10 +133,10 @@ const opts = {
 
   slots: 8, // max active topics
   maxPeers: 40, // drop connections when above
-  minPeers: 5, // minimum connections to keep
+  minPeers: 20, // minimum connections to keep
   maxParallel: 3, // max parallel outbound dials
-  minActiveTime: 5000, // prevent rotation after activation
-  autoleave: 60000, // leave topics when idle time exceeded (`evicted` event)
+  minActiveTime: 30000, // prevent rotation after activation
+  gcIdleTime: 30000, // leave topics when idle time exceeded (`evicted` event)
 
   // Transport
 
