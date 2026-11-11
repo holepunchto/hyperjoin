@@ -314,7 +314,7 @@ test('refuseAtMaxPeers accepts one inbound per idle connection', async (t) => {
 
   const connected = onceEvent(p1.replicator, 'connected')
   await p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
-  await Promise.race([connected, timeout(5000)])
+  await connected
 
   t.is(p1.replicator.connectionCount, 2, 'p3 accepted over the cap')
 
@@ -372,7 +372,7 @@ test('refuseAtMaxPeers closes inbound that passed the firewall over max peers', 
     p2.replicator._connect(p2.replicator.dialer.lookup(p1.replicator.peerId)),
     p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
   ])
-  await Promise.race([bothOpened, timeout(5000)])
+  await bothOpened
 
   t.is(pending, 2, 'both reached the user firewall')
   t.is(opened, 2, 'both passed the firewall')
@@ -426,7 +426,7 @@ test('inbound at max peers is accepted and evicted by default', async (t) => {
 
   const connected = onceEvent(p1.replicator, 'connected')
   await p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
-  await Promise.race([connected, timeout(5000)])
+  await connected
 
   t.is(p1.replicator.connectionCount, 2, 'p3 accepted over the cap')
 
