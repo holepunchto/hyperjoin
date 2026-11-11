@@ -228,3 +228,19 @@ test('scan() "force: true" forces discovery to re-query', async (t) => {
   await p3.destroy()
   await testnet.destroy()
 })
+
+test('scan() keeps its topic active when a session leaves', async (t) => {
+  const testnet = await createTestnet()
+  const p1 = await spawnPeer(t, { bootstrap: testnet.bootstrap, seed: seedA })
+  const rep = p1.replicator
+  const topic = b4a.alloc(32, 1)
+
+  rep.scan(topic, { delay: 0 })
+  rep.join(topic, { pin: true })
+  await rep.leave(topic)
+
+  t.is(rep.dialer._activeTopics.get(b4a.toString(topic, 'hex')), 1, 'scan holds the topic')
+
+  await p1.destroy()
+  await testnet.destroy()
+})

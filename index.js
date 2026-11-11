@@ -380,10 +380,10 @@ module.exports = class Replicator extends ReadyResource {
 
     if (session.active) this.dialer.refTopic(dk)
 
-    session.on('state', () => {
+    session.on('state', (state) => {
       if (session.active) {
         this.dialer.refTopic(dk)
-      } else {
+      } else if (state === 'inactive') {
         this.dialer.unrefTopic(dk)
       }
     })
