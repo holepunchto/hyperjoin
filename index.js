@@ -27,7 +27,7 @@ const MIN_PEERS = 20
 const MAX_PEERS = 40
 
 // hyperdht without a busy reply drops the handshake instead
-const BUSY = DHT.ERROR ? DHT.ERROR.TRY_LATER : true
+const BUSY = (DHT.ERROR && DHT.ERROR.TRY_LATER) || true
 
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'

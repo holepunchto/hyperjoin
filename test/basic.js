@@ -232,6 +232,7 @@ test('refuseAtMaxPeers stays silent to firewalled peers', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
+  // maxPeers 0 is full without connections; without DHT.ERROR busy is a silent drop too
   const blocked = DHT.keyPair(seedB).publicKey
   const p1 = await spawnPeer(t, {
     bootstrap,
@@ -279,12 +280,9 @@ test('refuseAtMaxPeers accepts a redial that gc dedupe keeps at max peers', asyn
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  // dedupe keeps the inbound from the higher peer id
-  const [low, high] = [seedA, seedB].sort((a, b) =>
-    b4a.compare(DHT.keyPair(a).publicKey, DHT.keyPair(b).publicKey)
-  )
-  const p1 = await spawnPeer(t, { bootstrap, seed: low, maxPeers: 1, refuseAtMaxPeers: true })
-  const p2 = await spawnPeer(t, { bootstrap, seed: high })
+  // seedA's key is lower, so gc dedupe keeps p1's inbound from p2
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1, refuseAtMaxPeers: true })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
   const p2Connected = onceEvent(p1.replicator, 'connected')
   await joinRemote(p1, p2)
@@ -299,8 +297,28 @@ test('refuseAtMaxPeers accepts a redial that gc dedupe keeps at max peers', asyn
 
   await p1.replicator._gc()
   t.ok(existing.stream.destroyed, 'gc replaced the old connection')
+  t.ok(p1.replicator.inbound.has(p2.peerId), 'p1 kept the redial')
 
   stream.destroy()
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
+test('refuseAtMaxPeers refuses a redial that gc dedupe drops at max peers', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  // seedB's key is higher, so gc dedupe would keep p1's outbound to p2
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedB, maxPeers: 1, refuseAtMaxPeers: true })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedA })
+
+  const p2Connected = onceEvent(p1.replicator, 'connected')
+  await joinRemote(p1, p2)
+  await p2Connected
+
+  t.ok(await p1.replicator._handleServerFirewall(p2.replicator.peerId, null), 'p1 refuses p2')
+
   await p1.destroy()
   await p2.destroy()
   await testnet.destroy()
