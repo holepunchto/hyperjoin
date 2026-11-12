@@ -26,9 +26,6 @@ const DHT_FAST_RETRY = 0 // disabled
 const MIN_PEERS = 20
 const MAX_PEERS = 40
 
-// hyperdht without a busy reply drops the handshake instead
-const BUSY = (DHT.ERROR && DHT.ERROR.TRY_LATER) || true
-
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
 const ERR_DESTROYED = 'ReplicatorDestroyed'
@@ -45,7 +42,6 @@ module.exports = class Replicator extends ReadyResource {
       relayThrough,
       minPeers = MIN_PEERS,
       maxPeers = MAX_PEERS,
-      refuseAtMaxPeers = false,
       maxParallel,
       firewall = allowAll,
       suspended,
@@ -81,6 +77,10 @@ module.exports = class Replicator extends ReadyResource {
         nodes: opts.nodes,
         port: opts.port
       })
+
+    // refuse at max peers only where hyperdht can reply busy, older ones keep accepting and evicting in gc
+    const ERROR = this.dht.constructor.ERROR
+    this._busy = (ERROR && ERROR.TRY_LATER) || 0
 
     this._firewall = firewall
 
@@ -128,7 +128,6 @@ module.exports = class Replicator extends ReadyResource {
     this._inflightCancel = new Set() // cancelCallbacks
     this._minPeers = minPeers
     this._maxPeers = maxPeers
-    this._refuseAtMaxPeers = refuseAtMaxPeers
     this._lastConnectionEvict = 0
 
     this.slots = slots
@@ -550,10 +549,10 @@ module.exports = class Replicator extends ReadyResource {
 
   async _handleServerFirewall(remotePublicKey, payload) {
     const firewalled = await this._handleFirewall(remotePublicKey, payload)
-    if (firewalled || !this._refuseAtMaxPeers) return firewalled
+    if (firewalled || !this._busy || !this._isFull(toHex(remotePublicKey))) return firewalled
 
     // tell new peers to try later instead of accepting and evicting them in gc
-    return this._isFull(toHex(remotePublicKey)) ? BUSY : false
+    return this._busy
   }
 
   get _isTearingdown() {

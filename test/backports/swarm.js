@@ -689,7 +689,7 @@ test('closing all discovery sessions clears topic state', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minPeers: 0, maxPeers: 0 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minPeers: 0, maxPeers: 1 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
   const store2 = p1.store.session()
@@ -715,6 +715,7 @@ test('closing all discovery sessions clears topic state', async (t) => {
   const disconnected = onceEvent(p1.replicator, 'disconnected')
 
   await Promise.all([p1.session.close(), store2.close(), closed1, closed2])
+  p1.replicator._maxPeers = 0 // inbound at max peers is refused, so lower the cap once p2 is in
   await p1.replicator._gc()
   await disconnected
 

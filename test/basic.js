@@ -18,8 +18,8 @@ const {
 
 const { toHex } = b4a
 
-// hyperdht without a busy reply drops the handshake instead
-const REFUSED = DHT.ERROR ? 'PEER_BUSY' : 'PEER_CONNECTION_FAILED'
+// refusing at max peers needs hyperdht's busy reply
+const busy = !!(DHT.ERROR && DHT.ERROR.TRY_LATER)
 
 test('default keypair from corestore', async (t) => {
   const testnet = await createTestnet()
@@ -71,7 +71,7 @@ test('gc connections with no active mux sessions', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minPeers: 1, maxPeers: 1 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minPeers: 1, maxPeers: 2 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
   const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
 
@@ -98,6 +98,7 @@ test('gc connections with no active mux sessions', async (t) => {
     'p3 connection has no protomux sessions'
   )
 
+  p1.replicator._maxPeers = 1 // inbound at max peers is refused, so lower the cap once both are in
   await p1.replicator._gc()
 
   t.is(
@@ -150,7 +151,7 @@ test('gc preserves stable connections over rookies', async (t) => {
     bootstrap,
     seed: seedA,
     minPeers: 0,
-    maxPeers: 1
+    maxPeers: 2
   })
   const p2Connected = onceEvent(p1.replicator, 'connected')
 
@@ -179,6 +180,7 @@ test('gc preserves stable connections over rookies', async (t) => {
 
   await joinRemote(p3, p1)
   await p3Connected
+  p1.replicator._maxPeers = 1 // inbound at max peers is refused, so lower the cap once p3 is in
 
   active = Array.from(p1.replicator.connections)
   t.is(active.length, 2, 'over capacity')
@@ -201,11 +203,11 @@ test('gc preserves stable connections over rookies', async (t) => {
   await testnet.destroy()
 })
 
-test('refuseAtMaxPeers firewalls new inbound at max peers', async (t) => {
+test('new inbound is refused at max peers', { skip: !busy }, async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1, refuseAtMaxPeers: true })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
   const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
 
@@ -218,7 +220,7 @@ test('refuseAtMaxPeers firewalls new inbound at max peers', async (t) => {
 
   const err = await p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
 
-  t.is(err.code, REFUSED, 'p3 refused')
+  t.is(err.code, 'PEER_BUSY', 'p3 refused')
   t.is(opened, 0, 'p1 opened no connection')
   t.absent(p1.replicator.dialer.lookup(p3.replicator.peerId).isBanned, 'p1 did not ban p3')
 
@@ -228,7 +230,7 @@ test('refuseAtMaxPeers firewalls new inbound at max peers', async (t) => {
   await testnet.destroy()
 })
 
-test('refuseAtMaxPeers stays silent to firewalled peers', async (t) => {
+test('firewalled peers get no busy reply at max peers', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -238,7 +240,6 @@ test('refuseAtMaxPeers stays silent to firewalled peers', async (t) => {
     bootstrap,
     seed: seedA,
     maxPeers: 0,
-    refuseAtMaxPeers: true,
     firewall: (remotePublicKey) => b4a.equals(remotePublicKey, blocked)
   })
 
@@ -249,11 +250,11 @@ test('refuseAtMaxPeers stays silent to firewalled peers', async (t) => {
   await testnet.destroy()
 })
 
-test('refuseAtMaxPeers accepts a reconnect at max peers', async (t) => {
+test('a reconnect is accepted at max peers', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1, refuseAtMaxPeers: true })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
   const p2Connected = onceEvent(p1.replicator, 'connected')
@@ -276,12 +277,12 @@ test('refuseAtMaxPeers accepts a reconnect at max peers', async (t) => {
   await testnet.destroy()
 })
 
-test('refuseAtMaxPeers accepts a redial that gc dedupe keeps at max peers', async (t) => {
+test('a redial that gc dedupe keeps is accepted at max peers', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
   // seedA's key is lower, so gc dedupe keeps p1's inbound from p2
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1, refuseAtMaxPeers: true })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
   const p2Connected = onceEvent(p1.replicator, 'connected')
@@ -305,30 +306,34 @@ test('refuseAtMaxPeers accepts a redial that gc dedupe keeps at max peers', asyn
   await testnet.destroy()
 })
 
-test('refuseAtMaxPeers refuses a redial that gc dedupe drops at max peers', async (t) => {
+test('a redial that gc dedupe drops is refused at max peers', { skip: !busy }, async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
   // seedB's key is higher, so gc dedupe would keep p1's outbound to p2
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedB, maxPeers: 1, refuseAtMaxPeers: true })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedB, maxPeers: 1 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedA })
 
   const p2Connected = onceEvent(p1.replicator, 'connected')
   await joinRemote(p1, p2)
   await p2Connected
 
-  t.ok(await p1.replicator._handleServerFirewall(p2.replicator.peerId, null), 'p1 refuses p2')
+  t.is(
+    await p1.replicator._handleServerFirewall(p2.replicator.peerId, null),
+    DHT.ERROR.TRY_LATER,
+    'p1 replies busy'
+  )
 
   await p1.destroy()
   await p2.destroy()
   await testnet.destroy()
 })
 
-test('refuseAtMaxPeers accepts one inbound per idle connection', async (t) => {
+test('one inbound per idle connection is accepted at max peers', { skip: !busy }, async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1, refuseAtMaxPeers: true })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
   const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
   const p4 = await spawnPeer(t, { bootstrap, seed: seed(0xd) })
@@ -340,12 +345,14 @@ test('refuseAtMaxPeers accepts one inbound per idle connection', async (t) => {
   await idle.replicating
   idle.lastActivity = Date.now() - 3 * 60 * 1000 - 1 // no traffic for 3 minutes
 
+  // p3 opens p1's cores so its own link never looks idle
+  await Promise.all(p1.cores.map((core) => p3.session.get(core.key).ready()))
   const connected = onceEvent(p1.replicator, 'connected')
   await p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
   await connected
 
   const err = await p4.replicator._connect(p4.replicator.dialer.lookup(p1.replicator.peerId))
-  t.is(err.code, REFUSED, 'p4 refused, p3 took the idle slot')
+  t.is(err.code, 'PEER_BUSY', 'p4 refused, p3 took the idle slot')
 
   await p1.replicator._gc()
 
@@ -362,28 +369,7 @@ test('refuseAtMaxPeers accepts one inbound per idle connection', async (t) => {
   await testnet.destroy()
 })
 
-test('refuseAtMaxPeers does not firewall outbound dials', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1, refuseAtMaxPeers: true })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
-  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
-
-  const p2Connected = onceEvent(p1.replicator, 'connected')
-  await joinRemote(p2, p1)
-  await p2Connected
-
-  await p1.replicator._connect(p1.replicator.dialer.lookup(p3.replicator.peerId))
-  t.ok(p1.replicator.outbound.has(p3.peerId), 'p1 dialed p3 at max peers')
-
-  await p1.destroy()
-  await p2.destroy()
-  await p3.destroy()
-  await testnet.destroy()
-})
-
-test('inbound at max peers is accepted by default', async (t) => {
+test('outbound dials are not refused at max peers', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -395,11 +381,8 @@ test('inbound at max peers is accepted by default', async (t) => {
   await joinRemote(p2, p1)
   await p2Connected
 
-  const connected = onceEvent(p1.replicator, 'connected')
-  await p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
-  await connected
-
-  t.is(p1.replicator.connectionCount, 2, 'p3 accepted over max peers')
+  await p1.replicator._connect(p1.replicator.dialer.lookup(p3.replicator.peerId))
+  t.ok(p1.replicator.outbound.has(p3.peerId), 'p1 dialed p3 at max peers')
 
   await p1.destroy()
   await p2.destroy()
