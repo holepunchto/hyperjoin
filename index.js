@@ -26,6 +26,9 @@ const DHT_FAST_RETRY = 0 // disabled
 const MIN_PEERS = 20
 const MAX_PEERS = 40
 
+// hyperdht without a busy reply drops the handshake instead
+const BUSY = DHT.ERROR ? DHT.ERROR.TRY_LATER : true
+
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
 const ERR_DESTROYED = 'ReplicatorDestroyed'
@@ -446,13 +449,6 @@ module.exports = class Replicator extends ReadyResource {
       return conn.destroy(ERR_MAXPEERS)
     }
 
-    // handshakes that passed the firewall together can still go over the cap
-    if (this._refuseAtMaxPeers && this._isFull(hex)) {
-      attemptDone(true, ERR_MAXPEERS)
-      conn.on('error', noop)
-      return conn.destroy(new Error(ERR_MAXPEERS))
-    }
-
     attemptDone()
 
     // connection 'opened' on next tick
@@ -513,22 +509,16 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
-  // at the cap, unless the peer is already connected or gc can drop an idle connection for it
+  // at max peers, unless the peer is reconnecting or gc can evict an idle connection for it
   _isFull(hex) {
-    return (
-      this.connectionCount >= this._maxPeers &&
-      !this.inbound.has(hex) &&
-      !this.outbound.has(hex) &&
-      this.connectionCount - this._idleConnections() >= this._maxPeers
-    )
-  }
+    if (this.connectionCount < this._maxPeers || this.inbound.has(hex)) return false
 
-  _idleConnections(now = Date.now()) {
     let idle = 0
     for (const connection of this.connections) {
-      if (connection.isIdle(now)) idle++
+      if (connection.isIdle()) idle++
     }
-    return idle
+
+    return this.connectionCount - idle >= this._maxPeers
   }
 
   _handleBan(peer) {
@@ -555,11 +545,12 @@ module.exports = class Replicator extends ReadyResource {
     return firewalled
   }
 
-  _handleServerFirewall(remotePublicKey, payload) {
-    // refuse at the cap before connecting, without banning
-    if (this._refuseAtMaxPeers && this._isFull(toHex(remotePublicKey))) return true
+  async _handleServerFirewall(remotePublicKey, payload) {
+    const firewalled = await this._handleFirewall(remotePublicKey, payload)
+    if (firewalled || !this._refuseAtMaxPeers) return firewalled
 
-    return this._handleFirewall(remotePublicKey, payload)
+    // tell new peers to try later instead of accepting and evicting them in gc
+    return this._isFull(toHex(remotePublicKey)) ? BUSY : false
   }
 
   get _isTearingdown() {

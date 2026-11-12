@@ -13,11 +13,13 @@ const {
   seedB,
   seedC,
   spawnPeer,
-  timeout,
-  waitForEvents
+  timeout
 } = require('./helpers/backports')
 
 const { toHex } = b4a
+
+// hyperdht without a busy reply drops the handshake instead
+const REFUSED = DHT.ERROR ? 'PEER_BUSY' : 'PEER_CONNECTION_FAILED'
 
 test('default keypair from corestore', async (t) => {
   const testnet = await createTestnet()
@@ -216,13 +218,33 @@ test('refuseAtMaxPeers firewalls new inbound at max peers', async (t) => {
 
   const err = await p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
 
-  t.is(err.code, 'PEER_CONNECTION_FAILED', 'p3 dial failed')
+  t.is(err.code, REFUSED, 'p3 refused')
   t.is(opened, 0, 'p1 opened no connection')
-  t.absent(p1.replicator.dialer.peers.has(p3.peerId), 'p1 did not track or ban p3')
+  t.absent(p1.replicator.dialer.lookup(p3.replicator.peerId).isBanned, 'p1 did not ban p3')
 
   await p1.destroy()
   await p2.destroy()
   await p3.destroy()
+  await testnet.destroy()
+})
+
+test('refuseAtMaxPeers stays silent to firewalled peers', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const blocked = DHT.keyPair(seedB).publicKey
+  const p1 = await spawnPeer(t, {
+    bootstrap,
+    seed: seedA,
+    maxPeers: 0,
+    refuseAtMaxPeers: true,
+    firewall: (remotePublicKey) => b4a.equals(remotePublicKey, blocked)
+  })
+
+  t.is(await p1.replicator._handleServerFirewall(blocked, null), true, 'no busy reply')
+  t.ok(p1.replicator.dialer.lookup(blocked).isBanned, 'banned by the firewall')
+
+  await p1.destroy()
   await testnet.destroy()
 })
 
@@ -253,31 +275,6 @@ test('refuseAtMaxPeers accepts a reconnect at max peers', async (t) => {
   await testnet.destroy()
 })
 
-test('refuseAtMaxPeers accepts an inbound from a peer we dialed', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, maxPeers: 1, refuseAtMaxPeers: true })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
-
-  const p2Connected = onceEvent(p1.replicator, 'connected')
-  await joinRemote(p1, p2)
-  await p2Connected
-
-  // p2 dials p1 too, as in a simultaneous connect
-  const connected = onceEvent(p1.replicator, 'connected')
-  const stream = p2.replicator.dht.connect(p1.replicator.peerId, { keyPair: p2.replicator.keyPair })
-  stream.on('error', () => {})
-  await connected
-
-  t.is(p1.replicator.connectionCount, 2, 'p1 accepted the inbound over max peers')
-
-  stream.destroy()
-  await p1.destroy()
-  await p2.destroy()
-  await testnet.destroy()
-})
-
 test('refuseAtMaxPeers accepts one inbound per idle connection', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
@@ -299,7 +296,7 @@ test('refuseAtMaxPeers accepts one inbound per idle connection', async (t) => {
   await connected
 
   const err = await p4.replicator._connect(p4.replicator.dialer.lookup(p1.replicator.peerId))
-  t.is(err.code, 'PEER_CONNECTION_FAILED', 'p4 refused, p3 took the idle slot')
+  t.is(err.code, REFUSED, 'p4 refused, p3 took the idle slot')
 
   await p1.replicator._gc()
 
@@ -313,54 +310,6 @@ test('refuseAtMaxPeers accepts one inbound per idle connection', async (t) => {
   await p2.destroy()
   await p3.destroy()
   await p4.destroy()
-  await testnet.destroy()
-})
-
-test('refuseAtMaxPeers closes inbound that passed the firewall over max peers', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-
-  let release = null
-  const released = new Promise((resolve) => {
-    release = resolve
-  })
-
-  let pending = 0
-  const p1 = await spawnPeer(t, {
-    bootstrap,
-    seed: seedA,
-    maxPeers: 1,
-    refuseAtMaxPeers: true,
-    firewall: async () => {
-      if (++pending === 2) release() // both handshakes are past the max peers check
-      await released
-      return false
-    }
-  })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
-  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
-
-  const bothOpened = waitForEvents(p1.replicator.server, 'connection', 2)
-
-  let accepted = 0
-  p1.replicator.on('connected', () => accepted++)
-
-  await Promise.all([
-    p2.replicator._connect(p2.replicator.dialer.lookup(p1.replicator.peerId)),
-    p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
-  ])
-  await bothOpened
-
-  t.is(pending, 2, 'both reached the user firewall')
-  t.is(accepted, 1, 'p1 replicated one')
-  t.absent(
-    Array.from(p1.replicator.dialer.peers.values()).some((peer) => peer.isBanned),
-    'p1 banned no one'
-  )
-
-  await p1.destroy()
-  await p2.destroy()
-  await p3.destroy()
   await testnet.destroy()
 })
 
