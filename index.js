@@ -476,14 +476,13 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _evictConnection(connection, err) {
-    connection._evicted = true
-    if (connection.stream.closed) return
+    if (connection.destroying) return connection.destroyed
 
+    // private - used by gc metrics
     this.emit('_evictConnection', connection.peerId, /* reason */ err)
 
-    const closed = new Promise((resolve) => connection.stream.once('close', resolve))
     connection.destroy(err)
-    await closed
+    await connection.destroyed
   }
 
   _handleServerConnectionSwap(existing, conn) {
@@ -633,6 +632,11 @@ module.exports = class Replicator extends ReadyResource {
     let connectionsEvicted = 0
     let sessionsEvicted = 0
 
+    let active = 0
+    for (const connection of this.connections) {
+      if (!connection.destroying) active++
+    }
+
     // peer-dedupe
 
     const [src, dst] =
@@ -648,6 +652,7 @@ module.exports = class Replicator extends ReadyResource {
 
       // low-peerId keeps inbound
       const target = (cmp > 0) ^ connection.initiator ? connection : dst.get(key)
+      if (target.destroying) continue
 
       evictions.push(this._evictConnection(target, ERR_DUPLICATE))
       connectionsEvicted++
@@ -671,7 +676,7 @@ module.exports = class Replicator extends ReadyResource {
       this._lastConnectionEvict = now
     }
 
-    const evict = this.connectionCount - this._maxPeers
+    const evict = active - this._maxPeers
 
     if (evict > 0) {
       // Evict idle connections
@@ -680,7 +685,7 @@ module.exports = class Replicator extends ReadyResource {
           break // target reached
         }
 
-        if (connection._evicted) continue
+        if (connection.destroying) continue
         if (!connection.isIdle(now)) continue
 
         gcConn(connection, ERR_IDLE)
@@ -690,7 +695,7 @@ module.exports = class Replicator extends ReadyResource {
       const nHeuristicEvict = evict - connectionsEvicted
 
       if (nHeuristicEvict > 0) {
-        const remaining = Array.from(this.connections).filter((c) => !c._evicted)
+        const remaining = Array.from(this.connections).filter((c) => !c.destroying)
         const sorted = sortConnections(remaining)
 
         for (let i = 0; i < nHeuristicEvict; i++) {
@@ -700,7 +705,7 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     for (const connection of this.connections) {
-      if (connection._evicted) continue
+      if (connection.destroying) continue
       connection._survived++
     }
 

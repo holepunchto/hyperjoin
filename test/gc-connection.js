@@ -1,6 +1,8 @@
 const test = require('brittle')
 const b4a = require('b4a')
 const { spawnSwarm } = require('./helpers')
+const createTestnet = require('hyperdht/testnet')
+const { joinRemote, onceEvent, seed, spawnPeer } = require('./helpers/backports')
 const { toHex } = b4a
 
 /*
@@ -121,4 +123,61 @@ test('connection becomes idle after three minutes without traffic', async (t) =>
   t.is(connection.isIdle(now + IDLE_TIMEOUT + 1), true, 'stale traffic makes connection idle')
 
   await swarm.destroy()
+})
+
+test('gc does not count closing connections', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seed(1), maxPeers: 1 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seed(2) })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seed(3) })
+
+  const rep = p1.replicator
+
+  for (const peer of [p2, p3]) {
+    const connected = onceEvent(rep, 'connected')
+    await joinRemote(peer, p1)
+    await connected
+  }
+
+  const [closing, survivor] = rep.connections
+
+  closing.destroy()
+  await rep._gc()
+
+  t.is(survivor.destroying, false, 'at capacity, nothing to evict')
+
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await testnet.destroy()
+})
+
+test('overlapping gc evicts down to maxPeers only', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seed(1), maxPeers: 2 })
+  const rep = p1.replicator
+
+  const peers = []
+  for (let i = 2; i <= 5; i++) {
+    const peer = await spawnPeer(t, { bootstrap, seed: seed(i) })
+    const connected = onceEvent(rep, 'connected')
+    await joinRemote(peer, p1)
+    await connected
+    peers.push(peer)
+  }
+
+  t.is(rep.connectionCount, 4, 'over cap')
+
+  const later = Date.now() + 4 * 60 * 1000 // all connections idle
+  await Promise.all([rep._gc(later), rep._gc(later)])
+
+  t.is(rep.connectionCount, 2, 'evicted 2 of 4')
+
+  await p1.destroy()
+  for (const peer of peers) await peer.destroy()
+  await testnet.destroy()
 })
