@@ -9,10 +9,10 @@ function stub(id, props = {}) {
     survived = 0,
     connectedAt = T0,
     lastActivity = T0,
-    initiator = true
+    scannedAt = -1
   } = props
 
-  return { id, _survived: survived, connectedAt, lastActivity, initiator }
+  return { id, _survived: survived, connectedAt, lastActivity, info: { scannedAt } }
 }
 
 function ids(connections) {
@@ -47,41 +47,46 @@ test('stalest established sorted first', (t) => {
   t.alike(ids(sorted), [2, 1])
 })
 
-test('inbound rookie sorted before outbound rookie', (t) => {
+test('unscanned sorted before scanned', (t) => {
   // prettier-ignore
   const sorted = sortConnections([
-    stub(1, { initiator: true }),
-    stub(2, { initiator: false })
-  ])
+    stub(1, { scannedAt: T0 }),
+    stub(2)
+  ], T0)
 
   t.alike(ids(sorted), [2, 1])
 })
 
-test('inbound established sorted before outbound established', (t) => {
+test('established sorted before scanned rookie', (t) => {
+  // prettier-ignore
   const sorted = sortConnections([
-    stub(1, { survived: 1, initiator: true }),
-    stub(2, { survived: 1, initiator: false })
-  ])
+    stub(1, { scannedAt: T0 }),
+    stub(2, { survived: 1 })
+  ], T0)
 
   t.alike(ids(sorted), [2, 1])
 })
 
-test('established inbound sorted before rookie outbound', (t) => {
+test('scan expires after a minute', (t) => {
+  // prettier-ignore
   const sorted = sortConnections([
-    stub(1, { survived: 0, initiator: true }),
-    stub(2, { survived: 1, initiator: false })
-  ])
+    stub(1, { survived: 1 }),
+    stub(2, { scannedAt: T0 - 60000 })
+  ], T0)
 
   t.alike(ids(sorted), [2, 1])
 })
 
 test('full eviction order', (t) => {
-  const sorted = sortConnections([
-    stub(1, { survived: 1, initiator: true }),
-    stub(2, { survived: 0, initiator: true }),
-    stub(3, { survived: 1, initiator: false }),
-    stub(4, { survived: 0, initiator: false })
-  ])
+  const sorted = sortConnections(
+    [
+      stub(1, { survived: 1, scannedAt: T0 }),
+      stub(2, { survived: 0, scannedAt: T0 }),
+      stub(3, { survived: 1 }),
+      stub(4, { survived: 0 })
+    ],
+    T0
+  )
 
   t.alike(ids(sorted), [4, 3, 2, 1])
 })

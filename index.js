@@ -696,7 +696,7 @@ module.exports = class Replicator extends ReadyResource {
 
       if (nHeuristicEvict > 0) {
         const remaining = Array.from(this.connections).filter((c) => !c.destroying)
-        const sorted = sortConnections(remaining)
+        const sorted = sortConnections(remaining, now)
 
         for (let i = 0; i < nHeuristicEvict; i++) {
           gcConn(sorted[i], ERR_MAXPEERS)
