@@ -5,6 +5,7 @@ const Connection = require('./lib/connection')
 const Session = require('./lib/session')
 const Scanner = require('./lib/scan.js')
 const safetyCatch = require('safety-catch')
+const Discovery = require('replicator-discovery')
 
 const b4a = require('b4a')
 const { toHex } = b4a
@@ -414,11 +415,33 @@ module.exports = class Replicator extends ReadyResource {
     session.unpin()
   }
 
-  bump(topic, value = -1) {
+  bump(topic, priority, dhtValue = -1) {
     const session = this.sessions.get(toHex(topic))
     if (!session) return
 
-    session.bump(value)
+    session.priority = priority
+    session.bump(dhtValue)
+  }
+
+  async lookup(topic) {
+    // TODO: reuse existing discovery w/ node-cache
+    // scans and announcing session are currently safe,
+    // inactive pooled session not safe - causes side-effects.
+    // using naive & safe new construction for now:
+    const discovery = new Discovery(this.dht, topic, {
+      announce: false,
+      onstats: () => {
+        this.stats.dht.lookup++
+      },
+      onerror: (err) => this._safeIgnore(err)
+    })
+
+    discovery.refresh()
+    await discovery.flush()
+    const value = discovery.bump.seen
+    await discovery.destroy()
+
+    return value
   }
 
   scan(

@@ -289,6 +289,39 @@ test('pool: pooling can be disabled', async (t) => {
   await swarm.destroy()
 })
 
-// TODO
-// test('bump value announced & visible on lookup')
-// test('bump value announced & visible on scan')
+test('bump value announced & visible on lookup', async (t) => {
+  const swarm = await spawnSwarm(t)
+
+  const p1 = await swarm.spawnPeer()
+  const p2 = await swarm.spawnPeer()
+  const topic = b4a.alloc(32, 0x1)
+
+  await p1.join(topic, { pin: true })
+  p1.replicator.bump(topic, 0, 77)
+  p1.replicator.refresh()
+  await p1.replicator.flush()
+
+  t.is(await p2.replicator.lookup(topic), 77)
+
+  await swarm.destroy()
+})
+
+test('bump value announced & visible on scan', async (t) => {
+  const swarm = await spawnSwarm(t)
+
+  const p1 = await swarm.spawnPeer()
+  const p2 = await swarm.spawnPeer()
+  const topic = b4a.alloc(32, 0x1)
+
+  await p1.join(topic, { pin: true })
+  p1.replicator.bump(topic, 0, 77)
+  p1.replicator.refresh()
+  await p1.replicator.flush()
+
+  const op = p2.replicator.scan(topic, { delay: 0, timeout: 1000 })
+  await op.complete
+
+  t.is(op.discovery.bump.seen, 77)
+
+  await swarm.destroy()
+})
