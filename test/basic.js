@@ -222,6 +222,7 @@ test('new inbound is refused at max peers', { skip: !busy }, async (t) => {
 
   t.is(err.code, 'PEER_BUSY', 'p3 refused')
   t.is(opened, 0, 'p1 opened no connection')
+  t.is(p1.replicator.stats.connects.server.refused, 1, 'p1 counted the refusal')
   t.absent(p1.replicator.dialer.lookup(p3.replicator.peerId).isBanned, 'p1 did not ban p3')
 
   await p1.destroy()

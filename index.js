@@ -156,7 +156,8 @@ module.exports = class Replicator extends ReadyResource {
         },
         server: {
           opened: 0,
-          closed: 0
+          closed: 0,
+          refused: 0
         }
       },
       dht: {
@@ -552,6 +553,7 @@ module.exports = class Replicator extends ReadyResource {
     if (firewalled || !this._busy || !this._isFull(toHex(remotePublicKey))) return firewalled
 
     // tell new peers to try later instead of accepting and evicting them in gc
+    this.stats.connects.server.refused++
     return this._busy
   }
 
