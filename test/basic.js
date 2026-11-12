@@ -275,6 +275,37 @@ test('refuseAtMaxPeers accepts a reconnect at max peers', async (t) => {
   await testnet.destroy()
 })
 
+test('refuseAtMaxPeers accepts a redial that gc dedupe keeps at max peers', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  // dedupe keeps the inbound from the higher peer id
+  const [low, high] = [seedA, seedB].sort((a, b) =>
+    b4a.compare(DHT.keyPair(a).publicKey, DHT.keyPair(b).publicKey)
+  )
+  const p1 = await spawnPeer(t, { bootstrap, seed: low, maxPeers: 1, refuseAtMaxPeers: true })
+  const p2 = await spawnPeer(t, { bootstrap, seed: high })
+
+  const p2Connected = onceEvent(p1.replicator, 'connected')
+  await joinRemote(p1, p2)
+  await p2Connected
+  const existing = p1.replicator.getConnection(p2.peerId)
+
+  // p2 redials without its end of p1's link, as after a network change
+  const connected = onceEvent(p1.replicator, 'connected')
+  const stream = p2.replicator.dht.connect(p1.replicator.peerId, { keyPair: p2.replicator.keyPair })
+  stream.on('error', () => {})
+  await connected
+
+  await p1.replicator._gc()
+  t.ok(existing.stream.destroyed, 'gc replaced the old connection')
+
+  stream.destroy()
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
 test('refuseAtMaxPeers accepts one inbound per idle connection', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet

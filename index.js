@@ -513,6 +513,9 @@ module.exports = class Replicator extends ReadyResource {
   _isFull(hex) {
     if (this.connectionCount < this._maxPeers || this.inbound.has(hex)) return false
 
+    // gc dedupe keeps this inbound over our outbound to the peer, which it may have lost
+    if (this.outbound.has(hex) && toHex(this.peerId) < hex) return false
+
     let idle = 0
     for (const connection of this.connections) {
       if (connection.isIdle()) idle++
