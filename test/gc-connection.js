@@ -182,54 +182,35 @@ test('overlapping gc evicts down to maxPeers only', async (t) => {
   await testnet.destroy()
 })
 
-test('a reconnect at max peers keeps the reconnecting peer', async (t) => {
+test('a reconnect at max peers does not dial', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seed(1), maxPeers: 2 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seed(1), maxPeers: 1 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seed(2) })
   const p3 = await spawnPeer(t, { bootstrap, seed: seed(3) })
-  const p4 = await spawnPeer(t, { bootstrap, seed: seed(4) })
 
   const rep = p1.replicator
 
-  for (const peer of [p2, p3]) {
-    const connected = onceEvent(rep, 'connected')
-    await joinRemote(peer, p1)
-    await connected
-  }
-
-  const existing = rep.getConnection(p3.peerId)
-  await existing.replicating
-  await rep.refresh() // p2 and p3 survive a gc
-
-  // a scan finds p4 while p1 is at max peers
-  await Promise.all(p4.cores.map((core) => p1.session.get(core.key).ready()))
-  const scan = rep.join(p1.store.session(), p4.cores[0].discoveryKey, { discover: true })
-  await scan.refresh()
-  await scan.flush()
-
-  t.ok(rep.peers.has(p4.peerId), 'scan found p4')
-  t.is(rep.connectionCount, 2, 'at max peers')
-
-  // p3 reconnects without its end of the old link, as after a network change
   const connected = onceEvent(rep, 'connected')
-  const stream = p3.replicator.dht.connect(p1.replicator.peerId, { keyPair: p3.replicator.keyPair })
+  await joinRemote(p2, p1)
+  const existing = await connected
+  await existing.replicating
+
+  await joinRemote(p1, p3) // found at max peers
+
+  // p2 reconnects while its old link is open, as after a network change
+  const reconnected = onceEvent(rep, 'connected')
+  const stream = p2.replicator.dht.connect(rep.peerId, { keyPair: p2.replicator.keyPair })
   stream.on('error', () => {})
-  const reconnected = await connected
+  await reconnected
+  await rep.flush()
 
-  t.ok(existing.stream.destroyed, 'old link to p3 replaced')
-
-  await rep.flush() // dials started while the old link closed
-  await rep.refresh() // gc
-
-  t.absent(reconnected.stream.destroyed, 'p3 kept')
-  t.absent(rep.getConnection(p4.peerId), 'p4 not kept')
+  t.is(rep.stats.connects.client.attempted, 0)
 
   stream.destroy()
   await p1.destroy()
   await p2.destroy()
   await p3.destroy()
-  await p4.destroy()
   await testnet.destroy()
 })
