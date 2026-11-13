@@ -63,7 +63,8 @@ test('basic replication', async (t) => {
   await testnet.destroy()
 })
 
-test('gc connections with no active mux sessions', async (t) => {
+// SKIPPED see protomux bugreport in gc-connection.js
+test.skip('gc connections with no active mux sessions', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
