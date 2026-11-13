@@ -202,7 +202,6 @@ test('a reconnect at max peers does not dial', async (t) => {
   // p2 reconnects while its old link is open, as after a network change
   const reconnected = onceEvent(rep, 'connected')
   const stream = p2.replicator.dht.connect(rep.peerId, { keyPair: p2.replicator.keyPair })
-  stream.on('error', () => {})
   await reconnected
   await rep.flush()
 
