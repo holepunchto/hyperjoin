@@ -563,7 +563,7 @@ module.exports = class Replicator extends ReadyResource {
 
     if (this._isTearingdown) {
       this._inflight.delete(hex)
-      return true
+      return ERR_SUSPEND
     }
 
     let stream
@@ -596,7 +596,7 @@ module.exports = class Replicator extends ReadyResource {
       stream.once('close', onclose)
       stream.once('open', onopen)
 
-      cancelCallback = () => stream.destroy('suspending')
+      cancelCallback = () => stream.destroy(ERR_SUSPEND)
       this._inflightCancel.add(cancelCallback)
 
       this.stats.connects.client.attempted++
@@ -606,17 +606,17 @@ module.exports = class Replicator extends ReadyResource {
     this._inflight.delete(hex)
     if (cancelCallback) this._inflightCancel.delete(cancelCallback)
 
+    if (!opened) {
+      this.emit('update')
+      return error || true
+    }
+
     // opened after teardown
     if (this._isTearingdown) {
       stream.once('error', noop)
       const e = new Error(ERR_DESTROYED)
       stream.destroy(e)
       return ERR_DESTROYED
-    }
-
-    if (!opened) {
-      this.emit('update')
-      return error || true
     }
 
     // stream opened - hand-off

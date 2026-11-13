@@ -293,11 +293,12 @@ test('regression: suspend() during async firewall leaked _inflight', async (t) =
 
   await suspended
   t.ok('suspended')
-  await p2.replicator.resume()
 
   t.is(p2.replicator._inflight.has(p1Hex), false, '_inflight cleared')
   t.is(p2.replicator.hasConnection(p1Hex), false, 'hasConnection(p1) is cleared')
   t.is(p2.replicator.connecting, 0, 'zero connections')
+
+  await p2.replicator.resume()
 
   await p1.destroy()
   await p2.destroy()
@@ -351,6 +352,7 @@ test('regression: suspend() holds dials until resume()', async (t) => {
   t.is(peer._outboundAttempts, 0, 'nothing dialed while suspending')
 
   await replicator.resume()
+  await replicator.flush()
 
   t.is(peer._outboundAttempts, 1, 'dialed after resume')
 
@@ -382,6 +384,94 @@ test('suspend resets dial attempts of dropped connections', async (t) => {
   await p1.destroy()
   await p2.destroy()
   await testnet.destroy()
+})
+
+test('suspend does not count a dial still waiting to start', async (t) => {
+  const store = new Corestore(await t.tmp())
+  const replicator = new Replicator(store, { bootstrap: [], manual: true, jitter: 100 })
+  await replicator.ready()
+
+  const topic = b4a.alloc(32, 1)
+  const remote = b4a.alloc(32, 2)
+
+  replicator.dialer.topicEnable(topic)
+  replicator.dialer.seen({ publicKey: remote }, topic)
+
+  await replicator.suspend()
+
+  t.is(replicator.dialer.lookup(remote)._outboundAttempts, 0)
+
+  await replicator.close()
+  await store.close()
+})
+
+test('suspend does not count a dial waiting on the firewall', async (t) => {
+  let release = null
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+
+  const store = new Corestore(await t.tmp())
+  const replicator = new Replicator(store, {
+    bootstrap: [],
+    manual: true,
+    jitter: 0,
+    firewall: async () => {
+      await gate
+      return false
+    }
+  })
+  await replicator.ready()
+
+  const topic = b4a.alloc(32, 1)
+  const remote = b4a.alloc(32, 2)
+
+  replicator.dialer.topicEnable(topic)
+  replicator.dialer.seen({ publicKey: remote }, topic)
+  await new Promise((resolve) => setImmediate(resolve))
+
+  const suspended = replicator.suspend()
+  release()
+  await suspended
+
+  const peer = replicator.dialer.lookup(remote)
+  t.is(peer._outboundAttempts, 0)
+
+  await replicator.resume()
+  await replicator.flush()
+
+  t.is(peer._outboundAttempts, 1, 'dialed after resume')
+
+  await replicator.close()
+  await store.close()
+})
+
+test('suspend does not count a dial it cancels', async (t) => {
+  const store = new Corestore(await t.tmp())
+  const replicator = new Replicator(store, { bootstrap: [], manual: true, jitter: 0 })
+  await replicator.ready()
+
+  const topic = b4a.alloc(32, 1)
+  const remote = b4a.alloc(32, 2)
+
+  const suspended = new Promise((resolve) => {
+    replicator.once('update', () => resolve(replicator.suspend()))
+  })
+
+  replicator.dialer.topicEnable(topic)
+  replicator.dialer.seen({ publicKey: remote }, topic)
+  await suspended
+
+  const peer = replicator.dialer.lookup(remote)
+  t.is(peer._outboundAttempts, 0)
+
+  await replicator.resume()
+  await replicator.flush()
+
+  t.is(peer._outboundAttempts, 1, 'dialed after resume')
+
+  await replicator.close()
+  await store.close()
 })
 
 test('replicator enables dialer throttle', async (t) => {
