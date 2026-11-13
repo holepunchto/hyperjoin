@@ -181,3 +181,55 @@ test('overlapping gc evicts down to maxPeers only', async (t) => {
   for (const peer of peers) await peer.destroy()
   await testnet.destroy()
 })
+
+test('a reconnect at max peers keeps the reconnecting peer', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seed(1), maxPeers: 2 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seed(2) })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seed(3) })
+  const p4 = await spawnPeer(t, { bootstrap, seed: seed(4) })
+
+  const rep = p1.replicator
+
+  for (const peer of [p2, p3]) {
+    const connected = onceEvent(rep, 'connected')
+    await joinRemote(peer, p1)
+    await connected
+  }
+
+  const existing = rep.getConnection(p3.peerId)
+  await existing.replicating
+  await rep.refresh() // p2 and p3 survive a gc
+
+  // a scan finds p4 while p1 is at max peers
+  await Promise.all(p4.cores.map((core) => p1.session.get(core.key).ready()))
+  const scan = rep.join(p1.store.session(), p4.cores[0].discoveryKey, { discover: true })
+  await scan.refresh()
+  await scan.flush()
+
+  t.ok(rep.peers.has(p4.peerId), 'scan found p4')
+  t.is(rep.connectionCount, 2, 'at max peers')
+
+  // p3 reconnects without its end of the old link, as after a network change
+  const connected = onceEvent(rep, 'connected')
+  const stream = p3.replicator.dht.connect(p1.replicator.peerId, { keyPair: p3.replicator.keyPair })
+  stream.on('error', () => {})
+  const reconnected = await connected
+
+  t.ok(existing.stream.destroyed, 'old link to p3 replaced')
+
+  await rep.flush() // dials started while the old link closed
+  await rep.refresh() // gc
+
+  t.absent(reconnected.stream.destroyed, 'p3 kept')
+  t.absent(rep.getConnection(p4.peerId), 'p4 not kept')
+
+  stream.destroy()
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await p4.destroy()
+  await testnet.destroy()
+})
