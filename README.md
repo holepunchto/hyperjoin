@@ -286,6 +286,8 @@ Promise `op.complete` does not throw and resolves when a scan is removed
 
 `op.expire(timeout)` shortens the scan lifetime.
 
+`op.timeout` read-only, current scan window
+
 `opts`:
 
 - `limit`: maximum peers emitted per DHT query
