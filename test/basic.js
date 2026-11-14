@@ -298,8 +298,6 @@ test('regression: suspend() during async firewall leaked _inflight', async (t) =
   t.is(p2.replicator.hasConnection(p1Hex), false, 'hasConnection(p1) is cleared')
   t.is(p2.replicator.connecting, 0, 'zero connections')
 
-  await p2.replicator.resume()
-
   await p1.destroy()
   await p2.destroy()
   await testnet.destroy()
@@ -352,7 +350,6 @@ test('regression: suspend() holds dials until resume()', async (t) => {
   t.is(peer._outboundAttempts, 0, 'nothing dialed while suspending')
 
   await replicator.resume()
-  await replicator.flush()
 
   t.is(peer._outboundAttempts, 1, 'dialed after resume')
 

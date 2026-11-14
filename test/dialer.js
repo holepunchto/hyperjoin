@@ -6,6 +6,7 @@ const Peer = require('../lib/peer')
 const T0 = Date.now()
 const TOPIC = b4a.alloc(32, 1)
 const SELF = b4a.alloc(32, 0)
+const ERR_SUSPEND = 'SuspendDrop'
 const asKey = (n) => b4a.alloc(32, n)
 const { toHex } = b4a
 
@@ -461,6 +462,42 @@ test('flush() settles when a dial makes no attempt', async (t) => {
   await dialer.flush()
 
   t.pass('flush settled')
+})
+
+test('a dial interrupted by suspend is re-dialed on resume', async (t) => {
+  const dialed = []
+  let cancelInflight = null
+  let onstart = null
+  const started = new Promise((resolve) => {
+    onstart = resolve
+  })
+
+  const ctx = spawnDialer(t, {
+    handlers: {
+      ondial: (peer) => {
+        dialed.push(peer)
+        if (dialed.length > 1) return false
+
+        onstart()
+        return new Promise((resolve) => {
+          cancelInflight = resolve
+        })
+      }
+    }
+  })
+  const { dialer } = ctx
+
+  spawnPeer(ctx, 1)
+  await started
+
+  const suspended = dialer.suspend()
+  cancelInflight(ERR_SUSPEND)
+  await suspended
+
+  dialer.resume()
+  await dialer.flush()
+
+  t.is(dialed.length, 2, 're-dialed after resume')
 })
 
 function spawnDialer(
