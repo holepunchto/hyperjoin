@@ -18,9 +18,6 @@ const {
 
 const { toHex } = b4a
 
-// refusing at max peers needs hyperdht's busy reply
-const busy = !!(DHT.ERROR && DHT.ERROR.TRY_LATER)
-
 test('default keypair from corestore', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
@@ -204,7 +201,7 @@ test('gc preserves stable connections over rookies', async (t) => {
   await testnet.destroy()
 })
 
-test('new inbound is refused at max peers', { skip: !busy }, async (t) => {
+test('new inbound is refused at max peers', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -308,7 +305,7 @@ test('a redial that gc dedupe keeps is accepted at max peers', async (t) => {
   await testnet.destroy()
 })
 
-test('a redial that gc dedupe drops is refused at max peers', { skip: !busy }, async (t) => {
+test('a redial that gc dedupe drops is refused at max peers', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -331,7 +328,7 @@ test('a redial that gc dedupe drops is refused at max peers', { skip: !busy }, a
   await testnet.destroy()
 })
 
-test('one inbound per idle connection is accepted at max peers', { skip: !busy }, async (t) => {
+test('one inbound per idle connection is accepted at max peers', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
