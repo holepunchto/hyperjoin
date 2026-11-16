@@ -249,6 +249,24 @@ test('firewalled peers get no busy reply at max peers', async (t) => {
   await testnet.destroy()
 })
 
+test('inbound is accepted at max peers on a hyperdht without busy replies', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  class OldDHT extends DHT {}
+  OldDHT.ERROR = undefined // hyperdht before the busy reply
+
+  // maxPeers 0 is full without connections
+  const dht = new OldDHT({ bootstrap })
+  const p1 = await spawnPeer(t, { seed: seedA, maxPeers: 0, dht })
+
+  t.is(await p1.replicator._handleServerFirewall(DHT.keyPair(seedB).publicKey, null), false)
+
+  await p1.destroy()
+  await dht.destroy()
+  await testnet.destroy()
+})
+
 test('a reconnect is accepted at max peers', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
