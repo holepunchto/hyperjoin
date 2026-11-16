@@ -500,6 +500,36 @@ test('a dial interrupted by suspend is re-dialed on resume', async (t) => {
   t.is(dialed.length, 2, 're-dialed after resume')
 })
 
+test('suspend after resetBackoff() does not underflow attempts', async (t) => {
+  let cancelInflight = null
+  let onstart = null
+  const started = new Promise((resolve) => {
+    onstart = resolve
+  })
+
+  const ctx = spawnDialer(t, {
+    handlers: {
+      ondial: () => {
+        onstart()
+        return new Promise((resolve) => {
+          cancelInflight = resolve
+        })
+      }
+    }
+  })
+  const { dialer } = ctx
+
+  const peer = spawnPeer(ctx, 1)
+  await started
+
+  dialer.resetBackoff() // network came online
+  const suspended = dialer.suspend()
+  cancelInflight(ERR_SUSPEND)
+  await suspended
+
+  t.is(peer._outboundAttempts, 0)
+})
+
 function spawnDialer(
   t,
   {
