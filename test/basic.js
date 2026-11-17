@@ -293,7 +293,6 @@ test('regression: suspend() during async firewall leaked _inflight', async (t) =
 
   await suspended
   t.ok('suspended')
-  await p2.replicator.resume()
 
   t.is(p2.replicator._inflight.has(p1Hex), false, '_inflight cleared')
   t.is(p2.replicator.hasConnection(p1Hex), false, 'hasConnection(p1) is cleared')
@@ -382,6 +381,94 @@ test('suspend resets dial attempts of dropped connections', async (t) => {
   await p1.destroy()
   await p2.destroy()
   await testnet.destroy()
+})
+
+test('suspend does not count a dial still waiting to start', async (t) => {
+  const store = new Corestore(await t.tmp())
+  const replicator = new Replicator(store, { bootstrap: [], manual: true, jitter: 100 })
+  await replicator.ready()
+
+  const topic = b4a.alloc(32, 1)
+  const remote = b4a.alloc(32, 2)
+
+  replicator.dialer.topicEnable(topic)
+  replicator.dialer.seen({ publicKey: remote }, topic)
+
+  await replicator.suspend()
+
+  t.is(replicator.dialer.lookup(remote)._outboundAttempts, 0)
+
+  await replicator.close()
+  await store.close()
+})
+
+test('suspend does not count a dial waiting on the firewall', async (t) => {
+  let release = null
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+
+  const store = new Corestore(await t.tmp())
+  const replicator = new Replicator(store, {
+    bootstrap: [],
+    manual: true,
+    jitter: 0,
+    firewall: async () => {
+      await gate
+      return false
+    }
+  })
+  await replicator.ready()
+
+  const topic = b4a.alloc(32, 1)
+  const remote = b4a.alloc(32, 2)
+
+  replicator.dialer.topicEnable(topic)
+  replicator.dialer.seen({ publicKey: remote }, topic)
+  await new Promise((resolve) => setImmediate(resolve))
+
+  const suspended = replicator.suspend()
+  release()
+  await suspended
+
+  const peer = replicator.dialer.lookup(remote)
+  t.is(peer._outboundAttempts, 0)
+
+  await replicator.resume()
+  await replicator.flush()
+
+  t.is(peer._outboundAttempts, 1, 'dialed after resume')
+
+  await replicator.close()
+  await store.close()
+})
+
+test('suspend does not count a dial it cancels', async (t) => {
+  const store = new Corestore(await t.tmp())
+  const replicator = new Replicator(store, { bootstrap: [], manual: true, jitter: 0 })
+  await replicator.ready()
+
+  const topic = b4a.alloc(32, 1)
+  const remote = b4a.alloc(32, 2)
+
+  const suspended = new Promise((resolve) => {
+    replicator.once('update', () => resolve(replicator.suspend()))
+  })
+
+  replicator.dialer.topicEnable(topic)
+  replicator.dialer.seen({ publicKey: remote }, topic)
+  await suspended
+
+  const peer = replicator.dialer.lookup(remote)
+  t.is(peer._outboundAttempts, 0)
+
+  await replicator.resume()
+  await replicator.flush()
+
+  t.is(peer._outboundAttempts, 1, 'dialed after resume')
+
+  await replicator.close()
+  await store.close()
 })
 
 test('replicator enables dialer throttle', async (t) => {
@@ -478,15 +565,31 @@ test('network coming back online resets dial backoff', async (t) => {
   const replicator = new Replicator(store, { bootstrap: [], manual: true })
   await replicator.ready()
 
-  const peer = replicator.dialer.lookup(b4a.alloc(32, 2))
-  peer._outboundAttempts = 5 // failed while we were offline
+  const before = replicator.dialer.lookup(b4a.alloc(32, 1))
+  before._outboundAttempts = 5 // failed before we went offline
+  before.attemptedAt = Date.now() - 1000
+
+  replicator.dht.emit('network-update') // still online
+  t.is(before._outboundAttempts, 5)
 
   replicator.dht.online = false
   replicator.dht.emit('network-update')
+
+  const failed = replicator.dialer.lookup(b4a.alloc(32, 2))
+  failed._outboundAttempts = 5 // failed while we were offline
+  failed.attemptedAt = Date.now()
+
+  const dropped = replicator.dialer.lookup(b4a.alloc(32, 3))
+  dropped._outboundAttempts = 5 // dropped while we were offline
+  dropped.attemptedAt = Date.now() - 1000
+  dropped.disconnectedAt = Date.now()
+
   replicator.dht.online = true
   replicator.dht.emit('network-update')
 
-  t.is(peer._outboundAttempts, 0)
+  t.is(before._outboundAttempts, 5)
+  t.is(failed._outboundAttempts, 0)
+  t.is(dropped._outboundAttempts, 0)
 
   await replicator.close()
   await store.close()

@@ -140,7 +140,8 @@ module.exports = class Replicator extends ReadyResource {
     this._discoveryStartupDelay = discoveryStartupDelay
     this._dhtFastRetry = dhtFastRetry
 
-    this._online = false
+    this._online = this.dht.online
+    this._offlineAt = 0
 
     this.stats = {
       updates: 0,
@@ -563,7 +564,7 @@ module.exports = class Replicator extends ReadyResource {
 
     if (this._isTearingdown) {
       this._inflight.delete(hex)
-      return true
+      return ERR_SUSPEND
     }
 
     let stream
@@ -596,7 +597,7 @@ module.exports = class Replicator extends ReadyResource {
       stream.once('close', onclose)
       stream.once('open', onopen)
 
-      cancelCallback = () => stream.destroy('suspending')
+      cancelCallback = () => stream.destroy(ERR_SUSPEND)
       this._inflightCancel.add(cancelCallback)
 
       this.stats.connects.client.attempted++
@@ -606,17 +607,17 @@ module.exports = class Replicator extends ReadyResource {
     this._inflight.delete(hex)
     if (cancelCallback) this._inflightCancel.delete(cancelCallback)
 
+    if (!opened) {
+      this.emit('update')
+      return error || true
+    }
+
     // opened after teardown
     if (this._isTearingdown) {
       stream.once('error', noop)
       const e = new Error(ERR_DESTROYED)
       stream.destroy(e)
       return ERR_DESTROYED
-    }
-
-    if (!opened) {
-      this.emit('update')
-      return error || true
     }
 
     // stream opened - hand-off
@@ -847,10 +848,11 @@ module.exports = class Replicator extends ReadyResource {
   async _handleNetworkUpdate() {
     // Rising edge for being online
     const networkCameOnline = this.dht.online && !this._online
+    if (this._online && !this.dht.online) this._offlineAt = Date.now()
     this._online = this.dht.online
     if (!networkCameOnline) return
 
-    this.dialer.resetBackoff() // failures while offline were ours
+    this.dialer.resetBackoff(this._offlineAt) // failures while offline were ours
     await this._handleNetworkChange()
   }
 
