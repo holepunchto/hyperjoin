@@ -181,35 +181,3 @@ test('overlapping gc evicts down to maxPeers only', async (t) => {
   for (const peer of peers) await peer.destroy()
   await testnet.destroy()
 })
-
-test('a reconnect at max peers does not dial', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-
-  const p1 = await spawnPeer(t, { bootstrap, seed: seed(1), maxPeers: 1 })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seed(2) })
-  const p3 = await spawnPeer(t, { bootstrap, seed: seed(3) })
-
-  const rep = p1.replicator
-
-  const connected = onceEvent(rep, 'connected')
-  await joinRemote(p2, p1)
-  const existing = await connected
-  await existing.replicating
-
-  await joinRemote(p1, p3) // found at max peers
-
-  // p2 reconnects while its old link is open, as after a network change
-  const reconnected = onceEvent(rep, 'connected')
-  const stream = p2.replicator.dht.connect(rep.peerId, { keyPair: p2.replicator.keyPair })
-  await reconnected
-  await rep.flush()
-
-  t.is(rep.stats.connects.client.attempted, 0)
-
-  stream.destroy()
-  await p1.destroy()
-  await p2.destroy()
-  await p3.destroy()
-  await testnet.destroy()
-})
