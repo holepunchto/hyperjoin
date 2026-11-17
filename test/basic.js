@@ -229,44 +229,6 @@ test('new inbound is refused at max peers', async (t) => {
   await testnet.destroy()
 })
 
-test('firewalled peers get no busy reply at max peers', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-
-  // maxPeers 0 is full without connections; without DHT.ERROR busy is a silent drop too
-  const blocked = DHT.keyPair(seedB).publicKey
-  const p1 = await spawnPeer(t, {
-    bootstrap,
-    seed: seedA,
-    maxPeers: 0,
-    firewall: (remotePublicKey) => b4a.equals(remotePublicKey, blocked)
-  })
-
-  t.is(await p1.replicator._handleServerFirewall(blocked, null), true, 'no busy reply')
-  t.ok(p1.replicator.dialer.lookup(blocked).isBanned, 'banned by the firewall')
-
-  await p1.destroy()
-  await testnet.destroy()
-})
-
-test('inbound is accepted at max peers on a hyperdht without busy replies', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-
-  class OldDHT extends DHT {}
-  OldDHT.ERROR = undefined // hyperdht before the busy reply
-
-  // maxPeers 0 is full without connections
-  const dht = new OldDHT({ bootstrap })
-  const p1 = await spawnPeer(t, { seed: seedA, maxPeers: 0, dht })
-
-  t.is(await p1.replicator._handleServerFirewall(DHT.keyPair(seedB).publicKey, null), false)
-
-  await p1.destroy()
-  await dht.destroy()
-  await testnet.destroy()
-})
-
 test('a reconnect is accepted at max peers', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
@@ -335,11 +297,7 @@ test('a redial that gc dedupe drops is refused at max peers', async (t) => {
   await joinRemote(p1, p2)
   await p2Connected
 
-  t.is(
-    await p1.replicator._handleServerFirewall(p2.replicator.peerId, null),
-    DHT.ERROR.TRY_LATER,
-    'p1 replies busy'
-  )
+  t.is(p1.replicator._handleAccept(p2.replicator.peerId), false, 'p1 replies busy')
 
   await p1.destroy()
   await p2.destroy()

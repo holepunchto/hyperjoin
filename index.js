@@ -79,10 +79,6 @@ module.exports = class Replicator extends ReadyResource {
         port: opts.port
       })
 
-    // refuse at max peers only where hyperdht can reply busy, older ones keep accepting and evicting in gc
-    const ERROR = this.dht.constructor.ERROR
-    this._busy = (ERROR && ERROR.TRY_LATER) || 0
-
     this._firewall = firewall
 
     const handlers = {
@@ -108,7 +104,8 @@ module.exports = class Replicator extends ReadyResource {
 
     this.server = this.dht.createServer(
       {
-        firewall: this._handleServerFirewall.bind(this),
+        firewall: this._handleFirewall.bind(this),
+        accept: this._handleAccept.bind(this), // older hyperdht ignores this and gc evicts instead
         relayThrough: this._selectRelay.bind(this),
         handshakeClearWait: opts.handshakeClearWait
       },
@@ -549,13 +546,12 @@ module.exports = class Replicator extends ReadyResource {
     return firewalled
   }
 
-  async _handleServerFirewall(remotePublicKey, payload) {
-    const firewalled = await this._handleFirewall(remotePublicKey, payload)
-    if (firewalled || !this._busy || !this._isFull(toHex(remotePublicKey))) return firewalled
+  _handleAccept(remotePublicKey) {
+    if (!this._isFull(toHex(remotePublicKey))) return true
 
     // tell new peers to try later instead of accepting and evicting them in gc
     this.stats.connects.server.refused++
-    return this._busy
+    return false
   }
 
   get _isTearingdown() {

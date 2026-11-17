@@ -43,7 +43,7 @@ General
 - `autoswarm`: enables active topic rotation (default: `true`)
 - `suspended`: start suspended
 - `seed`: derive the replicator keypair from a seed
-- `maxPeers`: reply busy to new inbound peers at this count (needs hyperdht with `ERROR.TRY_LATER`, older ones accept and evict them in gc) and drop connections above
+- `maxPeers`: reply busy to new inbound peers at this count (needs hyperdht with the server `accept` hook, older ones accept and evict them in gc) and drop connections above
 - `minPeers`: minimum connections to keep
 - `maxParallel`: max parallel outbound dials
 - `slots`: auto-rotation slots
