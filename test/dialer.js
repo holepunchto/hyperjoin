@@ -2,11 +2,11 @@ const test = require('brittle')
 const b4a = require('b4a')
 const Dialer = require('../lib/dialer')
 const Peer = require('../lib/peer')
+const { ReplicatorError } = require('../lib/errors')
 
 const T0 = Date.now()
 const TOPIC = b4a.alloc(32, 1)
 const SELF = b4a.alloc(32, 0)
-const ERR_SUSPEND = 'SuspendDrop'
 const asKey = (n) => b4a.alloc(32, n)
 const { toHex } = b4a
 
@@ -491,7 +491,7 @@ test('a dial interrupted by suspend is re-dialed on resume', async (t) => {
   await started
 
   const suspended = dialer.suspend()
-  cancelInflight(ERR_SUSPEND)
+  cancelInflight(ReplicatorError.SUSPENDED())
   await suspended
 
   dialer.resume()
@@ -524,7 +524,7 @@ test('suspend after resetBackoff() does not underflow attempts', async (t) => {
 
   dialer.resetBackoff() // network came online
   const suspended = dialer.suspend()
-  cancelInflight(ERR_SUSPEND)
+  cancelInflight(ReplicatorError.SUSPENDED())
   await suspended
 
   t.is(peer._outboundAttempts, 0)
