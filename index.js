@@ -88,6 +88,7 @@ module.exports = class Replicator extends ReadyResource {
       canRelay: () => !!this.relayThrough,
       want: () => {
         if (this._isTearingdown) return 0
+        if (!this.dht.online) return 0 // no network
 
         return this._maxPeers - this.connectionCount // throttle
       }
