@@ -141,7 +141,8 @@ module.exports = class Replicator extends ReadyResource {
     this._discoveryStartupDelay = discoveryStartupDelay
     this._dhtFastRetry = dhtFastRetry
 
-    this._online = false
+    this._online = this.dht.online
+    this._offlineAt = 0
 
     this.stats = {
       updates: 0,
@@ -872,10 +873,11 @@ module.exports = class Replicator extends ReadyResource {
   async _handleNetworkUpdate() {
     // Rising edge for being online
     const networkCameOnline = this.dht.online && !this._online
+    if (this._online && !this.dht.online) this._offlineAt = Date.now()
     this._online = this.dht.online
     if (!networkCameOnline) return
 
-    this.dialer.resetBackoff() // failures while offline were ours
+    this.dialer.resetBackoff(this._offlineAt) // failures while offline were ours
     await this._handleNetworkChange()
   }
 

@@ -732,15 +732,31 @@ test('network coming back online resets dial backoff', async (t) => {
   const replicator = new Replicator(store, { bootstrap: [], manual: true })
   await replicator.ready()
 
-  const peer = replicator.dialer.lookup(b4a.alloc(32, 2))
-  peer._outboundAttempts = 5 // failed while we were offline
+  const before = replicator.dialer.lookup(b4a.alloc(32, 1))
+  before._outboundAttempts = 5 // failed before we went offline
+  before.attemptedAt = Date.now() - 1000
+
+  replicator.dht.emit('network-update') // still online
+  t.is(before._outboundAttempts, 5)
 
   replicator.dht.online = false
   replicator.dht.emit('network-update')
+
+  const failed = replicator.dialer.lookup(b4a.alloc(32, 2))
+  failed._outboundAttempts = 5 // failed while we were offline
+  failed.attemptedAt = Date.now()
+
+  const dropped = replicator.dialer.lookup(b4a.alloc(32, 3))
+  dropped._outboundAttempts = 5 // dropped while we were offline
+  dropped.attemptedAt = Date.now() - 1000
+  dropped.disconnectedAt = Date.now()
+
   replicator.dht.online = true
   replicator.dht.emit('network-update')
 
-  t.is(peer._outboundAttempts, 0)
+  t.is(before._outboundAttempts, 5)
+  t.is(failed._outboundAttempts, 0)
+  t.is(dropped._outboundAttempts, 0)
 
   await replicator.close()
   await store.close()
