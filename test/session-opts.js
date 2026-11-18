@@ -81,6 +81,8 @@ test('join({ server: false }) still bootstraps a dht lookup for a pinned session
   await replicator.refresh()
   await replicator.refresh()
 
+  await replicator.flush()
+
   t.not(session.discovery.lastRefreshed, -1, 'a dht query was issued')
   t.ok(session.discovery.stats.lookup > 0, 'it was a lookup')
   t.is(session.discovery.stats.announce, 0, 'never an announce')
