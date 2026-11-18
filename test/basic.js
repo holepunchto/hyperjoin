@@ -4,16 +4,8 @@ const Corestore = require('corestore')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 const DHT = require('hyperdht')
+const { joinRemote, onceEvent, seedA, seedB, spawnPeer, timeout } = require('./helpers/backports')
 const Replicator = require('..')
-const {
-  joinRemote,
-  onceEvent,
-  seedA,
-  seedB,
-  seedC,
-  spawnPeer,
-  timeout
-} = require('./helpers/backports')
 
 const { toHex } = b4a
 
@@ -21,7 +13,12 @@ test('default keypair from corestore', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
   const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
-  const replicator = new Replicator(store, { bootstrap, manual: true })
+  const keyPair = await store.createKeyPair('replicator')
+  const replicator = await new Replicator(
+    (stream) => store.replicate(stream),
+    () => null,
+    { keyPair, bootstrap, manual: true }
+  )
 
   await replicator.ready()
 
@@ -63,157 +60,6 @@ test('basic replication', async (t) => {
   await testnet.destroy()
 })
 
-// SKIPPED see protomux bugreport in gc-connection.js
-test.skip('gc connections with no active mux sessions', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minPeers: 1, maxPeers: 1 })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
-  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
-
-  const remote = await joinRemote(p2, p1)
-  await remote[1].get(1)
-
-  const p2Key = toHex(p2.replicator.peerId)
-  const p3Key = toHex(p3.replicator.peerId)
-
-  const p3Connected = onceEvent(p1.replicator, 'connected')
-  const p3Session = p3.replicator.join(p3.store.session(), p1.cores[0].discoveryKey, {
-    discover: true
-  })
-  await p3Session.ready()
-  await p3Session.refresh()
-  await p3Connected
-
-  t.is(p1.replicator.connectionCount, 2, 'p1 connected to both peers')
-  t.ok(p1.replicator.getConnection(p2Key)._protomuxSessions() > 0, 'p2 has open core session to p1')
-  t.is(p1.replicator.hasConnection(p3Key), true, 'p3 should connect to p1')
-  t.is(
-    p1.replicator.getConnection(p3Key)._protomuxSessions(),
-    0,
-    'p3 connection has no protomux sessions'
-  )
-
-  await p1.replicator._gc()
-
-  t.is(
-    p1.replicator.connectionCount,
-    1,
-    'gc should evict the connection without active protmux sessions'
-  )
-  t.alike(
-    Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)),
-    [p2Key],
-    'gc keeps the connection carrying opened local cores'
-  )
-
-  await p1.cores[0].append(b4a.from('gc-kept'))
-  t.alike(await remote[0].get(2), b4a.from('gc-kept'), 'replication survives gc on the kept peer')
-
-  await p1.destroy()
-  await p2.destroy()
-  await p3.destroy()
-  await testnet.destroy()
-})
-
-test('parent corestore doesnt activate core on namespace for session', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
-  const session = p1.replicator.activeSessions[0]
-  const dkey = toHex(p1.cores[0].discoveryKey)
-  t.ok(session.hasCore(dkey))
-
-  const otherNamespace = p1.store.namespace('beep')
-  const core = otherNamespace.get({ name: 'other' })
-  await core.ready()
-  t.absent(session.hasCore(toHex(core.discoveryKey)))
-
-  const sessionNewCore = session.store.get({ name: 'three' })
-  await sessionNewCore.ready()
-  t.ok(session.hasCore(toHex(sessionNewCore.discoveryKey)))
-
-  await p1.destroy()
-  await testnet.destroy()
-})
-
-test('gc preserves stable connections over rookies', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-
-  const p1 = await spawnPeer(t, {
-    bootstrap,
-    seed: seedA,
-    minPeers: 0,
-    maxPeers: 1
-  })
-  const p2Connected = onceEvent(p1.replicator, 'connected')
-
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
-  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
-  const p2Key = toHex(p2.replicator.peerId)
-  const p3Key = toHex(p3.replicator.peerId)
-
-  await joinRemote(p2, p1)
-  await p2Connected
-
-  let active = Array.from(p1.replicator.connections)
-  t.is(active.length, 1)
-
-  const a = active[0]
-  t.is(toHex(a.peerId), p2Key, 'p2 connected')
-
-  t.is(a._survived, 0, 'not yet sweeped')
-
-  await p1.replicator._gc()
-  t.is(a._survived, 1, 'passed gc')
-
-  const p3Connected = onceEvent(p1.replicator, 'connected').then(
-    (connection) => connection.replicating
-  )
-
-  await joinRemote(p3, p1)
-  await p3Connected
-
-  active = Array.from(p1.replicator.connections)
-  t.is(active.length, 2, 'over capacity')
-  const b = active[1]
-
-  t.is(toHex(a.peerId), p2Key, 'connection a = p2')
-  t.is(toHex(b.peerId), p3Key, 'connection b = p3')
-  t.ok(a._survived > b._survived, 'b will be dropped')
-
-  await p1.replicator._gc()
-
-  active = Array.from(p1.replicator.connections)
-  t.is(active.length, 1, 'GC dropped overflow')
-  t.is(toHex(a.peerId), p2Key, 'p2 remains connected')
-  t.is(a._survived, 2, 'passed gc twice')
-
-  await p1.destroy()
-  await p2.destroy()
-  await p3.destroy()
-  await testnet.destroy()
-})
-
-test('root close() closes replicator', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-  const store = new Corestore(await t.tmp())
-  const replicator = new Replicator(store, { bootstrap, manual: true })
-  await replicator.ready()
-
-  const closed = onceEvent(replicator, 'close')
-  await store.close()
-  await closed
-
-  t.is(replicator.destroyed, true)
-
-  await testnet.destroy()
-})
-
 test('inbound peer gets banned for hammering', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
@@ -225,15 +71,23 @@ test('inbound peer gets banned for hammering', async (t) => {
   const target = p2.replicator.dialer.lookup(p1Key)
   const attempts = 21
 
+  let firewalled = false
+
   for (let n = 0; n < attempts; n++) {
     await p2.replicator._connect(target)
 
     const connection = p2.replicator.getConnection(toHex(p1Key))
-    if (!connection) break
+    if (!connection) {
+      firewalled = true
+      break
+    }
 
     connection.stream.destroy()
+
     await onceEvent(connection.stream, 'close')
   }
+
+  t.is(firewalled, true, 'last attempt hit firewall')
 
   const peer = p1.replicator.dialer.peers.get(toHex(p2.replicator.peerId))
 
@@ -273,12 +127,7 @@ test('regression: suspend() during async firewall leaked _inflight', async (t) =
     }
   })
 
-  const p2session = p2.replicator.join(p2.store.session(), p1.cores[0].discoveryKey, {
-    discover: true
-  })
-
-  await p2session.ready()
-  await p2session.refresh()
+  p2.replicator.scan(p1.cores[0].discoveryKey, { delay: 0 })
 
   await trapped // pending async firewall
 
@@ -313,7 +162,7 @@ test('dialer is resumed after suspend', async (t) => {
   const topic = p1.cores[0].discoveryKey
   const remote = p1.replicator.peerId
 
-  p2.replicator.dialer.topicEnable(topic)
+  p2.replicator.dialer.refTopic(topic)
   const suspended = p2.replicator.suspend()
   p2.replicator.dialer.seen({ publicKey: remote }, topic)
 
@@ -334,13 +183,23 @@ test('dialer is resumed after suspend', async (t) => {
 
 test('regression: suspend() holds dials until resume()', async (t) => {
   const store = new Corestore(await t.tmp())
-  const replicator = new Replicator(store, { bootstrap: [], manual: true, jitter: 0 })
+  const keyPair = await store.createKeyPair('replicator')
+  const replicator = new Replicator(
+    (stream) => store.replicate(stream),
+    () => null,
+    {
+      keyPair,
+      bootstrap: [],
+      manual: true,
+      jitter: 0
+    }
+  )
   await replicator.ready()
 
   const topic = b4a.alloc(32, 1)
   const remote = b4a.alloc(32, 2)
 
-  replicator.dialer.topicEnable(topic)
+  replicator.dialer.refTopic(topic)
 
   const suspended = replicator.suspend()
   replicator.dialer.seen({ publicKey: remote }, topic)
@@ -367,7 +226,7 @@ test('suspend resets dial attempts of dropped connections', async (t) => {
   const topic = p1.cores[0].discoveryKey
   const remote = p1.replicator.peerId
 
-  p2.replicator.dialer.topicEnable(topic)
+  p2.replicator.dialer.refTopic(topic)
   p2.replicator.dialer.seen({ publicKey: remote }, topic)
   await p2.replicator.flush()
 
@@ -383,112 +242,29 @@ test('suspend resets dial attempts of dropped connections', async (t) => {
   await testnet.destroy()
 })
 
-test('suspend does not count a dial still waiting to start', async (t) => {
-  const store = new Corestore(await t.tmp())
-  const replicator = new Replicator(store, { bootstrap: [], manual: true, jitter: 100 })
-  await replicator.ready()
-
-  const topic = b4a.alloc(32, 1)
-  const remote = b4a.alloc(32, 2)
-
-  replicator.dialer.topicEnable(topic)
-  replicator.dialer.seen({ publicKey: remote }, topic)
-
-  await replicator.suspend()
-
-  t.is(replicator.dialer.lookup(remote)._outboundAttempts, 0)
-
-  await replicator.close()
-  await store.close()
-})
-
-test('suspend does not count a dial waiting on the firewall', async (t) => {
-  let release = null
-  const gate = new Promise((resolve) => {
-    release = resolve
-  })
-
-  const store = new Corestore(await t.tmp())
-  const replicator = new Replicator(store, {
-    bootstrap: [],
-    manual: true,
-    jitter: 0,
-    firewall: async () => {
-      await gate
-      return false
-    }
-  })
-  await replicator.ready()
-
-  const topic = b4a.alloc(32, 1)
-  const remote = b4a.alloc(32, 2)
-
-  replicator.dialer.topicEnable(topic)
-  replicator.dialer.seen({ publicKey: remote }, topic)
-  await new Promise((resolve) => setImmediate(resolve))
-
-  const suspended = replicator.suspend()
-  release()
-  await suspended
-
-  const peer = replicator.dialer.lookup(remote)
-  t.is(peer._outboundAttempts, 0)
-
-  await replicator.resume()
-  await replicator.flush()
-
-  t.is(peer._outboundAttempts, 1, 'dialed after resume')
-
-  await replicator.close()
-  await store.close()
-})
-
-test('suspend does not count a dial it cancels', async (t) => {
-  const store = new Corestore(await t.tmp())
-  const replicator = new Replicator(store, { bootstrap: [], manual: true, jitter: 0 })
-  await replicator.ready()
-
-  const topic = b4a.alloc(32, 1)
-  const remote = b4a.alloc(32, 2)
-
-  const suspended = new Promise((resolve) => {
-    replicator.once('update', () => resolve(replicator.suspend()))
-  })
-
-  replicator.dialer.topicEnable(topic)
-  replicator.dialer.seen({ publicKey: remote }, topic)
-  await suspended
-
-  const peer = replicator.dialer.lookup(remote)
-  t.is(peer._outboundAttempts, 0)
-
-  await replicator.resume()
-  await replicator.flush()
-
-  t.is(peer._outboundAttempts, 1, 'dialed after resume')
-
-  await replicator.close()
-  await store.close()
-})
-
 test('replicator enables dialer throttle', async (t) => {
-  const store = new Corestore(await t.tmp())
-  const replicator = new Replicator(store, { bootstrap: [], maxPeers: 2 })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    { bootstrap: [], maxPeers: 2 }
+  )
 
   t.is(replicator.dialer._want(), 2)
 
   await replicator.close()
-  await store.close()
 })
 
 test('holepunch failure switches the peer to relaying', async (t) => {
-  const store = new Corestore(await t.tmp())
-  const replicator = new Replicator(store, {
-    bootstrap: [],
-    manual: true,
-    jitter: 0,
-    relayThrough: b4a.alloc(32, 7)
-  })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    {
+      bootstrap: [],
+      manual: true,
+      jitter: 0,
+      relayThrough: b4a.alloc(32, 7)
+    }
+  )
   await replicator.ready()
 
   replicator.dht.connect = () => {
@@ -504,7 +280,7 @@ test('holepunch failure switches the peer to relaying', async (t) => {
   const topic = b4a.alloc(32, 1)
   const remote = b4a.alloc(32, 2)
 
-  replicator.dialer.topicEnable(topic)
+  replicator.dialer.refTopic(topic)
   replicator.dialer.seen({ publicKey: remote }, topic)
   await replicator.dialer.flush()
 
@@ -513,7 +289,6 @@ test('holepunch failure switches the peer to relaying', async (t) => {
   t.ok(peer.forceRelaying, 'switched to relaying')
 
   await replicator.close()
-  await store.close()
 })
 
 test('regression: Dialer.flush() resolves when replicator suspends', async (t) => {
@@ -541,7 +316,7 @@ test('regression: Dialer.flush() resolves when replicator suspends', async (t) =
   }
 
   const topic = p1.cores[0].discoveryKey
-  p2.replicator.dialer.topicEnable(topic)
+  p2.replicator.dialer.refTopic(topic)
   p2.replicator.dialer.seen({ publicKey: p1.replicator.peerId }, topic)
 
   await connectStarted
@@ -561,8 +336,11 @@ test('regression: Dialer.flush() resolves when replicator suspends', async (t) =
 })
 
 test('network coming back online resets dial backoff', async (t) => {
-  const store = new Corestore(await t.tmp())
-  const replicator = new Replicator(store, { bootstrap: [], manual: true })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    { bootstrap: [], manual: true }
+  )
   await replicator.ready()
 
   const before = replicator.dialer.lookup(b4a.alloc(32, 1))
@@ -592,14 +370,16 @@ test('network coming back online resets dial backoff', async (t) => {
   t.is(dropped._outboundAttempts, 0)
 
   await replicator.close()
-  await store.close()
 })
 
 test('ready does not wait for the server to listen', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
-  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
-  const replicator = new Replicator(store, { bootstrap })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    { bootstrap }
+  )
 
   await replicator.ready()
 
@@ -611,7 +391,6 @@ test('ready does not wait for the server to listen', async (t) => {
   t.is(replicator.listening, true)
 
   await replicator.close()
-  await store.close()
   await testnet.destroy()
 })
 
@@ -619,11 +398,12 @@ test('pinned session announces only once the server is listening', async (t) => 
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
-  const core = store.get({ name: 'one' })
-  await core.ready()
-
-  const replicator = new Replicator(store, { bootstrap, manual: true })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    { bootstrap, manual: true }
+  )
+  const topic = b4a.alloc(32, 1)
 
   let release = null
   const gate = new Promise((resolve) => {
@@ -638,8 +418,8 @@ test('pinned session announces only once the server is listening', async (t) => 
 
   await replicator.ready()
 
-  const session = replicator.join(store, core.discoveryKey, { pin: true })
-  await session.refresh()
+  const session = replicator.join(topic, { pin: true })
+  session.refresh()
 
   t.is(replicator.listening, false)
   t.is(session.discovery.announce, false, 'not announced before listening')
@@ -650,84 +430,158 @@ test('pinned session announces only once the server is listening', async (t) => 
 
   t.is(replicator.listening, true)
 
-  await replicator.refresh()
+  replicator.refresh()
 
   t.is(session.discovery.announce, true, 'announced after listening')
 
   await replicator.close()
-  await store.close()
   await testnet.destroy()
 })
 
 test('failed listen ignores error and nothing announces', async (t) => {
   const dht = new DHT({ bootstrap: [] })
 
-  // TODO: creates a defunct replicator (see condition of warn)
-  // add tests that cover invalid states of injected dependencies
+  // creates a defunct replicator
   await dht.destroy()
 
-  const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
-  const replicator = new Replicator(store, { dht })
+  const replicator = new Replicator(
+    () => {},
+    () => null,
+    { dht }
+  )
+  const topic = b4a.alloc(32, 1)
+
+  // This test is not entierly valid;
+  // It produces a replicator instance that silently does not replicate.
+  // TODO: harden conditions against defunct dependencies.
+  let error = null
+  replicator.once('error', (err) => {
+    error = err
+  })
 
   await replicator.ready()
 
-  const core = store.get({ name: 'one' })
-  await core.ready()
-
-  const session = replicator.join(store, core.discoveryKey, { pin: true })
-  await session.refresh()
+  const session = replicator.join(topic, { pin: true })
+  session.refresh()
   await replicator.flush()
 
+  t.is(error.code, 'NODE_DESTROYED')
   t.is(replicator.listening, false)
   t.is(session.discovery.announce, false, 'not announced')
+
+  await replicator.close()
+})
+
+test('regression: suspend does not count a dial still waiting to start', async (t) => {
+  const store = new Corestore(await t.tmp())
+  const keyPair = await store.createKeyPair('replicator')
+  const replicator = new Replicator(
+    (stream) => store.replicate(stream),
+    () => null,
+    {
+      keyPair,
+      bootstrap: [],
+      manual: true,
+      jitter: 100
+    }
+  )
+  await replicator.ready()
+
+  const topic = b4a.alloc(32, 1)
+  const remote = b4a.alloc(32, 2)
+
+  replicator.dialer.refTopic(topic)
+  replicator.dialer.seen({ publicKey: remote }, topic)
+
+  await replicator.suspend()
+
+  t.is(replicator.dialer.lookup(remote)._outboundAttempts, 0)
 
   await replicator.close()
   await store.close()
 })
 
-test('presuspend accepts inbound connections', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
-
-  p2.replicator.presuspend()
-  await p2.replicator.flush()
-
-  const connected = onceEvent(p2.replicator, 'connected')
-  const stream = p1.replicator.dht.connect(p2.replicator.peerId, {
-    keyPair: p1.replicator.keyPair
+test('regression: suspend does not count a dial waiting on the firewall', async (t) => {
+  let release = null
+  const gate = new Promise((resolve) => {
+    release = resolve
   })
 
-  await connected
-
-  t.ok(p2.replicator.inbound.has(p1.peerId), 'accepted inbound connection')
-
-  stream.destroy()
-  await p1.destroy()
-  await p2.destroy()
-  await testnet.destroy()
-})
-
-test('presuspend allows outbound connections', async (t) => {
-  const testnet = await createTestnet()
-  const { bootstrap } = testnet
-
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
-
-  p2.replicator.presuspend()
-  await p2.replicator.flush()
+  const store = new Corestore(await t.tmp())
+  const keyPair = await store.createKeyPair('replicator')
+  const replicator = new Replicator(
+    (stream) => store.replicate(stream),
+    () => null,
+    {
+      keyPair,
+      bootstrap: [],
+      manual: true,
+      jitter: 0,
+      firewall: async () => {
+        await gate
+        return false
+      }
+    }
+  )
+  await replicator.ready()
 
   const topic = b4a.alloc(32, 1)
-  p2.replicator.dialer.topicEnable(topic)
-  p2.replicator.dialer.seen({ publicKey: p1.replicator.peerId }, topic)
-  await p2.replicator.flush()
+  const remote = b4a.alloc(32, 2)
 
-  t.ok(p2.replicator.outbound.has(p1.peerId), 'opened outbound connection')
+  replicator.dialer.refTopic(topic)
+  replicator.dialer.seen({ publicKey: remote }, topic)
+  await new Promise((resolve) => setImmediate(resolve))
 
-  await p1.destroy()
-  await p2.destroy()
-  await testnet.destroy()
+  const suspended = replicator.suspend()
+  release()
+  await suspended
+
+  const peer = replicator.dialer.lookup(remote)
+  t.is(peer._outboundAttempts, 0)
+
+  await replicator.resume()
+  await replicator.flush()
+
+  t.is(peer._outboundAttempts, 1, 'dialed after resume')
+
+  await replicator.close()
+  await store.close()
+})
+
+test('regression: suspend does not count a dial it cancels', async (t) => {
+  const store = new Corestore(await t.tmp())
+  const keyPair = await store.createKeyPair('replicator')
+  const replicator = new Replicator(
+    (stream) => store.replicate(stream),
+    () => null,
+    {
+      keyPair,
+      bootstrap: [],
+      manual: true,
+      jitter: 0
+    }
+  )
+  await replicator.ready()
+
+  const topic = b4a.alloc(32, 1)
+  const remote = b4a.alloc(32, 2)
+
+  const suspended = new Promise((resolve) => {
+    replicator.once('update', () => resolve(replicator.suspend()))
+  })
+
+  replicator.dialer.refTopic(topic)
+  replicator.dialer.seen({ publicKey: remote }, topic)
+  await suspended
+
+  const peer = replicator.dialer.lookup(remote)
+  t.is(peer._outboundAttempts, 0)
+
+  await replicator.resume()
+  await replicator.flush()
+
+  t.is(peer._outboundAttempts, 1, 'dialed after resume')
+
+  await replicator.close()
+  await store.close()
 })

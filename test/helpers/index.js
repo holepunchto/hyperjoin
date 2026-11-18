@@ -48,7 +48,9 @@ class TestSwarm extends ReadyResource {
   }
 
   refresh() {
-    return Promise.all(this.peers.map((p) => p.replicator.refresh()))
+    for (const p of this.peers) {
+      p.replicator.refresh()
+    }
   }
 
   flush() {
@@ -62,7 +64,6 @@ class TestSwarm extends ReadyResource {
   async spawnPeer(opts) {
     const peer = new TestPeer(++this._peerCounter, this.rootPath, {
       bootstrap: this.bootstrap,
-      autoswarm: true,
       ...opts
     })
 
@@ -106,16 +107,38 @@ class TestPeer extends ReadyResource {
     if (seed) storeOpts = { primaryKey: seed, unsafe: true }
 
     this.store = new Corestore(this._path, storeOpts)
-    this.replicator = new Replicator(this.store, {
-      manual: true,
-      autoswarm: true,
-      dhtFastRetry: 0,
-      ...this._opts
-    })
+    this.replicator = null
   }
 
   async _open() {
+    const { topicOf, ...opts } = this._opts
+
+    const keyPair = await this.store.createKeyPair('replicator')
+
+    this.replicator = new Replicator(
+      (stream) => this.store.replicate(stream),
+      topicOf || this._topicOf.bind(this),
+      {
+        manual: true,
+        keyPair,
+        ...opts
+      }
+    )
+
     await this.replicator.ready()
+  }
+
+  _topicOf(discoveryKey) {
+    discoveryKey = toHex(discoveryKey)
+
+    for (const { session, repSession } of this.sessions.values()) {
+      const core = session.cores.get(discoveryKey)
+      if (!core) continue
+
+      if (session.sessions.list(core.id).length > 0) return repSession.topic
+    }
+
+    return null
   }
 
   async join(topic, opts = {}) {
@@ -124,7 +147,7 @@ class TestPeer extends ReadyResource {
 
     const ns = this.store.namespace(topic)
     const session = ns.session()
-    const repSession = this.replicator.join(session, topic, opts)
+    const repSession = this.replicator.join(topic, opts)
     await repSession.ready()
 
     this.sessions.set(toHex(topic), { session, repSession })

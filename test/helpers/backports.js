@@ -10,24 +10,31 @@ const seedA = Buffer.alloc(32, 0xa)
 const seedB = Buffer.alloc(32, 0xb)
 const seedC = Buffer.alloc(32, 0xc)
 
-// TODO: move all to single export at bottom
-
-exports.seedA = seedA
-exports.seedB = seedB
-exports.seedC = seedC
-exports.seed = function seed(byte) {
+function seed(byte) {
   return Buffer.alloc(32, byte)
 }
 
-exports.timeout = function timeout(ms) {
+function unpromise() {
+  let complete, abort
+  return [
+    new Promise((resolve, reject) => {
+      ;((complete = resolve), (abort = reject))
+    }),
+    complete,
+    abort
+  ]
+}
+
+// TODO: remove this helper, use of timeouts is banned outside of test/backports/
+function timeout(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-exports.onceEvent = function onceEvent(emitter, event) {
+function onceEvent(emitter, event) {
   return new Promise((resolve) => emitter.once(event, resolve))
 }
 
-exports.waitForEvents = function waitForEvents(emitter, event, count) {
+function waitForEvents(emitter, event, count) {
   return new Promise((resolve) => {
     let seen = 0
 
@@ -41,33 +48,42 @@ exports.waitForEvents = function waitForEvents(emitter, event, count) {
   })
 }
 
-exports.joinRemote = async function joinRemote(peer, remotePeer) {
-  const remote = remotePeer.cores.map((core) => peer.session.get(core.key))
+async function joinRemote(peer, remotePeer) {
+  const session = peer.store.session()
+  const remote = remotePeer.cores.map((core) => session.get(core.key))
   await Promise.all(remote.map((core) => core.ready()))
 
-  const repSession = peer.replicator.join(peer.store.session(), remotePeer.cores[0].discoveryKey, {
+  const topic = remotePeer.cores[0].discoveryKey
+  peer.sessions.push({ session, topic })
+
+  const repSession = peer.replicator.join(topic, {
     pin: true
   })
   await repSession.ready()
-  await repSession.refresh()
+  peer.replicator.refresh()
   await peer.replicator.flush()
 
   return remote
 }
 
-exports.spawnPeer = async function spawnPeer(t, opts = {}) {
+async function spawnPeer(t, opts = {}) {
   const { seed } = opts
   let storeOpts = {}
   if (seed) storeOpts = { primaryKey: seed, unsafe: true }
 
   const store = new Corestore(await t.tmp(), storeOpts)
-  const replicator = new Replicator(store, {
-    manual: true,
-    autoswarm: false,
-    discoveryStartupDelay: 0,
-    dhtFastRetry: 0,
-    ...opts
-  })
+  const sessions = []
+  const keyPair = await store.createKeyPair('replicator')
+
+  const replicator = new Replicator(
+    (stream) => store.replicate(stream),
+    opts.topicOf || ((discoveryKey) => topicOf(sessions, discoveryKey)),
+    {
+      manual: true,
+      keyPair,
+      ...opts
+    }
+  )
 
   await replicator.ready()
 
@@ -77,14 +93,16 @@ exports.spawnPeer = async function spawnPeer(t, opts = {}) {
   await one.ready()
   await one.append([b4a.from('cells'), b4a.from('interlinked')])
 
-  const repSession = replicator.join(session, one.discoveryKey, { pin: true })
+  const repSession = replicator.join(one.discoveryKey, { pin: true })
   await repSession.ready()
-  await repSession.refresh()
+  replicator.refresh()
   await replicator.flush()
 
   const two = session.get({ name: 'two' })
   await two.ready()
   await two.append([b4a.from('within'), b4a.from('Cells')])
+
+  sessions.push({ session, topic: one.discoveryKey })
 
   const destroy = async () => {
     await replicator.close()
@@ -93,5 +111,30 @@ exports.spawnPeer = async function spawnPeer(t, opts = {}) {
 
   const peerId = toHex(replicator.peerId)
 
-  return { store, replicator, session, peerId, destroy, cores: [one, two] }
+  return { store, replicator, session, sessions, peerId, destroy, cores: [one, two] }
+}
+
+function topicOf(sessions, discoveryKey) {
+  const dkey = toHex(discoveryKey)
+  for (const { session, topic } of sessions) {
+    const core = session.cores.get(dkey)
+    if (!core) continue
+
+    if (session.sessions.list(core.id).length > 0) return topic
+  }
+
+  return null
+}
+
+module.exports = {
+  seedA,
+  seedB,
+  seedC,
+  seed,
+  timeout,
+  unpromise,
+  onceEvent,
+  waitForEvents,
+  joinRemote,
+  spawnPeer
 }
