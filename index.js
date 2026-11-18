@@ -105,6 +105,7 @@ module.exports = class Replicator extends ReadyResource {
     this.server = this.dht.createServer(
       {
         firewall: this._handleFirewall.bind(this),
+        accept: this._handleAccept.bind(this), // older hyperdht ignores this and gc evicts instead
         relayThrough: this._selectRelay.bind(this),
         handshakeClearWait: opts.handshakeClearWait
       },
@@ -154,7 +155,8 @@ module.exports = class Replicator extends ReadyResource {
         },
         server: {
           opened: 0,
-          closed: 0
+          closed: 0,
+          refused: 0
         }
       },
       dht: {
@@ -506,6 +508,21 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
+  // at max peers, unless the peer is reconnecting or gc can evict an idle connection for it
+  _isFull(hex) {
+    if (this.connectionCount < this._maxPeers || this.inbound.has(hex)) return false
+
+    // gc dedupe keeps this inbound over our outbound to the peer, which it may have lost
+    if (this.outbound.has(hex) && toHex(this.peerId) < hex) return false
+
+    let idle = 0
+    for (const connection of this.connections) {
+      if (connection.isIdle()) idle++
+    }
+
+    return this.connectionCount - idle >= this._maxPeers
+  }
+
   _handleBan(peer) {
     this.stats.bannedPeers++
     this.emit('ban', peer, peer.banReason)
@@ -528,6 +545,14 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     return firewalled
+  }
+
+  _handleAccept(remotePublicKey) {
+    if (!this._isFull(toHex(remotePublicKey))) return true
+
+    // tell new peers to try later instead of accepting and evicting them in gc
+    this.stats.connects.server.refused++
+    return false
   }
 
   get _isTearingdown() {
