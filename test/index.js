@@ -7,6 +7,7 @@ async function runTests() {
 
   test.pause()
 
+  await import('./heuristics.js')
   await import('./dialer.js')
   await import('./peer.js')
   await import('./basic.js')

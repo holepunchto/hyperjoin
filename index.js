@@ -5,9 +5,10 @@ const Connection = require('./lib/connection')
 const Session = require('./lib/session')
 const Scanner = require('./lib/scan.js')
 const safetyCatch = require('safety-catch')
-const Discovery = require('replicator-discovery')
+const Discovery = require('hyperannounce')
 
 const b4a = require('b4a')
+const { sortConnections } = require('./lib/heuristics')
 const { toHex } = b4a
 
 const AUTO_REFRESH_INTERVAL = 5000
@@ -127,7 +128,8 @@ module.exports = class Replicator extends ReadyResource {
     this._minActiveTime = minActiveTime
     this._gcPending = null
 
-    this._online = false
+    this._online = this.dht.online
+    this._offlineAt = 0
 
     this.stats = {
       updates: 0,
@@ -473,7 +475,8 @@ module.exports = class Replicator extends ReadyResource {
       // ignore self
       if (b4a.equals(peer.publicKey, this.peerId)) return
 
-      this.dialer.seen(peer, topic)
+      const info = this.dialer.seen(peer, topic)
+      info.scannedAt = Date.now()
     }
 
     const scan = new Scanner(this.dht, topic, {
@@ -590,14 +593,13 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   async _evictConnection(connection, err) {
-    if (connection.stream.closed) return
+    if (connection.destroying) return connection.destroyed
 
     // TODO: make public / only used by sim
     this.emit('_evictConnection', connection.peerId, /* reason */ err)
 
-    const closed = new Promise((resolve) => connection.stream.once('close', resolve))
     connection.destroy(err)
-    await closed
+    await connection.destroyed
   }
 
   _handleServerConnectionSwap(existing, conn) {
@@ -678,7 +680,7 @@ module.exports = class Replicator extends ReadyResource {
 
     if (this._isTearingdown) {
       this._inflight.delete(hex)
-      return true
+      return ERR_SUSPEND
     }
 
     let stream
@@ -711,7 +713,7 @@ module.exports = class Replicator extends ReadyResource {
       stream.once('close', onclose)
       stream.once('open', onopen)
 
-      cancelCallback = () => stream.destroy('suspending')
+      cancelCallback = () => stream.destroy(ERR_SUSPEND)
       this._inflightCancel.add(cancelCallback)
 
       this.stats.connects.client.attempted++
@@ -721,17 +723,17 @@ module.exports = class Replicator extends ReadyResource {
     this._inflight.delete(hex)
     if (cancelCallback) this._inflightCancel.delete(cancelCallback)
 
+    if (!opened) {
+      this.emit('update')
+      return error || true
+    }
+
     // opened after teardown
     if (this._isTearingdown) {
       stream.once('error', noop)
       const e = new Error(ERR_DESTROYED)
       stream.destroy(e)
       return ERR_DESTROYED
-    }
-
-    if (!opened) {
-      this.emit('update')
-      return error || true
     }
 
     // stream opened - hand-off
@@ -746,6 +748,11 @@ module.exports = class Replicator extends ReadyResource {
     const evictions = []
     let connectionsEvicted = 0
     let sessionsEvicted = 0
+
+    let active = 0
+    for (const connection of this.connections) {
+      if (!connection.destroying) active++
+    }
 
     // peer-dedupe
 
@@ -762,6 +769,7 @@ module.exports = class Replicator extends ReadyResource {
 
       // low-peerId keeps inbound
       const target = (cmp > 0) ^ connection.initiator ? connection : dst.get(key)
+      if (target.destroying) continue
 
       evictions.push(this._evictConnection(target, ERR_DUPLICATE))
       connectionsEvicted++
@@ -780,58 +788,41 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._lastConnectionEvict) this._lastConnectionEvict = now
 
     const gcConn = (connection, reason = ERR_IDLE) => {
-      connection._evicted = true
       evictions.push(this._evictConnection(connection, reason))
       connectionsEvicted++
       this._lastConnectionEvict = now
     }
 
-    if (this.connectionCount > this._maxPeers) {
-      const nEvict = this.connectionCount - this._maxPeers
+    const evict = active - this._maxPeers
 
+    if (evict > 0) {
       // Evict idle connections
       for (const connection of this.connections) {
+        if (connectionsEvicted >= evict) {
+          break // target reached
+        }
+
+        if (connection.destroying) continue
         if (!connection.isIdle(now)) continue
 
         gcConn(connection, ERR_IDLE)
-
-        if (connectionsEvicted >= nEvict) {
-          break // target reached
-        }
       }
 
-      // TODO: move to [lib|test]/heuristics.js
-      // Heuristic evict if still over max-cap
-      const nHeuristicEvict = nEvict - connectionsEvicted
+      // Last resort if still over max capacity
+      const nHeuristicEvict = evict - connectionsEvicted
 
       if (nHeuristicEvict > 0) {
-        // TODO: avoid eviction for connection:
-        // - from pinned topic
-        // - good throughput
-        const connections = Array.from(this.connections)
-          .filter((c) => !c._evicted)
-          .sort((a, b) => {
-            const aRookie = a._survived < 1
-            const bRookie = b._survived < 1
-
-            // Evict rookie over established
-            if (aRookie !== bRookie) return aRookie ? -1 : 1
-
-            // Evict newest, comparing 2 rookies.
-            if (aRookie) return b.connectedAt - a.connectedAt
-
-            // Evict stale, comparing 2 established
-            return a.lastActivity - b.lastActivity
-          })
+        const remaining = Array.from(this.connections).filter((c) => !c.destroying)
+        const sorted = sortConnections(remaining, now)
 
         for (let i = 0; i < nHeuristicEvict; i++) {
-          gcConn(connections[i], ERR_MAXPEERS)
+          gcConn(sorted[i], ERR_MAXPEERS)
         }
       }
     }
 
     for (const connection of this.connections) {
-      if (connection._evicted) continue
+      if (connection.destroying) continue
       connection._survived++
     }
 
@@ -982,10 +973,11 @@ module.exports = class Replicator extends ReadyResource {
   async _handleNetworkUpdate() {
     // Rising edge for being online
     const networkCameOnline = this.dht.online && !this._online
+    if (this._online && !this.dht.online) this._offlineAt = Date.now()
     this._online = this.dht.online
     if (!networkCameOnline) return
 
-    this.dialer.resetBackoff() // failures while offline were ours
+    this.dialer.resetBackoff(this._offlineAt) // failures while offline were ours
     await this._handleNetworkChange()
   }
 

@@ -217,3 +217,57 @@ test('gc preserves stable connections over new', async (t) => {
 
   await swarm.destroy()
 })
+
+test('regression: gc does not count closing connections', async (t) => {
+  const swarm = await spawnSwarm(t)
+  const p1 = await swarm.spawnPeer({ maxPeers: 1, gcDisabled: true })
+  const p2 = await swarm.spawnPeer()
+  const p3 = await swarm.spawnPeer()
+  const topic = b4a.alloc(32, 1)
+
+  await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
+  await swarm.propagateWriters()
+  swarm.refresh()
+  await swarm.flush()
+
+  await p3.join(topic, { pin: true })
+  await swarm.propagateWriters()
+  swarm.refresh()
+  await swarm.flush()
+
+  t.is(p1.replicator.connectionCount, 2, 'connection exceeds capacity')
+
+  const [closing, survivor] = p1.replicator.connections
+
+  closing.destroy()
+  await p1.replicator._gc()
+
+  t.is(survivor.destroying, false, 'at capacity, nothing to evict')
+
+  await swarm.destroy()
+})
+
+test('regression: heuristic-GC does not evict below maxPeers', async (t) => {
+  const swarm = await spawnSwarm(t)
+  const p1 = await swarm.spawnPeer({ maxPeers: 2, gcDisabled: true })
+  const topic = b4a.alloc(32, 1)
+
+  await p1.join(topic, { pin: true })
+
+  for (let i = 0; i < 4; i++) {
+    const peer = await swarm.spawnPeer()
+    await peer.join(topic, { pin: true })
+    await swarm.propagateWriters()
+    swarm.refresh()
+    await swarm.flush()
+  }
+
+  t.is(p1.replicator.connectionCount, 4, 'over capacity')
+
+  const later = Date.now() + 4 * 60 * 1000 // all connections idle
+  await Promise.all([p1.replicator._gc(later), p1.replicator._gc(later)])
+
+  t.is(p1.replicator.connectionCount, 2, 'evicted 2 of 4')
+
+  await swarm.destroy()
+})
