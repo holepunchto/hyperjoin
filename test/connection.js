@@ -154,9 +154,9 @@ test('connection becomes idle when no topic owns its core', async (t) => {
   const topic = b4a.alloc(32, 1)
 
   let owned = true
-  const whoHas = () => (owned ? topic : null)
+  const topicOf = () => (owned ? topic : null)
 
-  const p1 = await swarm.spawnPeer({ whoHas })
+  const p1 = await swarm.spawnPeer({ topicOf })
   const p2 = await swarm.spawnPeer()
 
   await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])

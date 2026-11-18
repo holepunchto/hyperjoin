@@ -77,7 +77,7 @@ async function spawnPeer(t, opts = {}) {
 
   const replicator = new Replicator(
     (stream) => store.replicate(stream),
-    opts.whoHas || ((discoveryKey) => whoHas(sessions, discoveryKey)),
+    opts.topicOf || ((discoveryKey) => topicOf(sessions, discoveryKey)),
     {
       manual: true,
       keyPair,
@@ -114,7 +114,7 @@ async function spawnPeer(t, opts = {}) {
   return { store, replicator, session, sessions, peerId, destroy, cores: [one, two] }
 }
 
-function whoHas(sessions, discoveryKey) {
+function topicOf(sessions, discoveryKey) {
   const dkey = toHex(discoveryKey)
   for (const { session, topic } of sessions) {
     const core = session.cores.get(dkey)

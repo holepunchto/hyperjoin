@@ -111,13 +111,13 @@ class TestPeer extends ReadyResource {
   }
 
   async _open() {
-    const { whoHas, ...opts } = this._opts
+    const { topicOf, ...opts } = this._opts
 
     const keyPair = await this.store.createKeyPair('replicator')
 
     this.replicator = new Replicator(
       (stream) => this.store.replicate(stream),
-      whoHas || this._whoHas.bind(this),
+      topicOf || this._topicOf.bind(this),
       {
         manual: true,
         keyPair,
@@ -128,7 +128,7 @@ class TestPeer extends ReadyResource {
     await this.replicator.ready()
   }
 
-  _whoHas(discoveryKey) {
+  _topicOf(discoveryKey) {
     discoveryKey = toHex(discoveryKey)
 
     for (const { session, repSession } of this.sessions.values()) {

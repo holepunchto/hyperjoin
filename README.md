@@ -27,7 +27,7 @@ const groups = {
   ]
 }
 
-const replicator = new Replicator(onreplicate, whoHas, { keyPair })
+const replicator = new Replicator(onreplicate, topicOf, { keyPair })
 
 for (const name in groups) {
   replicator.join(toTopic(name))
@@ -49,7 +49,7 @@ function onreplicate(stream) {
   store.replicate(stream)
 }
 
-function whoHas(coreDiscoveryKey) {
+function topicOf(coreDiscoveryKey) {
   for (const name in groups) {
     for (const core of groups[name]) {
       if (b4a.equals(coreDiscoveryKey, core.discoveryKey)) {
@@ -114,11 +114,11 @@ op.complete.then(() => {
 
 ## API
 
-### `new Replicator(onreplicate, whoHas, opts)`
+### `new Replicator(onreplicate, topicOf, opts)`
 
 `onreplicate(stream)` forward the stream to corestore
 
-`whoHas(discoveryKey)` return the topic owning an open core, or `null` when unknown or closed.
+`topicOf(discoveryKey)` return the topic owning an open core, or `null` when unknown or closed.
 
 Options:
 

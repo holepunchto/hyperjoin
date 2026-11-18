@@ -29,11 +29,11 @@ const ERR_SUSPEND = 'SuspendDrop'
 const ERR_MAXPEERS = 'MaxPeersCap'
 
 module.exports = class Replicator extends ReadyResource {
-  constructor(onreplicate, whoHas, opts = {}) {
+  constructor(onreplicate, topicOf, opts = {}) {
     super()
 
     if (typeof onreplicate !== 'function') throw new Error('function `onreplicate` required')
-    if (typeof whoHas !== 'function') throw new Error('function `whoHas` required')
+    if (typeof topicOf !== 'function') throw new Error('function `topicOf` required')
 
     const {
       seed = null,
@@ -60,7 +60,7 @@ module.exports = class Replicator extends ReadyResource {
 
     this.keyPair = keyPair
     this._onreplicate = onreplicate
-    this._whoHas = whoHas
+    this._topicOf = topicOf
 
     this._dhtOwned = !opts.dht
     this.dht =
