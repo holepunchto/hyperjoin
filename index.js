@@ -45,7 +45,7 @@ module.exports = class Replicator extends ReadyResource {
       maxParallel,
       firewall = allowAll,
       suspended,
-      pooling = true,
+      pool = true,
       manual = false,
       interval = AUTO_REFRESH_INTERVAL,
       gcDisabled = false,
@@ -122,7 +122,7 @@ module.exports = class Replicator extends ReadyResource {
     this._lastConnectionEvict = 0
 
     this.slots = slots
-    this.pooling = pooling
+    this.pool = pool
     this._autoRefreshInterval = interval
     this._gcIdleTime = gcIdleTime
     this._minActiveTime = minActiveTime
@@ -918,7 +918,7 @@ module.exports = class Replicator extends ReadyResource {
         const timeActive = now - session._startTime
         const minActive = session._startDelay + this._minActiveTime
 
-        if (this.pooling && timeActive < minActive) {
+        if (this.pool && timeActive < minActive) {
           slots-- // reserved & immovable
           continue
         }
@@ -955,7 +955,7 @@ module.exports = class Replicator extends ReadyResource {
     // rotate
     pool.sort(heuristicSort)
 
-    if (!this.pooling) slots = 0
+    if (!this.pool) slots = 0
 
     // autostop
     for (let i = slots; i < pool.length; i++) {

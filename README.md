@@ -4,9 +4,9 @@ Replicates many groups of cores across many topics using pooled resources
 
 ## Usage
 
-#### Autoswarming
+#### autoswarm
 
-Automatic pooling by application context
+Automatic topic selection by application context.
 
 ```js
 const b4a = require('b4a')
@@ -152,7 +152,7 @@ const opts = {
 
   manual: false, // disable auto-refresh interval
   gcDisabled: false, // prevent garbage collection on `refresh()`
-  pooling: true // enable topic rotation
+  pool: true // enable topic rotation
 }
 ```
 
@@ -192,7 +192,7 @@ Fired after GC drops connections. `count` is the number dropped.
 
 ### Getters
 
-#### `rep.pooling`
+#### `rep.pool`
 
 Enable|disable topic rotation pool, is writable and applied on `refresh()`
 

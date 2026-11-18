@@ -274,13 +274,13 @@ test('pool: pooling can be disabled', async (t) => {
 
   t.is(peer.replicator.announcedSessions.length, 1, 'autoswarm announce')
 
-  peer.replicator.pooling = false
+  peer.replicator.pool = false
   peer.replicator.refresh()
   await peer.replicator.flush()
 
   t.is(peer.replicator.announcedSessions.length, 0, 'unannounced')
 
-  peer.replicator.pooling = true
+  peer.replicator.pool = true
   peer.replicator.refresh()
   await peer.replicator.flush()
 

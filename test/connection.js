@@ -26,9 +26,9 @@ const { toHex } = b4a
 test.skip('core-index: connections with no active session are evicted', async (t) => {
   const swarm = await spawnSwarm(t)
 
-  const p1 = await swarm.spawnPeer({ pooling: false })
-  const p2 = await swarm.spawnPeer({ pooling: false })
-  const p3 = await swarm.spawnPeer({ pooling: false })
+  const p1 = await swarm.spawnPeer({ pool: false })
+  const p2 = await swarm.spawnPeer({ pool: false })
+  const p3 = await swarm.spawnPeer({ pool: false })
 
   const topicA = b4a.alloc(32, 0xa)
   const topicB = b4a.alloc(32, 0xb)
