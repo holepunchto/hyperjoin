@@ -622,13 +622,7 @@ test('a peer being dialed is not evicted', async (t) => {
 })
 
 test('banned peers are not evicted', (t) => {
-  let bans = 0
-
-  const ctx = spawnDialer(t, {
-    suspended: true,
-    maxRecords: 2,
-    handlers: { onban: () => bans++ }
-  })
+  const ctx = spawnDialer(t, { suspended: true, maxRecords: 2 })
   const { dialer } = ctx
 
   const banned = spawnPeer(ctx, 1, T0)
@@ -639,7 +633,8 @@ test('banned peers are not evicted', (t) => {
   for (let n = 2; n <= 4; n++) spawnPeer(ctx, n, T0)
 
   t.ok(dialer.peers.has(toHex(asKey(1))), 'banned peer is kept')
-  t.is(bans, 1, 'reported once')
+  const bans = [...dialer.peers.values()].filter((p) => p.isBanned).length
+  t.is(bans, 1, 'one banned record')
 })
 
 test('an evicted peer is not dialed', async (t) => {
