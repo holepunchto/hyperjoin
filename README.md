@@ -7,7 +7,7 @@ resource tracking and garbage collection.
 
 ```js
 const Corestore = require('corestore')
-const Replicator = require('replicator')
+const Replicator = require('hyperjoin')
 
 const store = new Corestore('./storage')
 
