@@ -162,7 +162,7 @@ const opts = {
 
 Fired when topic is added to pool
 
-#### `rep.on('leave, (session) => {})`
+#### `rep.on('leave', (session) => {})`
 
 Fired when topic is unannounced and removed from pool
 
@@ -189,6 +189,10 @@ for (const [topic, session] of rep.sessions) {
 #### `rep.on('dropped', (count) => {})`
 
 Fired after GC drops connections. `count` is the number dropped.
+
+#### `rep.on('ban', (peer, reason) => {})`
+
+Fired when a peer is banned.
 
 ### Getters
 
