@@ -20,7 +20,7 @@ const { toHex } = b4a
  * root.session().cores // <-- hits root not session.
  * root.session().watch(fn) // <-- hits root not session.
  *
- * replicator.session.hasCore(coreDiscoveryKey) // <-- hits session
+ * hyperjoin.session.hasCore(coreDiscoveryKey) // <-- hits session
  */
 
 test.skip('core-index: connections with no active session are evicted', async (t) => {
@@ -45,19 +45,19 @@ test.skip('core-index: connections with no active session are evicted', async (t
   swarm.refresh() // announce
   await swarm.flush() // wait for dials
 
-  const { replicator } = p1
+  const { hyperjoin } = p1
 
-  t.is(replicator.activeSessions.length, 2, 'active sessions')
-  t.is(replicator.connectionCount, 2, 'P1 connected to topic A & B')
+  t.is(hyperjoin.activeSessions.length, 2, 'active sessions')
+  t.is(hyperjoin.connectionCount, 2, 'P1 connected to topic A & B')
 
   // P1's connections
-  let [c1, c2] = replicator.connections
-  if (!b4a.equals(c1.peerId, p2.replicator.peerId)) {
+  let [c1, c2] = hyperjoin.connections
+  if (!b4a.equals(c1.peerId, p2.hyperjoin.peerId)) {
     ;[c1, c2] = [c2, c1]
   }
 
-  t.is(toHex(c1.peerId), toHex(p2.replicator.peerId), 'P2 @ C1')
-  t.is(toHex(c2.peerId), toHex(p3.replicator.peerId), 'P3 @ C2')
+  t.is(toHex(c1.peerId), toHex(p2.hyperjoin.peerId), 'P2 @ C1')
+  t.is(toHex(c2.peerId), toHex(p3.hyperjoin.peerId), 'P3 @ C2')
   t.is(c1.isIdle(), false)
   t.is(c2.isIdle(), false)
   t.is(c2.stream.destroyed, false)
@@ -66,8 +66,8 @@ test.skip('core-index: connections with no active session are evicted', async (t
   await passive.store.close()
   swarm.refresh().catch(t.fail) // apply
 
-  t.is(replicator.activeSessions.length, 1, 'session deactivated')
-  t.is(replicator.connectionCount, 2, 'P1 connected to topic A & B')
+  t.is(hyperjoin.activeSessions.length, 1, 'session deactivated')
+  t.is(hyperjoin.connectionCount, 2, 'P1 connected to topic A & B')
 
   t.is(c1.isIdle(), false)
   t.is(c2.isIdle(), true, 'idle connection detected')
@@ -78,7 +78,7 @@ test.skip('core-index: connections with no active session are evicted', async (t
   // await swarm.flush()
 
   t.is(c2.stream.destroyed, true, 'evicted')
-  t.is(replicator.connectionCount, 1, 'P1 connected only to topic A')
+  t.is(hyperjoin.connectionCount, 1, 'P1 connected only to topic A')
 
   await swarm.destroy()
 })
@@ -96,7 +96,7 @@ test('connection becomes idle after three minutes without traffic', async (t) =>
   swarm.refresh()
   await swarm.flush()
 
-  const [connection] = p1.replicator.connections
+  const [connection] = p1.hyperjoin.connections
 
   await connection.replicating
   connection.refresh()
@@ -129,22 +129,22 @@ test('connections are unconditionally evicted at max capacity', async (t) => {
   swarm.refresh()
   await swarm.flush()
 
-  const p2Key = toHex(p2.replicator.peerId)
-  t.is(p1.replicator.connectionCount, 1, 'one connection at capacity')
+  const p2Key = toHex(p2.hyperjoin.peerId)
+  t.is(p1.hyperjoin.connectionCount, 1, 'one connection at capacity')
 
-  await p1.replicator._gc()
+  await p1.hyperjoin._gc()
 
   await p3.join(topic, { pin: true })
   await swarm.propagateWriters()
   swarm.refresh()
   await swarm.flush()
 
-  t.is(p1.replicator.connectionCount, 2, 'connection exceeds capacity')
+  t.is(p1.hyperjoin.connectionCount, 2, 'connection exceeds capacity')
 
-  await p1.replicator._gc()
+  await p1.hyperjoin._gc()
 
-  t.is(p1.replicator.connectionCount, 1, 'connection at capacity after gc')
-  t.ok(p1.replicator.getConnection(p2Key), 'keeps established connection')
+  t.is(p1.hyperjoin.connectionCount, 1, 'connection at capacity after gc')
+  t.ok(p1.hyperjoin.getConnection(p2Key), 'keeps established connection')
 
   await swarm.destroy()
 })
@@ -164,7 +164,7 @@ test('connection becomes idle when no topic owns its core', async (t) => {
   swarm.refresh()
   await swarm.flush()
 
-  const [connection] = p1.replicator.connections
+  const [connection] = p1.hyperjoin.connections
   await connection.replicating
 
   t.is(connection.isIdle(), false, 'has active core')
@@ -188,14 +188,14 @@ test('gc preserves stable connections over new', async (t) => {
   swarm.refresh()
   await swarm.flush()
 
-  const p2Key = toHex(p2.replicator.peerId)
-  const p3Key = toHex(p3.replicator.peerId)
-  const a = p1.replicator.getConnection(p2Key)
+  const p2Key = toHex(p2.hyperjoin.peerId)
+  const p3Key = toHex(p3.hyperjoin.peerId)
+  const a = p1.hyperjoin.getConnection(p2Key)
 
   t.ok(a, 'p2 connected')
   t.is(a._survived, 0, 'not yet swept')
 
-  await p1.replicator._gc()
+  await p1.hyperjoin._gc()
   t.is(a._survived, 1, 'passed gc')
 
   await p3.join(topic, { pin: true })
@@ -203,16 +203,16 @@ test('gc preserves stable connections over new', async (t) => {
   swarm.refresh()
   await swarm.flush()
 
-  const b = p1.replicator.getConnection(p3Key)
+  const b = p1.hyperjoin.getConnection(p3Key)
 
-  t.is(p1.replicator.connectionCount, 2, 'over capacity')
+  t.is(p1.hyperjoin.connectionCount, 2, 'over capacity')
   t.ok(b, 'p3 connected')
   t.ok(a._survived > b._survived, 'new connection will be dropped')
 
-  await p1.replicator._gc()
+  await p1.hyperjoin._gc()
 
-  t.is(p1.replicator.connectionCount, 1, 'gc dropped overflow')
-  t.ok(p1.replicator.getConnection(p2Key), 'p2 remains connected')
+  t.is(p1.hyperjoin.connectionCount, 1, 'gc dropped overflow')
+  t.ok(p1.hyperjoin.getConnection(p2Key), 'p2 remains connected')
   t.is(a._survived, 2, 'passed gc twice')
 
   await swarm.destroy()
@@ -235,12 +235,12 @@ test('regression: gc does not count closing connections', async (t) => {
   swarm.refresh()
   await swarm.flush()
 
-  t.is(p1.replicator.connectionCount, 2, 'connection exceeds capacity')
+  t.is(p1.hyperjoin.connectionCount, 2, 'connection exceeds capacity')
 
-  const [closing, survivor] = p1.replicator.connections
+  const [closing, survivor] = p1.hyperjoin.connections
 
   closing.destroy()
-  await p1.replicator._gc()
+  await p1.hyperjoin._gc()
 
   t.is(survivor.destroying, false, 'at capacity, nothing to evict')
 
@@ -262,12 +262,12 @@ test('regression: heuristic-GC does not evict below maxPeers', async (t) => {
     await swarm.flush()
   }
 
-  t.is(p1.replicator.connectionCount, 4, 'over capacity')
+  t.is(p1.hyperjoin.connectionCount, 4, 'over capacity')
 
   const later = Date.now() + 4 * 60 * 1000 // all connections idle
-  await Promise.all([p1.replicator._gc(later), p1.replicator._gc(later)])
+  await Promise.all([p1.hyperjoin._gc(later), p1.hyperjoin._gc(later)])
 
-  t.is(p1.replicator.connectionCount, 2, 'evicted 2 of 4')
+  t.is(p1.hyperjoin.connectionCount, 2, 'evicted 2 of 4')
 
   await swarm.destroy()
 })

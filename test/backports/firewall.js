@@ -11,18 +11,18 @@ test('firewalled server - bad client is rejected', async (t) => {
     bootstrap,
     seed: seedB,
     jitter: 0,
-    firewall: (remotePublicKey) => remotePublicKey.equals(p1.replicator.keyPair.publicKey)
+    firewall: (remotePublicKey) => remotePublicKey.equals(p1.hyperjoin.keyPair.publicKey)
   })
 
   let serverConnections = 0
-  p2.replicator.on('connected', () => serverConnections++)
+  p2.hyperjoin.on('connected', () => serverConnections++)
 
-  const server = [...p2.replicator.sessions.values()][0]
+  const server = [...p2.hyperjoin.sessions.values()][0]
   await server.flush()
 
-  const client = p1.replicator.scan(p2.cores[0].discoveryKey, { delay: 0 })
+  const client = p1.hyperjoin.scan(p2.cores[0].discoveryKey, { delay: 0 })
   await client.flush()
-  await p1.replicator.flush()
+  await p1.hyperjoin.flush()
   await new Promise((resolve) => setImmediate(resolve))
 
   t.alike(serverConnections, 0, 'server did not receive an incoming connection')
@@ -43,18 +43,18 @@ test('firewalled client - bad server is rejected', async (t) => {
     seed: seedB,
     jitter: 0,
     firewall: (remotePublicKey) => {
-      const firewalled = remotePublicKey.equals(p1.replicator.keyPair.publicKey)
+      const firewalled = remotePublicKey.equals(p1.hyperjoin.keyPair.publicKey)
       t.ok(firewalled, 'The peer got firewalled')
       return firewalled
     }
   })
 
   let clientConnections = 0
-  p2.replicator.on('connected', () => clientConnections++)
+  p2.hyperjoin.on('connected', () => clientConnections++)
 
-  const client = p2.replicator.scan(p1.cores[0].discoveryKey, { delay: 0 })
+  const client = p2.hyperjoin.scan(p1.cores[0].discoveryKey, { delay: 0 })
   await client.flush()
-  await p2.replicator.flush()
+  await p2.hyperjoin.flush()
   await new Promise((resolve) => setImmediate(resolve))
 
   t.alike(clientConnections, 0, 'client did not receive an incoming connection')
@@ -76,15 +76,15 @@ test('async firewall - client allows good server', async (t) => {
     firewall: () => false
   })
 
-  const connected = new Promise((resolve) => p2.replicator.once('connected', resolve))
+  const connected = new Promise((resolve) => p2.hyperjoin.once('connected', resolve))
 
-  const client = p2.replicator.scan(p1.cores[0].discoveryKey, { delay: 0 })
+  const client = p2.hyperjoin.scan(p1.cores[0].discoveryKey, { delay: 0 })
   await client.flush()
-  await p2.replicator.flush()
+  await p2.hyperjoin.flush()
   await connected
 
-  t.alike(p2.replicator.connectionCount, 1, 'client connected')
-  t.alike(p2.replicator.stats.bannedPeers, 0, 'client did not ban good server')
+  t.alike(p2.hyperjoin.connectionCount, 1, 'client connected')
+  t.alike(p2.hyperjoin.stats.bannedPeers, 0, 'client did not ban good server')
 
   await p1.destroy()
   await p2.destroy()
@@ -103,17 +103,17 @@ test('async firewall - server allows good client', async (t) => {
     firewall: () => false
   })
 
-  const server = [...p2.replicator.sessions.values()][0]
+  const server = [...p2.hyperjoin.sessions.values()][0]
   await server.flush()
 
-  const accepted = new Promise((resolve) => p2.replicator.once('connected', resolve))
-  const client = p1.replicator.scan(p2.cores[0].discoveryKey, { delay: 0 })
+  const accepted = new Promise((resolve) => p2.hyperjoin.once('connected', resolve))
+  const client = p1.hyperjoin.scan(p2.cores[0].discoveryKey, { delay: 0 })
   await client.flush()
-  await p1.replicator.flush()
+  await p1.hyperjoin.flush()
   const connected = await Promise.race([accepted, timeout(1000).then(() => false)])
 
   t.ok(connected, 'server accepted client')
-  t.alike(p2.replicator.stats.bannedPeers, 0, 'server did not ban good client')
+  t.alike(p2.hyperjoin.stats.bannedPeers, 0, 'server did not ban good client')
 
   await p1.destroy()
   await p2.destroy()
@@ -133,17 +133,17 @@ test('firewalled server - rejection does not trigger retry cascade', async (t) =
     jitter: 0,
     firewall: (remotePublicKey) => {
       firewallCalls++
-      return remotePublicKey.equals(p1.replicator.keyPair.publicKey)
+      return remotePublicKey.equals(p1.hyperjoin.keyPair.publicKey)
     }
   })
 
   let serverConnections = 0
-  p2.replicator.on('connected', () => serverConnections++)
+  p2.hyperjoin.on('connected', () => serverConnections++)
 
-  const server = [...p2.replicator.sessions.values()][0]
+  const server = [...p2.hyperjoin.sessions.values()][0]
   await server.flush()
 
-  const client = p1.replicator.scan(p2.cores[0].discoveryKey, { delay: 0 })
+  const client = p1.hyperjoin.scan(p2.cores[0].discoveryKey, { delay: 0 })
   await client.flush()
 
   await timeout(1500)

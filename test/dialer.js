@@ -175,7 +175,7 @@ test('Dialer errors are routed to `ondialerror`', async (t) => {
   t.is(caught.message, 'expected', 'rejection re-routed to ondialerror')
 })
 
-// TODO: reproduce in basic.js with a full replicator stack
+// TODO: reproduce in basic.js with a full hyperjoin stack
 test('peer.retryAt increased on failure and is re-dialed', async (t) => {
   const ctx = spawnDialer(t, { autoSettle: false })
   const { dialer, dialed, failures, fail, pass } = ctx

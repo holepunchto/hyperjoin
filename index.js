@@ -24,11 +24,11 @@ const MAX_PEERS = 40
 
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
-const ERR_DESTROYED = 'ReplicatorDestroyed'
+const ERR_DESTROYED = 'HyperjoinDestroyed'
 const ERR_SUSPEND = 'SuspendDrop'
 const ERR_MAXPEERS = 'MaxPeersCap'
 
-module.exports = class Replicator extends ReadyResource {
+module.exports = class Hyperjoin extends ReadyResource {
   constructor(onreplicate, topicOf, opts = {}) {
     super()
 
@@ -648,7 +648,7 @@ module.exports = class Replicator extends ReadyResource {
 
   get _isTearingdown() {
     return (
-      this.suspended || // replicator
+      this.suspended || // hyperjoin
       this.closing ||
       this.closed
     )
@@ -1058,5 +1058,5 @@ function allowAll() {
 function toRelaySelector(relayThrough) {
   return typeof relayThrough === 'function'
     ? relayThrough
-    : (force, replicator) => (force || replicator.dht.randomized ? relayThrough : null)
+    : (force, hyperjoin) => (force || hyperjoin.dht.randomized ? relayThrough : null)
 }

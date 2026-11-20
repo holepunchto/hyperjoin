@@ -1,7 +1,7 @@
 const { test } = require('brittle')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
-const Replicator = require('..')
+const Hyperjoin = require('..')
 const { seedA, seedB, spawnPeer, unpromise } = require('./helpers/backports')
 
 test('scan() finds peers without announcing', async (t) => {
@@ -13,29 +13,29 @@ test('scan() finds peers without announcing', async (t) => {
 
   // scans
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
-  const rep = p2.replicator
+  const hyperjoin = p2.hyperjoin
 
   // create cores on p2
   const cores = p1.cores.map((core) => p2.session.get(core.key))
   await Promise.all(cores.map((core) => core.ready()))
 
   const topic = p1.cores[0].discoveryKey
-  const { announce, lookup } = rep.stats.dht
+  const { announce, lookup } = hyperjoin.stats.dht
 
-  const op = rep.scan(topic, { delay: 0, timeout: 1000 })
+  const op = hyperjoin.scan(topic, { delay: 0, timeout: 1000 })
   await op.complete
 
-  t.ok(rep.peers.size > 0, 'scan discovers peers')
+  t.ok(hyperjoin.peers.size > 0, 'scan discovers peers')
 
-  const peer = rep.peers.get(p1.peerId)
+  const peer = hyperjoin.peers.get(p1.peerId)
   t.ok(peer._outboundAttempts > 0, 'scan dials p1')
 
-  t.is(rep.connectionCount, 1)
-  t.is(p1.replicator.connectionCount, 1)
+  t.is(hyperjoin.connectionCount, 1)
+  t.is(p1.hyperjoin.connectionCount, 1)
   t.is(cores[0].length, 2, 'replicated')
 
-  t.is(p2.replicator.stats.dht.announce, announce, 'scan does not announce')
-  t.ok(p2.replicator.stats.dht.lookup > lookup, 'scan looks up the topic')
+  t.is(p2.hyperjoin.stats.dht.announce, announce, 'scan does not announce')
+  t.ok(p2.hyperjoin.stats.dht.lookup > lookup, 'scan looks up the topic')
 
   await p1.destroy()
   await p2.destroy()
@@ -52,13 +52,13 @@ test('scan().connected resolves when a peer is acquired', async (t) => {
   const cores = p1.cores.map((core) => p2.session.get(core.key))
   await Promise.all(cores.map((core) => core.ready()))
 
-  const op = p2.replicator.scan(p1.cores[0].discoveryKey, { delay: 0 })
+  const op = p2.hyperjoin.scan(p1.cores[0].discoveryKey, { delay: 0 })
 
   t.ok(op.connected instanceof Promise, 'scan has a connected promise')
 
   if (op.connected instanceof Promise) {
     await op.connected
-    t.is(p2.replicator.connectionCount, 1, 'scan connected to the topic peer')
+    t.is(p2.hyperjoin.connectionCount, 1, 'scan connected to the topic peer')
   }
 
   op.destroy()
@@ -70,23 +70,23 @@ test('scan().connected resolves when a peer is acquired', async (t) => {
 test('scan() deduplicates active scans by topic', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
-  const replicator = new Replicator(
+  const hyperjoin = new Hyperjoin(
     () => {},
     () => null,
     { bootstrap, manual: true }
   )
   const topic = b4a.alloc(32, 1)
 
-  await replicator.ready()
+  await hyperjoin.ready()
 
-  const first = replicator.scan(topic, { delay: 10000 })
-  const second = replicator.scan(topic)
+  const first = hyperjoin.scan(topic, { delay: 10000 })
+  const second = hyperjoin.scan(topic)
 
   t.is(second, first, 'returns the active scan')
-  t.is(replicator.scans.size, 1, 'only one scan is active')
+  t.is(hyperjoin.scans.size, 1, 'only one scan is active')
 
   first.destroy()
-  await replicator.close()
+  await hyperjoin.close()
   await testnet.destroy()
 })
 
@@ -95,8 +95,8 @@ test('scan() forwards the peer limit', async (t) => {
   const { bootstrap } = testnet
   const peer = await spawnPeer(t, { bootstrap, seed: seedA })
 
-  const limited = peer.replicator.scan(b4a.alloc(32, 42), { limit: 1 })
-  const unlimited = peer.replicator.scan(b4a.alloc(32, 43), { limit: Infinity })
+  const limited = peer.hyperjoin.scan(b4a.alloc(32, 42), { limit: 1 })
+  const unlimited = peer.hyperjoin.scan(b4a.alloc(32, 43), { limit: Infinity })
 
   await Promise.all([limited.flush(), unlimited.flush()])
 
@@ -116,35 +116,35 @@ test('scan() can be externally expired', async (t) => {
 
   // scans
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
-  const rep = p2.replicator
+  const hyperjoin = p2.hyperjoin
 
   // create cores on p2
   const cores = p1.cores.map((core) => p2.session.get(core.key))
   await Promise.all(cores.map((core) => core.ready()))
 
   const topic = p1.cores[0].discoveryKey
-  const { announce, lookup } = rep.stats.dht
+  const { announce, lookup } = hyperjoin.stats.dht
 
   let connected = false
-  const op = rep.scan(topic, { delay: 0, timeout: 10000 })
+  const op = hyperjoin.scan(topic, { delay: 0, timeout: 10000 })
   op.connected.then(() => {
     connected = true
     op.expire(50)
   })
   await op.complete
 
-  t.ok(rep.peers.size > 0, 'scan discovers peers')
+  t.ok(hyperjoin.peers.size > 0, 'scan discovers peers')
 
-  const peer = rep.peers.get(p1.peerId)
+  const peer = hyperjoin.peers.get(p1.peerId)
   t.ok(peer._outboundAttempts > 0, 'scan dials p1')
 
-  t.is(rep.connectionCount, 1)
-  t.is(p1.replicator.connectionCount, 1)
+  t.is(hyperjoin.connectionCount, 1)
+  t.is(p1.hyperjoin.connectionCount, 1)
   t.is(cores[0].length, 2, 'replicated')
   t.ok(connected, 'scan expires after connecting')
 
-  t.is(p2.replicator.stats.dht.announce, announce, 'scan does not announce')
-  t.ok(p2.replicator.stats.dht.lookup > lookup, 'scan looks up the topic')
+  t.is(p2.hyperjoin.stats.dht.announce, announce, 'scan does not announce')
+  t.ok(p2.hyperjoin.stats.dht.lookup > lookup, 'scan looks up the topic')
 
   await p1.destroy()
   await p2.destroy()
@@ -157,25 +157,25 @@ test('scan() resumes after suspension', async (t) => {
 
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
-  const rep = p2.replicator
+  const hyperjoin = p2.hyperjoin
 
   const cores = p1.cores.map((core) => p2.session.get(core.key))
   await Promise.all(cores.map((core) => core.ready()))
 
   const topic = p1.cores[0].discoveryKey
-  const op = rep.scan(topic, { delay: 0, timeout: 60000 })
+  const op = hyperjoin.scan(topic, { delay: 0, timeout: 60000 })
 
-  await rep.flush()
+  await hyperjoin.flush()
 
-  const { lookup } = rep.stats.dht
+  const { lookup } = hyperjoin.stats.dht
 
-  await rep.suspend()
-  t.ok(rep.scans.size > 0, 'scan remains active while suspended')
+  await hyperjoin.suspend()
+  t.ok(hyperjoin.scans.size > 0, 'scan remains active while suspended')
 
-  await rep.resume()
-  await rep.flush()
+  await hyperjoin.resume()
+  await hyperjoin.flush()
 
-  t.ok(rep.stats.dht.lookup > lookup, 'scan looks up after resume')
+  t.ok(hyperjoin.stats.dht.lookup > lookup, 'scan looks up after resume')
 
   await p1.destroy()
   await p2.destroy()
@@ -198,29 +198,29 @@ test('scan() "force: true" forces discovery to re-query', async (t) => {
   let connections = 0
   const [connected, setConnected] = unpromise()
 
-  p3.replicator.on('connected', () => {
+  p3.hyperjoin.on('connected', () => {
     connections++
     if (connections > 1) setConnected()
   })
 
-  const scan = p3.replicator.scan(topic, { delay: 0, limit: 10 })
+  const scan = p3.hyperjoin.scan(topic, { delay: 0, limit: 10 })
   await scan.connected
 
   t.is(connections, 1, 'connected to the first server')
 
-  p2.replicator.join(topic, { pin: true })
-  p2.replicator.refresh()
-  await p2.replicator.flush()
+  p2.hyperjoin.join(topic, { pin: true })
+  p2.hyperjoin.refresh()
+  await p2.hyperjoin.flush()
 
   t.is(connections, 1, 'second server joined after the scan')
 
-  const { lookup } = p3.replicator.stats.dht
-  const forced = p3.replicator.scan(topic, { delay: 1, force: true })
+  const { lookup } = p3.hyperjoin.stats.dht
+  const forced = p3.hyperjoin.scan(topic, { delay: 1, force: true })
 
   await connected
 
   t.is(forced, scan, 'reuses the active scan')
-  t.ok(p3.replicator.stats.dht.lookup > lookup, 'forces another lookup')
+  t.ok(p3.hyperjoin.stats.dht.lookup > lookup, 'forces another lookup')
   t.is(connections, 2, 'connected to the second server')
 
   await p1.destroy()
@@ -232,14 +232,14 @@ test('scan() "force: true" forces discovery to re-query', async (t) => {
 test('scan() keeps its topic active when a session leaves', async (t) => {
   const testnet = await createTestnet()
   const p1 = await spawnPeer(t, { bootstrap: testnet.bootstrap, seed: seedA })
-  const rep = p1.replicator
+  const hyperjoin = p1.hyperjoin
   const topic = b4a.alloc(32, 1)
 
-  rep.scan(topic, { delay: 0 })
-  rep.join(topic, { pin: true })
-  await rep.leave(topic)
+  hyperjoin.scan(topic, { delay: 0 })
+  hyperjoin.join(topic, { pin: true })
+  await hyperjoin.leave(topic)
 
-  t.is(rep.dialer._activeTopics.get(b4a.toString(topic, 'hex')), 1, 'scan holds the topic')
+  t.is(hyperjoin.dialer._activeTopics.get(b4a.toString(topic, 'hex')), 1, 'scan holds the topic')
 
   await p1.destroy()
   await testnet.destroy()

@@ -14,38 +14,38 @@ test('connectionsOpened and connectionsClosed stats', async (t) => {
   const tClose = t.test('Close connection')
   tClose.plan(4)
 
-  const p1Connected = onceEvent(p1.replicator, 'connected')
-  const p2Connected = onceEvent(p2.replicator, 'connected')
+  const p1Connected = onceEvent(p1.hyperjoin, 'connected')
+  const p2Connected = onceEvent(p2.hyperjoin, 'connected')
 
-  p2.replicator.once('connected', (connection) => {
-    tOpen.is(p2.replicator.stats.connects.client.opened, 1, 'opened connection is in stats')
-    tOpen.is(p2.replicator.stats.connects.client.attempted, 1, 'attemped connection is in stats')
-    tClose.is(p2.replicator.stats.connects.client.closed, 0, 'sanity check')
+  p2.hyperjoin.once('connected', (connection) => {
+    tOpen.is(p2.hyperjoin.stats.connects.client.opened, 1, 'opened connection is in stats')
+    tOpen.is(p2.hyperjoin.stats.connects.client.attempted, 1, 'attemped connection is in stats')
+    tClose.is(p2.hyperjoin.stats.connects.client.closed, 0, 'sanity check')
 
     connection.stream.on('close', () => {
-      tClose.is(p2.replicator.stats.connects.client.closed, 1, 'closed connection is in stats')
+      tClose.is(p2.hyperjoin.stats.connects.client.closed, 1, 'closed connection is in stats')
     })
 
     connection.stream.on('error', noop)
     connection.stream.end()
   })
 
-  p1.replicator.once('connected', (connection) => {
-    tOpen.is(p1.replicator.stats.connects.server.opened, 1, 'opened server connection is in stats')
-    tClose.is(p1.replicator.stats.connects.server.closed, 0, 'sanity check')
+  p1.hyperjoin.once('connected', (connection) => {
+    tOpen.is(p1.hyperjoin.stats.connects.server.opened, 1, 'opened server connection is in stats')
+    tClose.is(p1.hyperjoin.stats.connects.server.closed, 0, 'sanity check')
 
     connection.stream.on('close', () => {
-      tClose.is(p1.replicator.stats.connects.server.closed, 1, 'closed connections is in stats')
+      tClose.is(p1.hyperjoin.stats.connects.server.closed, 1, 'closed connections is in stats')
     })
 
     connection.stream.on('error', noop)
   })
 
   await p1.session.close()
-  const session = p2.replicator.join(p1.cores[0].discoveryKey, { pin: true })
+  const session = p2.hyperjoin.join(p1.cores[0].discoveryKey, { pin: true })
   await session.ready()
-  p2.replicator.refresh()
-  await p2.replicator.flush()
+  p2.hyperjoin.refresh()
+  await p2.hyperjoin.flush()
   await Promise.all([p1Connected, p2Connected])
 
   await tClose

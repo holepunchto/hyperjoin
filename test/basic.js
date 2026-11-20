@@ -5,7 +5,7 @@ const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 const DHT = require('hyperdht')
 const { joinRemote, onceEvent, seedA, seedB, spawnPeer, timeout } = require('./helpers/backports')
-const Replicator = require('..')
+const Hyperjoin = require('..')
 
 const { toHex } = b4a
 
@@ -14,17 +14,17 @@ test('default keypair from corestore', async (t) => {
   const { bootstrap } = testnet
   const store = new Corestore(await t.tmp(), { primaryKey: seedA, unsafe: true })
   const keyPair = await store.createKeyPair('replicator')
-  const replicator = await new Replicator(
+  const hyperjoin = await new Hyperjoin(
     (stream) => store.replicate(stream),
     () => null,
     { keyPair, bootstrap, manual: true }
   )
 
-  await replicator.ready()
+  await hyperjoin.ready()
 
-  t.is(toHex(replicator.peerId), '7dda4c84e7061170c5100be5d4c5cce9bb05ff2e1bd20d80d83408a10a6e73cc')
+  t.is(toHex(hyperjoin.peerId), '7dda4c84e7061170c5100be5d4c5cce9bb05ff2e1bd20d80d83408a10a6e73cc')
 
-  await replicator.close()
+  await hyperjoin.close()
   await store.close()
   await testnet.destroy()
 })
@@ -42,15 +42,15 @@ test('basic replication', async (t) => {
   t.is(val.toString(), 'cells')
   t.is(remote[0].length, 2)
   t.is(remote[1].length, 2)
-  t.is(p1.replicator.connectionCount, 1)
-  t.is(p2.replicator.connectionCount, 1)
+  t.is(p1.hyperjoin.connectionCount, 1)
+  t.is(p2.hyperjoin.connectionCount, 1)
   t.alike(
-    Array.from(p2.replicator.connections, (connection) => toHex(connection.peerId)),
+    Array.from(p2.hyperjoin.connections, (connection) => toHex(connection.peerId)),
     [p1.peerId],
     'p2 sees p1'
   )
   t.alike(
-    Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)),
+    Array.from(p1.hyperjoin.connections, (connection) => toHex(connection.peerId)),
     [p2.peerId],
     'p1 sees p2'
   )
@@ -67,16 +67,16 @@ test('inbound peer gets banned for hammering', async (t) => {
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
-  const p1Key = p1.replicator.peerId
-  const target = p2.replicator.dialer.lookup(p1Key)
+  const p1Key = p1.hyperjoin.peerId
+  const target = p2.hyperjoin.dialer.lookup(p1Key)
   const attempts = 21
 
   let firewalled = false
 
   for (let n = 0; n < attempts; n++) {
-    await p2.replicator._connect(target)
+    await p2.hyperjoin._connect(target)
 
-    const connection = p2.replicator.getConnection(toHex(p1Key))
+    const connection = p2.hyperjoin.getConnection(toHex(p1Key))
     if (!connection) {
       firewalled = true
       break
@@ -89,7 +89,7 @@ test('inbound peer gets banned for hammering', async (t) => {
 
   t.is(firewalled, true, 'last attempt hit firewall')
 
-  const peer = p1.replicator.dialer.peers.get(toHex(p2.replicator.peerId))
+  const peer = p1.hyperjoin.dialer.peers.get(toHex(p2.hyperjoin.peerId))
 
   t.ok(peer, 'p1 knows p2')
   t.ok(peer.isBanned, 'p2 is banned')
@@ -105,7 +105,7 @@ test('regression: suspend() during async firewall leaked _inflight', async (t) =
   const { bootstrap } = testnet
 
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA, jitter: 0 })
-  const p1Hex = toHex(p1.replicator.keyPair.publicKey)
+  const p1Hex = toHex(p1.hyperjoin.keyPair.publicKey)
 
   let releaseTrap = null
   const trapped = new Promise((resolve) => {
@@ -127,25 +127,25 @@ test('regression: suspend() during async firewall leaked _inflight', async (t) =
     }
   })
 
-  p2.replicator.scan(p1.cores[0].discoveryKey, { delay: 0 })
+  p2.hyperjoin.scan(p1.cores[0].discoveryKey, { delay: 0 })
 
   await trapped // pending async firewall
 
-  const suspended = p2.replicator.suspend()
-  t.ok(p2.replicator.suspended, 'suspending')
+  const suspended = p2.hyperjoin.suspend()
+  t.ok(p2.hyperjoin.suspended, 'suspending')
 
   resolveFirewall(false) // release
 
-  // TODO: rep.on('dial-start') & rep.on('dial-end')
+  // TODO: hyperjoin.on('dial-start') & hyperjoin.on('dial-end')
   await new Promise((resolve) => setImmediate(resolve))
   await new Promise((resolve) => setImmediate(resolve))
 
   await suspended
   t.ok('suspended')
 
-  t.is(p2.replicator._inflight.has(p1Hex), false, '_inflight cleared')
-  t.is(p2.replicator.hasConnection(p1Hex), false, 'hasConnection(p1) is cleared')
-  t.is(p2.replicator.connecting, 0, 'zero connections')
+  t.is(p2.hyperjoin._inflight.has(p1Hex), false, '_inflight cleared')
+  t.is(p2.hyperjoin.hasConnection(p1Hex), false, 'hasConnection(p1) is cleared')
+  t.is(p2.hyperjoin.connecting, 0, 'zero connections')
 
   await p1.destroy()
   await p2.destroy()
@@ -160,19 +160,19 @@ test('dialer is resumed after suspend', async (t) => {
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB, jitter: 0 })
 
   const topic = p1.cores[0].discoveryKey
-  const remote = p1.replicator.peerId
+  const remote = p1.hyperjoin.peerId
 
-  p2.replicator.dialer.refTopic(topic)
-  const suspended = p2.replicator.suspend()
-  p2.replicator.dialer.seen({ publicKey: remote }, topic)
+  p2.hyperjoin.dialer.refTopic(topic)
+  const suspended = p2.hyperjoin.suspend()
+  p2.hyperjoin.dialer.seen({ publicKey: remote }, topic)
 
-  const peer = p2.replicator.dialer.lookup(remote)
+  const peer = p2.hyperjoin.dialer.lookup(remote)
   t.is(peer._outboundAttempts, 0, 'no dials')
 
   await suspended
 
-  await p2.replicator.resume()
-  await p2.replicator.flush()
+  await p2.hyperjoin.resume()
+  await p2.hyperjoin.flush()
 
   t.ok(peer._outboundAttempts > 0, 'dialed after resume')
 
@@ -184,7 +184,7 @@ test('dialer is resumed after suspend', async (t) => {
 test('regression: suspend() holds dials until resume()', async (t) => {
   const store = new Corestore(await t.tmp())
   const keyPair = await store.createKeyPair('replicator')
-  const replicator = new Replicator(
+  const hyperjoin = new Hyperjoin(
     (stream) => store.replicate(stream),
     () => null,
     {
@@ -194,25 +194,25 @@ test('regression: suspend() holds dials until resume()', async (t) => {
       jitter: 0
     }
   )
-  await replicator.ready()
+  await hyperjoin.ready()
 
   const topic = b4a.alloc(32, 1)
   const remote = b4a.alloc(32, 2)
 
-  replicator.dialer.refTopic(topic)
+  hyperjoin.dialer.refTopic(topic)
 
-  const suspended = replicator.suspend()
-  replicator.dialer.seen({ publicKey: remote }, topic)
+  const suspended = hyperjoin.suspend()
+  hyperjoin.dialer.seen({ publicKey: remote }, topic)
   await suspended
 
-  const peer = replicator.dialer.lookup(remote)
+  const peer = hyperjoin.dialer.lookup(remote)
   t.is(peer._outboundAttempts, 0, 'nothing dialed while suspending')
 
-  await replicator.resume()
+  await hyperjoin.resume()
 
   t.is(peer._outboundAttempts, 1, 'dialed after resume')
 
-  await replicator.close()
+  await hyperjoin.close()
   await store.close()
 })
 
@@ -224,16 +224,16 @@ test('suspend resets dial attempts of dropped connections', async (t) => {
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB, jitter: 0 })
 
   const topic = p1.cores[0].discoveryKey
-  const remote = p1.replicator.peerId
+  const remote = p1.hyperjoin.peerId
 
-  p2.replicator.dialer.refTopic(topic)
-  p2.replicator.dialer.seen({ publicKey: remote }, topic)
-  await p2.replicator.flush()
+  p2.hyperjoin.dialer.refTopic(topic)
+  p2.hyperjoin.dialer.seen({ publicKey: remote }, topic)
+  await p2.hyperjoin.flush()
 
-  const peer = p2.replicator.dialer.lookup(remote)
+  const peer = p2.hyperjoin.dialer.lookup(remote)
   peer._outboundAttempts = 4 // took a few dials to connect
 
-  await p2.replicator.suspend()
+  await p2.hyperjoin.suspend()
 
   t.is(peer._outboundAttempts, 0, 'attempts reset')
 
@@ -242,20 +242,20 @@ test('suspend resets dial attempts of dropped connections', async (t) => {
   await testnet.destroy()
 })
 
-test('replicator enables dialer throttle', async (t) => {
-  const replicator = new Replicator(
+test('hyperjoin enables dialer throttle', async (t) => {
+  const hyperjoin = new Hyperjoin(
     () => {},
     () => null,
     { bootstrap: [], maxPeers: 2 }
   )
 
-  t.is(replicator.dialer._want(), 2)
+  t.is(hyperjoin.dialer._want(), 2)
 
-  await replicator.close()
+  await hyperjoin.close()
 })
 
 test('holepunch failure switches the peer to relaying', async (t) => {
-  const replicator = new Replicator(
+  const hyperjoin = new Hyperjoin(
     () => {},
     () => null,
     {
@@ -265,9 +265,9 @@ test('holepunch failure switches the peer to relaying', async (t) => {
       relayThrough: b4a.alloc(32, 7)
     }
   )
-  await replicator.ready()
+  await hyperjoin.ready()
 
-  replicator.dht.connect = () => {
+  hyperjoin.dht.connect = () => {
     const stream = new EventEmitter()
     stream.destroy = () => {}
     setImmediate(() => {
@@ -280,18 +280,18 @@ test('holepunch failure switches the peer to relaying', async (t) => {
   const topic = b4a.alloc(32, 1)
   const remote = b4a.alloc(32, 2)
 
-  replicator.dialer.refTopic(topic)
-  replicator.dialer.seen({ publicKey: remote }, topic)
-  await replicator.dialer.flush()
+  hyperjoin.dialer.refTopic(topic)
+  hyperjoin.dialer.seen({ publicKey: remote }, topic)
+  await hyperjoin.dialer.flush()
 
-  const peer = replicator.dialer.lookup(remote)
+  const peer = hyperjoin.dialer.lookup(remote)
   t.is(peer._outboundSuccess, 0, 'failed dial is not a success')
   t.ok(peer.forceRelaying, 'switched to relaying')
 
-  await replicator.close()
+  await hyperjoin.close()
 })
 
-test('regression: Dialer.flush() resolves when replicator suspends', async (t) => {
+test('regression: Dialer.flush() resolves when hyperjoin suspends', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
@@ -308,20 +308,20 @@ test('regression: Dialer.flush() resolves when replicator suspends', async (t) =
     connectEntered = resolve
   })
 
-  const connect = p2.replicator._connect
-  p2.replicator._connect = async function (peer) {
+  const connect = p2.hyperjoin._connect
+  p2.hyperjoin._connect = async function (peer) {
     connectEntered()
     await connectReleased
     return connect.call(this, peer)
   }
 
   const topic = p1.cores[0].discoveryKey
-  p2.replicator.dialer.refTopic(topic)
-  p2.replicator.dialer.seen({ publicKey: p1.replicator.peerId }, topic)
+  p2.hyperjoin.dialer.refTopic(topic)
+  p2.hyperjoin.dialer.seen({ publicKey: p1.hyperjoin.peerId }, topic)
 
   await connectStarted
 
-  const suspending = p2.replicator.suspend()
+  const suspending = p2.hyperjoin.suspend()
   releaseConnect()
 
   const suspended = await Promise.race([
@@ -336,61 +336,61 @@ test('regression: Dialer.flush() resolves when replicator suspends', async (t) =
 })
 
 test('network coming back online resets dial backoff', async (t) => {
-  const replicator = new Replicator(
+  const hyperjoin = new Hyperjoin(
     () => {},
     () => null,
     { bootstrap: [], manual: true }
   )
-  await replicator.ready()
+  await hyperjoin.ready()
 
-  const before = replicator.dialer.lookup(b4a.alloc(32, 1))
+  const before = hyperjoin.dialer.lookup(b4a.alloc(32, 1))
   before._outboundAttempts = 5 // failed before we went offline
   before.attemptedAt = Date.now() - 1000
 
-  replicator.dht.emit('network-update') // still online
+  hyperjoin.dht.emit('network-update') // still online
   t.is(before._outboundAttempts, 5)
 
-  replicator.dht.online = false
-  replicator.dht.emit('network-update')
+  hyperjoin.dht.online = false
+  hyperjoin.dht.emit('network-update')
 
-  const failed = replicator.dialer.lookup(b4a.alloc(32, 2))
+  const failed = hyperjoin.dialer.lookup(b4a.alloc(32, 2))
   failed._outboundAttempts = 5 // failed while we were offline
   failed.attemptedAt = Date.now()
 
-  const dropped = replicator.dialer.lookup(b4a.alloc(32, 3))
+  const dropped = hyperjoin.dialer.lookup(b4a.alloc(32, 3))
   dropped._outboundAttempts = 5 // dropped while we were offline
   dropped.attemptedAt = Date.now() - 1000
   dropped.disconnectedAt = Date.now()
 
-  replicator.dht.online = true
-  replicator.dht.emit('network-update')
+  hyperjoin.dht.online = true
+  hyperjoin.dht.emit('network-update')
 
   t.is(before._outboundAttempts, 5)
   t.is(failed._outboundAttempts, 0)
   t.is(dropped._outboundAttempts, 0)
 
-  await replicator.close()
+  await hyperjoin.close()
 })
 
 test('ready does not wait for the server to listen', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
-  const replicator = new Replicator(
+  const hyperjoin = new Hyperjoin(
     () => {},
     () => null,
     { bootstrap }
   )
 
-  await replicator.ready()
+  await hyperjoin.ready()
 
-  t.is(replicator.listening, false)
-  t.ok(replicator.peerId)
+  t.is(hyperjoin.listening, false)
+  t.ok(hyperjoin.peerId)
 
-  await replicator.flush()
+  await hyperjoin.flush()
 
-  t.is(replicator.listening, true)
+  t.is(hyperjoin.listening, true)
 
-  await replicator.close()
+  await hyperjoin.close()
   await testnet.destroy()
 })
 
@@ -398,7 +398,7 @@ test('pinned session announces only once the server is listening', async (t) => 
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const replicator = new Replicator(
+  const hyperjoin = new Hyperjoin(
     () => {},
     () => null,
     { bootstrap, manual: true }
@@ -410,41 +410,41 @@ test('pinned session announces only once the server is listening', async (t) => 
     release = resolve
   })
 
-  const listen = replicator.server.listen.bind(replicator.server)
-  replicator.server.listen = async (keyPair) => {
+  const listen = hyperjoin.server.listen.bind(hyperjoin.server)
+  hyperjoin.server.listen = async (keyPair) => {
     await gate
     return listen(keyPair)
   }
 
-  await replicator.ready()
+  await hyperjoin.ready()
 
-  const session = replicator.join(topic, { pin: true })
+  const session = hyperjoin.join(topic, { pin: true })
   session.refresh()
 
-  t.is(replicator.listening, false)
+  t.is(hyperjoin.listening, false)
   t.is(session.discovery.announce, false, 'not announced before listening')
 
   release()
 
-  await replicator.flush()
+  await hyperjoin.flush()
 
-  t.is(replicator.listening, true)
+  t.is(hyperjoin.listening, true)
 
-  replicator.refresh()
+  hyperjoin.refresh()
 
   t.is(session.discovery.announce, true, 'announced after listening')
 
-  await replicator.close()
+  await hyperjoin.close()
   await testnet.destroy()
 })
 
 test('failed listen ignores error and nothing announces', async (t) => {
   const dht = new DHT({ bootstrap: [] })
 
-  // creates a defunct replicator
+  // creates a defunct hyperjoin
   await dht.destroy()
 
-  const replicator = new Replicator(
+  const hyperjoin = new Hyperjoin(
     () => {},
     () => null,
     { dht }
@@ -452,30 +452,30 @@ test('failed listen ignores error and nothing announces', async (t) => {
   const topic = b4a.alloc(32, 1)
 
   // This test is not entierly valid;
-  // It produces a replicator instance that silently does not replicate.
+  // It produces a hyperjoin instance that silently does not replicate.
   // TODO: harden conditions against defunct dependencies.
   let error = null
-  replicator.once('error', (err) => {
+  hyperjoin.once('error', (err) => {
     error = err
   })
 
-  await replicator.ready()
+  await hyperjoin.ready()
 
-  const session = replicator.join(topic, { pin: true })
+  const session = hyperjoin.join(topic, { pin: true })
   session.refresh()
-  await replicator.flush()
+  await hyperjoin.flush()
 
   t.is(error.code, 'NODE_DESTROYED')
-  t.is(replicator.listening, false)
+  t.is(hyperjoin.listening, false)
   t.is(session.discovery.announce, false, 'not announced')
 
-  await replicator.close()
+  await hyperjoin.close()
 })
 
 test('regression: suspend does not count a dial still waiting to start', async (t) => {
   const store = new Corestore(await t.tmp())
   const keyPair = await store.createKeyPair('replicator')
-  const replicator = new Replicator(
+  const hyperjoin = new Hyperjoin(
     (stream) => store.replicate(stream),
     () => null,
     {
@@ -485,19 +485,19 @@ test('regression: suspend does not count a dial still waiting to start', async (
       jitter: 100
     }
   )
-  await replicator.ready()
+  await hyperjoin.ready()
 
   const topic = b4a.alloc(32, 1)
   const remote = b4a.alloc(32, 2)
 
-  replicator.dialer.refTopic(topic)
-  replicator.dialer.seen({ publicKey: remote }, topic)
+  hyperjoin.dialer.refTopic(topic)
+  hyperjoin.dialer.seen({ publicKey: remote }, topic)
 
-  await replicator.suspend()
+  await hyperjoin.suspend()
 
-  t.is(replicator.dialer.lookup(remote)._outboundAttempts, 0)
+  t.is(hyperjoin.dialer.lookup(remote)._outboundAttempts, 0)
 
-  await replicator.close()
+  await hyperjoin.close()
   await store.close()
 })
 
@@ -509,7 +509,7 @@ test('regression: suspend does not count a dial waiting on the firewall', async 
 
   const store = new Corestore(await t.tmp())
   const keyPair = await store.createKeyPair('replicator')
-  const replicator = new Replicator(
+  const hyperjoin = new Hyperjoin(
     (stream) => store.replicate(stream),
     () => null,
     {
@@ -523,35 +523,35 @@ test('regression: suspend does not count a dial waiting on the firewall', async 
       }
     }
   )
-  await replicator.ready()
+  await hyperjoin.ready()
 
   const topic = b4a.alloc(32, 1)
   const remote = b4a.alloc(32, 2)
 
-  replicator.dialer.refTopic(topic)
-  replicator.dialer.seen({ publicKey: remote }, topic)
+  hyperjoin.dialer.refTopic(topic)
+  hyperjoin.dialer.seen({ publicKey: remote }, topic)
   await new Promise((resolve) => setImmediate(resolve))
 
-  const suspended = replicator.suspend()
+  const suspended = hyperjoin.suspend()
   release()
   await suspended
 
-  const peer = replicator.dialer.lookup(remote)
+  const peer = hyperjoin.dialer.lookup(remote)
   t.is(peer._outboundAttempts, 0)
 
-  await replicator.resume()
-  await replicator.flush()
+  await hyperjoin.resume()
+  await hyperjoin.flush()
 
   t.is(peer._outboundAttempts, 1, 'dialed after resume')
 
-  await replicator.close()
+  await hyperjoin.close()
   await store.close()
 })
 
 test('regression: suspend does not count a dial it cancels', async (t) => {
   const store = new Corestore(await t.tmp())
   const keyPair = await store.createKeyPair('replicator')
-  const replicator = new Replicator(
+  const hyperjoin = new Hyperjoin(
     (stream) => store.replicate(stream),
     () => null,
     {
@@ -561,27 +561,27 @@ test('regression: suspend does not count a dial it cancels', async (t) => {
       jitter: 0
     }
   )
-  await replicator.ready()
+  await hyperjoin.ready()
 
   const topic = b4a.alloc(32, 1)
   const remote = b4a.alloc(32, 2)
 
   const suspended = new Promise((resolve) => {
-    replicator.once('update', () => resolve(replicator.suspend()))
+    hyperjoin.once('update', () => resolve(hyperjoin.suspend()))
   })
 
-  replicator.dialer.refTopic(topic)
-  replicator.dialer.seen({ publicKey: remote }, topic)
+  hyperjoin.dialer.refTopic(topic)
+  hyperjoin.dialer.seen({ publicKey: remote }, topic)
   await suspended
 
-  const peer = replicator.dialer.lookup(remote)
+  const peer = hyperjoin.dialer.lookup(remote)
   t.is(peer._outboundAttempts, 0)
 
-  await replicator.resume()
-  await replicator.flush()
+  await hyperjoin.resume()
+  await hyperjoin.flush()
 
   t.is(peer._outboundAttempts, 1, 'dialed after resume')
 
-  await replicator.close()
+  await hyperjoin.close()
   await store.close()
 })

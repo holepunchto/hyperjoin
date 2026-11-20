@@ -12,12 +12,12 @@ test('presuspend() unannounces active topics', async (t) => {
 
   const topic = b4a.alloc(32, 0x1)
 
-  const rep1 = p1.replicator
+  const rep1 = p1.hyperjoin
 
   t.is(rep1.announcedSessions.length, 0)
   t.is(rep1.connectionCount, 0)
 
-  const connected = new Promise((resolve) => p1.replicator.on('connected', resolve))
+  const connected = new Promise((resolve) => p1.hyperjoin.on('connected', resolve))
 
   const session1 = await p1.join(topic, { pin: true })
   await p2.join(topic, { pin: true })
@@ -54,7 +54,7 @@ test('presuspend() -> resume(), resumes announcements', async (t) => {
   const p1 = await swarm.spawnPeer()
   const p2 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 1)
-  const rep1 = p1.replicator
+  const rep1 = p1.hyperjoin
 
   const session1 = await p1.join(topic, { pin: true })
   await p2.join(topic, { pin: true })
@@ -86,7 +86,7 @@ test('presuspend() -> suspend() -> resume(), resumes networking', async (t) => {
   const p1 = await swarm.spawnPeer()
   const p2 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 1)
-  const rep1 = p1.replicator
+  const rep1 = p1.hyperjoin
 
   const session1 = await p1.join(topic, { pin: true })
   await p2.join(topic, { pin: true })
@@ -135,17 +135,17 @@ test('presuspend accepts inbound connections', async (t) => {
   const p1 = await basicPeer(t, { bootstrap, seed: seedA })
   const p2 = await basicPeer(t, { bootstrap, seed: seedB })
 
-  p2.replicator.presuspend()
-  await p2.replicator.flush()
+  p2.hyperjoin.presuspend()
+  await p2.hyperjoin.flush()
 
-  const connected = onceEvent(p2.replicator, 'connected')
-  const stream = p1.replicator.dht.connect(p2.replicator.peerId, {
-    keyPair: p1.replicator.keyPair
+  const connected = onceEvent(p2.hyperjoin, 'connected')
+  const stream = p1.hyperjoin.dht.connect(p2.hyperjoin.peerId, {
+    keyPair: p1.hyperjoin.keyPair
   })
 
   await connected
 
-  t.ok(p2.replicator.inbound.has(p1.peerId), 'accepted inbound connection')
+  t.ok(p2.hyperjoin.inbound.has(p1.peerId), 'accepted inbound connection')
 
   stream.destroy()
   await p1.destroy()
@@ -160,15 +160,15 @@ test('presuspend allows outbound connections', async (t) => {
   const p1 = await basicPeer(t, { bootstrap, seed: seedA })
   const p2 = await basicPeer(t, { bootstrap, seed: seedB })
 
-  p2.replicator.presuspend()
-  await p2.replicator.flush()
+  p2.hyperjoin.presuspend()
+  await p2.hyperjoin.flush()
 
   const topic = b4a.alloc(32, 1)
-  p2.replicator.dialer.refTopic(topic)
-  p2.replicator.dialer.seen({ publicKey: p1.replicator.peerId }, topic)
-  await p2.replicator.flush()
+  p2.hyperjoin.dialer.refTopic(topic)
+  p2.hyperjoin.dialer.seen({ publicKey: p1.hyperjoin.peerId }, topic)
+  await p2.hyperjoin.flush()
 
-  t.ok(p2.replicator.outbound.has(p1.peerId), 'opened outbound connection')
+  t.ok(p2.hyperjoin.outbound.has(p1.peerId), 'opened outbound connection')
 
   await p1.destroy()
   await p2.destroy()

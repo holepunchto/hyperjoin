@@ -1,6 +1,6 @@
 const Corestore = require('corestore')
 const b4a = require('b4a')
-const Replicator = require('../..')
+const Hyperjoin = require('../..')
 const { toHex } = b4a
 
 const Peer = require('../../lib/peer')
@@ -56,12 +56,12 @@ async function joinRemote(peer, remotePeer) {
   const topic = remotePeer.cores[0].discoveryKey
   peer.sessions.push({ session, topic })
 
-  const repSession = peer.replicator.join(topic, {
+  const hyperjoinSession = peer.hyperjoin.join(topic, {
     pin: true
   })
-  await repSession.ready()
-  peer.replicator.refresh()
-  await peer.replicator.flush()
+  await hyperjoinSession.ready()
+  peer.hyperjoin.refresh()
+  await peer.hyperjoin.flush()
 
   return remote
 }
@@ -75,7 +75,7 @@ async function spawnPeer(t, opts = {}) {
   const sessions = []
   const keyPair = await store.createKeyPair('replicator')
 
-  const replicator = new Replicator(
+  const hyperjoin = new Hyperjoin(
     (stream) => store.replicate(stream),
     opts.topicOf || ((discoveryKey) => topicOf(sessions, discoveryKey)),
     {
@@ -85,7 +85,7 @@ async function spawnPeer(t, opts = {}) {
     }
   )
 
-  await replicator.ready()
+  await hyperjoin.ready()
 
   const session = store.session()
 
@@ -93,10 +93,10 @@ async function spawnPeer(t, opts = {}) {
   await one.ready()
   await one.append([b4a.from('cells'), b4a.from('interlinked')])
 
-  const repSession = replicator.join(one.discoveryKey, { pin: true })
-  await repSession.ready()
-  replicator.refresh()
-  await replicator.flush()
+  const hyperjoinSession = hyperjoin.join(one.discoveryKey, { pin: true })
+  await hyperjoinSession.ready()
+  hyperjoin.refresh()
+  await hyperjoin.flush()
 
   const two = session.get({ name: 'two' })
   await two.ready()
@@ -105,13 +105,13 @@ async function spawnPeer(t, opts = {}) {
   sessions.push({ session, topic: one.discoveryKey })
 
   const destroy = async () => {
-    await replicator.close()
+    await hyperjoin.close()
     await store.close()
   }
 
-  const peerId = toHex(replicator.peerId)
+  const peerId = toHex(hyperjoin.peerId)
 
-  return { store, replicator, session, sessions, peerId, destroy, cores: [one, two] }
+  return { store, hyperjoin, session, sessions, peerId, destroy, cores: [one, two] }
 }
 
 function topicOf(sessions, discoveryKey) {

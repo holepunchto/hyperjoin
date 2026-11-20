@@ -2,7 +2,7 @@ const createTestnet = require('hyperdht/testnet')
 const Corestore = require('corestore')
 const ReadyResource = require('ready-resource')
 const b4a = require('b4a')
-const Replicator = require('../..')
+const Hyperjoin = require('../..')
 const { toHex } = b4a
 
 module.exports = { spawnSwarm }
@@ -49,16 +49,16 @@ class TestSwarm extends ReadyResource {
 
   refresh() {
     for (const p of this.peers) {
-      p.replicator.refresh()
+      p.hyperjoin.refresh()
     }
   }
 
   flush() {
-    return Promise.all(this.peers.map((p) => p.replicator.flush()))
+    return Promise.all(this.peers.map((p) => p.hyperjoin.flush()))
   }
 
   gc() {
-    return Promise.all(this.peers.map((p) => p.replicator._gc()))
+    return Promise.all(this.peers.map((p) => p.hyperjoin._gc()))
   }
 
   async spawnPeer(opts) {
@@ -107,7 +107,7 @@ class TestPeer extends ReadyResource {
     if (seed) storeOpts = { primaryKey: seed, unsafe: true }
 
     this.store = new Corestore(this._path, storeOpts)
-    this.replicator = null
+    this.hyperjoin = null
   }
 
   async _open() {
@@ -115,7 +115,7 @@ class TestPeer extends ReadyResource {
 
     const keyPair = await this.store.createKeyPair('replicator')
 
-    this.replicator = new Replicator(
+    this.hyperjoin = new Hyperjoin(
       (stream) => this.store.replicate(stream),
       topicOf || this._topicOf.bind(this),
       {
@@ -125,17 +125,17 @@ class TestPeer extends ReadyResource {
       }
     )
 
-    await this.replicator.ready()
+    await this.hyperjoin.ready()
   }
 
   _topicOf(discoveryKey) {
     discoveryKey = toHex(discoveryKey)
 
-    for (const { session, repSession } of this.sessions.values()) {
+    for (const { session, hyperjoinSession } of this.sessions.values()) {
       const core = session.cores.get(discoveryKey)
       if (!core) continue
 
-      if (session.sessions.list(core.id).length > 0) return repSession.topic
+      if (session.sessions.list(core.id).length > 0) return hyperjoinSession.topic
     }
 
     return null
@@ -147,10 +147,10 @@ class TestPeer extends ReadyResource {
 
     const ns = this.store.namespace(topic)
     const session = ns.session()
-    const repSession = this.replicator.join(topic, opts)
-    await repSession.ready()
+    const hyperjoinSession = this.hyperjoin.join(topic, opts)
+    await hyperjoinSession.ready()
 
-    this.sessions.set(toHex(topic), { session, repSession })
+    this.sessions.set(toHex(topic), { session, hyperjoinSession })
 
     const done = []
     for (let i = 0; i < nCores; i++) {
@@ -164,11 +164,11 @@ class TestPeer extends ReadyResource {
 
     await Promise.all(done)
 
-    return repSession
+    return hyperjoinSession
   }
 
   async _close() {
-    await this.replicator.close()
+    await this.hyperjoin.close()
     await this.store.close()
   }
 
