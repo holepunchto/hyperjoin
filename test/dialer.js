@@ -530,12 +530,138 @@ test('suspend after resetBackoff() does not underflow attempts', async (t) => {
   t.is(peer._outboundAttempts, 0)
 })
 
+test('peer table is bounded by maxRecords', (t) => {
+  const ctx = spawnDialer(t, { suspended: true, maxRecords: 3 })
+
+  for (let n = 1; n <= 5; n++) spawnPeer(ctx, n)
+
+  t.is(ctx.dialer.peers.size, 3)
+})
+
+test('lookup() returns the requested peer at the bound', (t) => {
+  const ctx = spawnDialer(t, { suspended: true, maxRecords: 2 })
+  const { dialer } = ctx
+
+  spawnPeer(ctx, 1)
+  spawnPeer(ctx, 2)
+
+  const peer = dialer.lookup(asKey(3))
+
+  t.alike(peer.publicKey, asKey(3))
+  t.is(dialer.peers.get(toHex(asKey(3))), peer, 'stored')
+})
+
+test('the peer deepest in backoff is evicted first', (t) => {
+  const ctx = spawnDialer(t, { suspended: true, maxRecords: 3 })
+  const { dialer } = ctx
+
+  for (let n = 1; n <= 3; n++) {
+    const peer = spawnPeer(ctx, n, T0)
+    for (let i = 0; i < n; i++) peer.markAttempt(true, { now: T0 })(true, 'ERR_CONNECT', T0)
+    dialer.reschedule(peer)
+  }
+
+  spawnPeer(ctx, 4, T0)
+
+  t.absent(dialer.peers.has(toHex(asKey(3))), 'three failures, evicted')
+  t.ok(dialer.peers.has(toHex(asKey(1))), 'one failure, kept')
+  t.ok(dialer.peers.has(toHex(asKey(2))), 'two failures, kept')
+  t.ok(dialer.peers.has(toHex(asKey(4))), 'new peer, kept')
+})
+
+test('connected peers are not evicted', async (t) => {
+  const ctx = spawnDialer(t, { maxRecords: 2 })
+  const { dialer } = ctx
+
+  spawnPeer(ctx, 1)
+  spawnPeer(ctx, 2)
+  await dialer.flush()
+
+  t.is(ctx.connected.size, 2, 'both connected')
+
+  spawnPeer(ctx, 3)
+
+  t.ok(dialer.peers.has(toHex(asKey(1))))
+  t.ok(dialer.peers.has(toHex(asKey(2))))
+  t.ok(dialer.peers.has(toHex(asKey(3))), 'new peer is stored')
+})
+
+test('a peer being dialed is not evicted', async (t) => {
+  let settle = null
+  let onstart = null
+  const started = new Promise((resolve) => {
+    onstart = resolve
+  })
+
+  const ctx = spawnDialer(t, {
+    maxRecords: 1,
+    handlers: {
+      ondial: () => {
+        if (settle) return true
+
+        onstart()
+        return new Promise((resolve) => {
+          settle = resolve
+        })
+      }
+    }
+  })
+  const { dialer } = ctx
+
+  spawnPeer(ctx, 1)
+  await started
+
+  spawnPeer(ctx, 2)
+
+  t.ok(dialer.peers.has(toHex(asKey(1))), 'dialing peer is kept')
+
+  settle(true)
+  await dialer.flush()
+
+  t.is(dialer.inflight, 0, 'dial settled')
+})
+
+test('banned peers are not evicted', (t) => {
+  const ctx = spawnDialer(t, { suspended: true, maxRecords: 2 })
+  const { dialer } = ctx
+
+  const banned = spawnPeer(ctx, 1, T0)
+  for (let i = 0; i < 3; i++) banned.markAttempt(true, { now: T0 })(true, 'ERR_CONNECT', T0)
+  banned.setBanned('test', T0)
+  dialer.reschedule(banned)
+
+  for (let n = 2; n <= 4; n++) spawnPeer(ctx, n, T0)
+
+  t.ok(dialer.peers.has(toHex(asKey(1))), 'banned peer is kept')
+  const bans = [...dialer.peers.values()].filter((p) => p.isBanned).length
+  t.is(bans, 1, 'one banned record')
+})
+
+test('an evicted peer is not dialed', async (t) => {
+  const ctx = spawnDialer(t, { suspended: true, maxRecords: 2 })
+  const { dialer, dialed } = ctx
+
+  for (let n = 1; n <= 2; n++) {
+    const peer = spawnPeer(ctx, n, T0)
+    for (let i = 0; i < n; i++) peer.markAttempt(true, { now: T0 })(true, 'ERR_CONNECT', T0)
+    dialer.reschedule(peer)
+  }
+
+  spawnPeer(ctx, 3, T0) // evicts 2
+
+  dialer.resume(T0 + 10 * 60 * 1000)
+  await dialer.flush()
+
+  t.alike(dialed.map((p) => p.publicKey[0]).sort(), [1, 3])
+})
+
 function spawnDialer(
   t,
   {
     maxParallel = 3,
     jitter = 0,
     suspended = false,
+    maxRecords,
     autoSettle = true,
     handlers: _handlers = {},
     onsettle = () => {}
@@ -590,7 +716,7 @@ function spawnDialer(
     ..._handlers
   }
 
-  const dialer = new Dialer(handlers, { maxParallel, jitter, suspended })
+  const dialer = new Dialer(handlers, { maxParallel, jitter, suspended, maxRecords })
   dialer.topicEnable(TOPIC)
 
   t.teardown(() => dialer.destroy())
