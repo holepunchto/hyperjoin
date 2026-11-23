@@ -1,7 +1,7 @@
 {
-  "name": "hyperreplicator",
-  "version": "2.0.0-1",
-  "description": "replicates cores over many topics",
+  "name": "hyperjoin",
+  "version": "1.4.0",
+  "description": "replicate hypercores over many topics",
   "main": "index.js",
   "exports": {
     "./package": "./package.json",
@@ -38,14 +38,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/holepunchto/replicator.git"
+    "url": "git+https://github.com/holepunchto/hyperjoin.git"
   },
   "author": "Holepunch Inc",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/holepunchto/replicator/issues"
+    "url": "https://github.com/holepunchto/hyperjoin/issues"
   },
-  "homepage": "https://github.com/holepunchto/replicator",
+  "homepage": "https://github.com/holepunchto/hyperjoin",
   "dependencies": {
     "b4a": "^1.9.0",
     "bare-events": "^2.9.2",

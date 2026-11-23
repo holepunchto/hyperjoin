@@ -1,1 +1,1 @@
-declare module 'replicator'
+declare module 'hyperjoin'

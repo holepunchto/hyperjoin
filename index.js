@@ -79,6 +79,7 @@ module.exports = class Replicator extends ReadyResource {
       ondialerror: this._safeIgnore,
       isConnected: (key) => this.hasConnection(key),
       canRelay: () => !!this.relayThrough,
+      onban: (peer) => this._handleBan(peer),
       want: () => {
         if (this._isTearingdown) return 0
 
@@ -288,6 +289,7 @@ module.exports = class Replicator extends ReadyResource {
 
     for (const connection of this.connections) {
       connection.info.resetAttempts()
+      this.dialer.reschedule(connection.info)
       pending.push(this._evictConnection(connection, ERR_SUSPEND))
     }
 
@@ -523,7 +525,12 @@ module.exports = class Replicator extends ReadyResource {
 
     const peerInfo = this.dialer.lookup(peerId)
     const initiator = false
+
     const attemptDone = peerInfo.markAttempt(initiator)
+    const done = (failed = false, cause = null) => {
+      attemptDone(failed, cause)
+      this.dialer.reschedule(peerInfo)
+    }
 
     if (this.inbound.has(hex)) {
       const existing = this.inbound.get(hex).stream
@@ -533,13 +540,13 @@ module.exports = class Replicator extends ReadyResource {
       const keepNew = existing.rawBytesRead > 0 && existing.rawBytesWritten > 0
 
       if (keepNew === false) {
-        attemptDone(true, ERR_DUPLICATE)
+        done(true, ERR_DUPLICATE)
 
         existing.sendKeepAlive()
         conn.on('error', noop)
         conn.destroy(new Error(ERR_DUPLICATE))
       } else {
-        attemptDone()
+        done()
 
         existing.on('error', noop)
         existing.destroy(new Error(ERR_DUPLICATE))
@@ -551,12 +558,12 @@ module.exports = class Replicator extends ReadyResource {
 
     // Hard limit max-drop
     if (this.connectionCount >= this._maxPeers + 5) {
-      attemptDone(true, ERR_MAXPEERS)
+      done(true, ERR_MAXPEERS)
       conn.on('error', noop)
       return conn.destroy(ERR_MAXPEERS)
     }
 
-    attemptDone()
+    done()
 
     // connection 'opened' on next tick
     this._initConnection(false, peerId, conn)
@@ -638,9 +645,7 @@ module.exports = class Replicator extends ReadyResource {
 
     if (firewalled) {
       peer.setBanned('firewalled')
-
-      const { banned } = this.dialer.checkBans()
-      for (const p of banned) this._handleBan(p)
+      this.dialer.reschedule(peer)
     }
 
     return firewalled
@@ -852,9 +857,6 @@ module.exports = class Replicator extends ReadyResource {
     if (!this._gcDisabled) this.gc(now)
 
     this.dialer.refresh(now)
-
-    const { banned } = this.dialer.checkBans()
-    for (const p of banned) this._handleBan(p)
   }
 
   gc(now = Date.now()) {

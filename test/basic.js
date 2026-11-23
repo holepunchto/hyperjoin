@@ -60,12 +60,17 @@ test('basic replication', async (t) => {
   await testnet.destroy()
 })
 
-test('inbound peer gets banned for hammering', async (t) => {
+test('inbound hammer bans, increasing stats & emits event', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+
+  let banEvents = 0
+  p1.replicator.on('ban', () => banEvents++)
+
+  t.is(p1.replicator.stats.bannedPeers, 0)
 
   const p1Key = p1.replicator.peerId
   const target = p2.replicator.dialer.lookup(p1Key)
@@ -88,6 +93,8 @@ test('inbound peer gets banned for hammering', async (t) => {
   }
 
   t.is(firewalled, true, 'last attempt hit firewall')
+  t.is(p1.replicator.stats.bannedPeers, 1, 'stats increased')
+  t.is(banEvents, 1, 'ban fired')
 
   const peer = p1.replicator.dialer.peers.get(toHex(p2.replicator.peerId))
 
