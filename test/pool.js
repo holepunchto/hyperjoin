@@ -1,6 +1,7 @@
 const test = require('brittle')
 const b4a = require('b4a')
 const { spawnSwarm } = require('./helpers')
+const { onceEvent } = require('./helpers/backports')
 
 test('pool: join() pinned (hyperswarm mode)', async (t) => {
   const swarm = await spawnSwarm(t)
@@ -14,11 +15,17 @@ test('pool: join() pinned (hyperswarm mode)', async (t) => {
     joined = true
   })
 
+  const connected = Promise.all([
+    onceEvent(p1.replicator, 'connected'),
+    onceEvent(p2.replicator, 'connected')
+  ])
+
   await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
 
   await swarm.propagateWriters()
   swarm.refresh()
   await swarm.flush()
+  await connected
   await swarm.gc()
 
   t.is(p1.replicator.connectionCount, 1)
@@ -56,11 +63,17 @@ test('pool: join() delay=0 announces topics without jitter', async (t) => {
   const p2 = await swarm.spawnPeer()
 
   const topic = b4a.alloc(32, 0x1)
+  const connected = Promise.all([
+    onceEvent(p1.replicator, 'connected'),
+    onceEvent(p2.replicator, 'connected')
+  ])
+
   await Promise.all([p1.join(topic, { delay: 0 }), p2.join(topic, { delay: 0 })])
 
   await swarm.propagateWriters()
   swarm.refresh() // announce & lookup
   await swarm.flush() // dht-query + dials
+  await connected
   await swarm.gc() // de-dupe
 
   t.is(p1.replicator.announcedSessions.length, 1, 'autoswarm announce')
@@ -81,6 +94,11 @@ test('pool: pin()/unpin()', async (t) => {
 
   // A + B joins Active
 
+  const connected = Promise.all([
+    onceEvent(a.replicator, 'connected'),
+    onceEvent(b.replicator, 'connected')
+  ])
+
   await a.join(topic)
   a.replicator.pin(topic)
 
@@ -90,6 +108,7 @@ test('pool: pin()/unpin()', async (t) => {
   await swarm.propagateWriters()
   swarm.refresh()
   await swarm.flush()
+  await connected
   await swarm.gc() // de-dupe
 
   t.is(a.replicator.connectionCount, 1)

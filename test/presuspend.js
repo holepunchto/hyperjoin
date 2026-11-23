@@ -56,11 +56,14 @@ test('presuspend() -> resume(), resumes announcements', async (t) => {
   const topic = b4a.alloc(32, 1)
   const rep1 = p1.replicator
 
+  const connected = onceEvent(rep1, 'connected')
+
   const session1 = await p1.join(topic, { pin: true })
   await p2.join(topic, { pin: true })
   await swarm.propagateWriters()
   swarm.refresh()
   await swarm.flush()
+  await connected
 
   const [connection] = rep1.connections
   t.ok(connection, 'connected')

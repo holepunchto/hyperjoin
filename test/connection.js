@@ -1,6 +1,7 @@
 const test = require('brittle')
 const b4a = require('b4a')
 const { spawnSwarm } = require('./helpers')
+const { onceEvent } = require('./helpers/backports')
 const { toHex } = b4a
 
 /*
@@ -91,10 +92,13 @@ test('connection becomes idle after three minutes without traffic', async (t) =>
   const p2 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 1)
 
+  const connected = onceEvent(p1.replicator, 'connected')
+
   await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
   await swarm.propagateWriters()
   swarm.refresh()
   await swarm.flush()
+  await connected
 
   const [connection] = p1.replicator.connections
 
@@ -124,20 +128,26 @@ test('connections are unconditionally evicted at max capacity', async (t) => {
   const p3 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 1)
 
+  const p2Connected = onceEvent(p1.replicator, 'connected')
+
   await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
   await swarm.propagateWriters()
   swarm.refresh()
   await swarm.flush()
+  await p2Connected
 
   const p2Key = toHex(p2.replicator.peerId)
   t.is(p1.replicator.connectionCount, 1, 'one connection at capacity')
 
   await p1.replicator._gc()
 
+  const p3Connected = onceEvent(p1.replicator, 'connected')
+
   await p3.join(topic, { pin: true })
   await swarm.propagateWriters()
   swarm.refresh()
   await swarm.flush()
+  await p3Connected
 
   t.is(p1.replicator.connectionCount, 2, 'connection exceeds capacity')
 
@@ -159,10 +169,13 @@ test('connection becomes idle when no topic owns its core', async (t) => {
   const p1 = await swarm.spawnPeer({ topicOf })
   const p2 = await swarm.spawnPeer()
 
+  const connected = onceEvent(p1.replicator, 'connected')
+
   await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
   await swarm.propagateWriters()
   swarm.refresh()
   await swarm.flush()
+  await connected
 
   const [connection] = p1.replicator.connections
   await connection.replicating
@@ -183,10 +196,13 @@ test('gc preserves stable connections over new', async (t) => {
   const p3 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 1)
 
+  const p2Connected = onceEvent(p1.replicator, 'connected')
+
   await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
   await swarm.propagateWriters()
   swarm.refresh()
   await swarm.flush()
+  await p2Connected
 
   const p2Key = toHex(p2.replicator.peerId)
   const p3Key = toHex(p3.replicator.peerId)
@@ -198,10 +214,13 @@ test('gc preserves stable connections over new', async (t) => {
   await p1.replicator._gc()
   t.is(a._survived, 1, 'passed gc')
 
+  const p3Connected = onceEvent(p1.replicator, 'connected')
+
   await p3.join(topic, { pin: true })
   await swarm.propagateWriters()
   swarm.refresh()
   await swarm.flush()
+  await p3Connected
 
   const b = p1.replicator.getConnection(p3Key)
 
@@ -225,15 +244,21 @@ test('regression: gc does not count closing connections', async (t) => {
   const p3 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 1)
 
+  const p2Connected = onceEvent(p1.replicator, 'connected')
+
   await Promise.all([p1.join(topic, { pin: true }), p2.join(topic, { pin: true })])
   await swarm.propagateWriters()
   swarm.refresh()
   await swarm.flush()
+  await p2Connected
+
+  const p3Connected = onceEvent(p1.replicator, 'connected')
 
   await p3.join(topic, { pin: true })
   await swarm.propagateWriters()
   swarm.refresh()
   await swarm.flush()
+  await p3Connected
 
   t.is(p1.replicator.connectionCount, 2, 'connection exceeds capacity')
 
@@ -256,10 +281,13 @@ test('regression: heuristic-GC does not evict below maxPeers', async (t) => {
 
   for (let i = 0; i < 4; i++) {
     const peer = await swarm.spawnPeer()
+    const connected = onceEvent(p1.replicator, 'connected')
+
     await peer.join(topic, { pin: true })
     await swarm.propagateWriters()
     swarm.refresh()
     await swarm.flush()
+    await connected
   }
 
   t.is(p1.replicator.connectionCount, 4, 'over capacity')
