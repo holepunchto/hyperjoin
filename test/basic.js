@@ -299,6 +299,11 @@ test('a redial that gc dedupe drops is refused at max peers', async (t) => {
 
   t.is(p1.replicator._handleAccept(p2.replicator.peerId), false, 'p1 replies busy')
 
+  const outbound = p1.replicator.getConnection(p2.peerId)
+  await outbound.replicating
+  outbound.lastActivity = Date.now() - 3 * 60 * 1000 - 1 // no traffic for 3 minutes
+  t.is(p1.replicator._handleAccept(p2.replicator.peerId), false, 'p1 still replies busy when idle')
+
   await p1.destroy()
   await p2.destroy()
   await testnet.destroy()

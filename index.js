@@ -516,11 +516,12 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   // at max peers, unless the peer is reconnecting or gc can evict an idle connection for it
-  _isFull(hex) {
+  _isFull(remotePublicKey) {
+    const hex = toHex(remotePublicKey)
     if (this.connectionCount < this._maxPeers || this.inbound.has(hex)) return false
 
-    // gc dedupe keeps this inbound over our outbound to the peer, which it may have lost
-    if (this.outbound.has(hex) && toHex(this.peerId) < hex) return false
+    // gc dedupe keeps this inbound over our outbound if our key is lower, else drops it
+    if (this.outbound.has(hex)) return b4a.compare(this.peerId, remotePublicKey) > 0
 
     // TODO: redesign or remove remotely triggered idle precheck as it will be costly
     let idle = 0
@@ -554,7 +555,7 @@ module.exports = class Replicator extends ReadyResource {
   }
 
   _handleAccept(remotePublicKey) {
-    if (!this._isFull(toHex(remotePublicKey))) return true
+    if (!this._isFull(remotePublicKey)) return true
 
     // tell new peers to try later instead of accepting and evicting them in gc
     this.stats.connects.server.refused++
