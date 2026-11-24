@@ -11,7 +11,7 @@ const Replicator = require('hyperjoin')
 
 const store = new Corestore('./storage')
 
-const rep = new Replicator(store, { slots: 8, maxPeers: 40 })
+const rep = new Replicator(store, { slots: 8 })
 await rep.ready()
 
 const session = store.session() // or namespace()
@@ -43,8 +43,8 @@ General
 - `autoswarm`: enables active topic rotation (default: `true`)
 - `suspended`: start suspended
 - `seed`: derive the replicator keypair from a seed
-- `maxPeers`: reply busy to new inbound peers at this count (needs hyperdht with the server `accept` hook, older ones accept and evict them in gc) and drop connections above
-- `minPeers`: minimum connections to keep
+- `minConnections`: dial upto number (default: 30)
+- `maxConnections`: GC down to number (default: 40)
 - `maxParallel`: max parallel outbound dials
 - `slots`: auto-rotation slots
 - `gcIdleTime`: Evict idle sessions exceeding time
