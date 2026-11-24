@@ -519,8 +519,8 @@ module.exports = class Replicator extends ReadyResource {
   _isFull(hex) {
     if (this.connectionCount < this._maxPeers || this.inbound.has(hex)) return false
 
-    // gc dedupe keeps this inbound over our outbound to the peer, which it may have lost
-    if (this.outbound.has(hex) && toHex(this.peerId) < hex) return false
+    // gc dedupe keeps this inbound over our outbound if our key is lower, else drops it
+    if (this.outbound.has(hex)) return toHex(this.peerId) > hex
 
     // TODO: redesign or remove remotely triggered idle precheck as it will be costly
     let idle = 0
