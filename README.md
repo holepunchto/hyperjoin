@@ -43,8 +43,8 @@ General
 - `autoswarm`: enables active topic rotation (default: `true`)
 - `suspended`: start suspended
 - `seed`: derive the replicator keypair from a seed
-- `minConnections`: dial up to number (default: 30)
-- `maxConnections`: GC down to number (default: 40)
+- `minConnections`: dial up to number client connections (default: 30)
+- `maxConnections`: replies busy for server connections and GC down to number  (default: 40)
 - `maxParallel`: max parallel outbound dials
 - `slots`: auto-rotation slots
 - `gcIdleTime`: Evict idle sessions exceeding time

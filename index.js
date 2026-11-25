@@ -26,7 +26,6 @@ const DHT_FAST_RETRY = 0 // disabled
 // connections
 const MIN_CONNECTIONS = 30
 const MAX_CONNECTIONS = 40
-
 const ERR_DUPLICATE = 'DuplicateConnection'
 const ERR_IDLE = 'IdleConnection'
 const ERR_DESTROYED = 'ReplicatorDestroyed'
@@ -456,7 +455,6 @@ module.exports = class Replicator extends ReadyResource {
       return
     }
 
-    // TODO: dead code after _handleAccept() addition?
     // Hard limit max-drop
     if (this.connectionCount >= this._maxConnections + 5) {
       done(true, ERR_MAXPEERS)
