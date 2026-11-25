@@ -977,3 +977,41 @@ test('maxConnections lower than minConnections throws', async (t) => {
 
   await store.close()
 })
+
+test('scanned peers are dialed past connection caps', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minConnections: 1, maxConnections: 2 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
+  const p4 = await spawnPeer(t, { bootstrap, seed: seed(0xd) })
+  const rep = p1.replicator
+
+  const connected = onceEvent(rep, 'connected')
+  await p2.replicator._connect(p2.replicator.dialer.lookup(rep.peerId))
+  await connected
+
+  t.is(rep.connectionCount, 1, 'at minConnections')
+
+  const first = rep.join(p1.store.session(), p3.cores[0].discoveryKey, { discover: true })
+  await first.ready()
+  await first.refresh()
+  await rep.flush()
+
+  t.ok(rep.outbound.has(p3.peerId), 'p3 dialed past minConnections')
+  t.is(rep.connectionCount, 2, 'at maxConnections')
+
+  const second = rep.join(p1.store.session(), p4.cores[0].discoveryKey, { discover: true })
+  await second.ready()
+  await second.refresh()
+  await rep.flush()
+
+  t.ok(rep.outbound.has(p4.peerId), 'p4 dialed past maxConnections')
+
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await p4.destroy()
+  await testnet.destroy()
+})
