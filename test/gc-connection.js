@@ -129,7 +129,7 @@ test('gc does not count closing connections', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seed(1), maxPeers: 2 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seed(1), minConnections: 2, maxConnections: 2 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seed(2) })
   const p3 = await spawnPeer(t, { bootstrap, seed: seed(3) })
 
@@ -141,7 +141,7 @@ test('gc does not count closing connections', async (t) => {
     await connected
   }
 
-  rep._maxPeers = 1 // inbound at max peers is refused, so lower the cap once both are in
+  rep._maxConnections = 1 // inbound at max peers is refused, so lower the cap once both are in
 
   const [closing, survivor] = rep.connections
 
@@ -156,11 +156,11 @@ test('gc does not count closing connections', async (t) => {
   await testnet.destroy()
 })
 
-test('overlapping gc evicts down to maxPeers only', async (t) => {
+test('overlapping gc evicts down to maxConnections only', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seed(1), maxPeers: 4 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seed(1), minConnections: 4, maxConnections: 4 })
   const rep = p1.replicator
 
   const peers = []
@@ -172,7 +172,7 @@ test('overlapping gc evicts down to maxPeers only', async (t) => {
     peers.push(peer)
   }
 
-  rep._maxPeers = 2 // inbound at max peers is refused, so lower the cap once all are in
+  rep._maxConnections = 2 // inbound at max peers is refused, so lower the cap once all are in
 
   t.is(rep.connectionCount, 4, 'over cap')
 
