@@ -656,3 +656,15 @@ test('prioritized peer is not dialed when want() is negative', async (t) => {
 
   t.is(dialed.length, 0)
 })
+
+test('a peer that comes due during refresh() is scheduled', (t) => {
+  const ctx = spawnDialer(t, { suspended: true })
+  const { dialer } = ctx
+
+  const now = Date.now()
+  const peer = spawnPeer(ctx, 1, now)
+
+  dialer.resume(now - 1) // now read before the peer came due
+
+  t.is(dialer._scheduled, peer._nextAt)
+})
