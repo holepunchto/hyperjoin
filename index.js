@@ -91,13 +91,10 @@ module.exports = class Replicator extends ReadyResource {
       canRelay: () => !!this.relayThrough,
       onban: (peer) => this._handleBan(peer),
       want: () => {
-        if (this._isTearingdown) return 0
-
-        // TODO: scanned peers should be allowed
-        // unless we're tearing down
+        if (this._isTearingdown) return -1 // non-dialable-state
 
         // throttle
-        return this._minConnections - this.connectionCount
+        return Math.max(this._minConnections - this.connectionCount, 0)
       }
     }
 
