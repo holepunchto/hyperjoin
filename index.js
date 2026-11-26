@@ -475,8 +475,9 @@ module.exports = class Replicator extends ReadyResource {
   async _evictConnection(connection, err) {
     if (connection.destroying) return connection.destroyed
 
+    const reason = err.code || err.message
     // private - used by gc metrics
-    this.emit('_evictConnection', connection.peerId, /* reason */ err)
+    this.emit('_evictConnection', connection.peerId, reason)
 
     connection.destroy(err)
     await connection.destroyed
@@ -898,8 +899,9 @@ module.exports = class Replicator extends ReadyResource {
 
     this.sessions.clear()
 
+    const reason = ReplicatorError.DESTROYED()
     for (const connection of this.connections) {
-      tasks.push(this._evictConnection(connection))
+      tasks.push(this._evictConnection(connection, reason))
     }
 
     this.inbound.clear()
