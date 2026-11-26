@@ -211,7 +211,7 @@ test('dialer does not dial peers without an active topic', async (t) => {
   const ctx = spawnDialer(t)
   const { dialer, dialed, failures } = ctx
 
-  dialer.topicDisable(TOPIC)
+  dialer.unrefTopic(TOPIC)
 
   const peer = spawnPeer(ctx, 1, T0)
 
@@ -221,7 +221,7 @@ test('dialer does not dial peers without an active topic', async (t) => {
   t.is(dialed.length, 0, 'topic disabled: no dials')
   t.is(failures.length, 0)
 
-  dialer.topicEnable(TOPIC)
+  dialer.refTopic(TOPIC)
 
   dialer.refresh()
   await dialer.flush() // drains on peer's rejection
@@ -288,7 +288,7 @@ test('a retry due during a dial is re-scheduled', async (t) => {
   )
   t.teardown(() => dialer.destroy())
 
-  dialer.topicEnable(TOPIC)
+  dialer.refTopic(TOPIC)
   dialer.seen({ publicKey: asKey(1) }, TOPIC)
 
   await dialer.flush()
@@ -440,7 +440,7 @@ test('peer switched to relaying is automatically redialed', async (t) => {
     { jitter: 0 }
   )
 
-  dialer.topicEnable(TOPIC)
+  dialer.refTopic(TOPIC)
   t.teardown(() => dialer.destroy())
 
   dialer.seen({ publicKey: asKey(1) }, TOPIC, T0)
@@ -591,7 +591,7 @@ function spawnDialer(
   }
 
   const dialer = new Dialer(handlers, { maxParallel, jitter, suspended })
-  dialer.topicEnable(TOPIC)
+  dialer.refTopic(TOPIC)
 
   t.teardown(() => dialer.destroy())
 

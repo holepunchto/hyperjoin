@@ -1,17 +1,15 @@
 const test = require('brittle')
 const b4a = require('b4a')
+const createTestnet = require('hyperdht/testnet')
 const { spawnSwarm } = require('./helpers')
+const { spawnPeer: basicPeer, onceEvent, seedA, seedB } = require('./helpers/backports')
 const { toHex } = b4a
 
 test('presuspend() unannounces active topics', async (t) => {
   const swarm = await spawnSwarm(t)
-  const opts = {
-    discoveryStartupDelay: 0,
-    autoStartupDelay: 0
-  }
+  const p1 = await swarm.spawnPeer()
+  const p2 = await swarm.spawnPeer()
 
-  const p1 = await swarm.spawnPeer(opts)
-  const p2 = await swarm.spawnPeer(opts)
   const topic = b4a.alloc(32, 0x1)
 
   const rep1 = p1.replicator
@@ -21,14 +19,11 @@ test('presuspend() unannounces active topics', async (t) => {
 
   const connected = new Promise((resolve) => p1.replicator.on('connected', resolve))
 
-  const session1 = await p1.join(topic)
-  const session2 = await p2.join(topic)
+  const session1 = await p1.join(topic, { pin: true })
+  await p2.join(topic, { pin: true })
 
   await swarm.propagateWriters()
-  await swarm.refresh()
-  await swarm.flush()
-  session1.discovery.refresh()
-  session2.discovery.refresh()
+  swarm.refresh()
   await swarm.flush()
 
   await connected
@@ -56,29 +51,30 @@ test('presuspend() unannounces active topics', async (t) => {
 
 test('presuspend() -> resume(), resumes announcements', async (t) => {
   const swarm = await spawnSwarm(t)
-  const opts = { discoveryStartupDelay: 0, autoStartupDelay: 0 }
-  const p1 = await swarm.spawnPeer(opts)
-  const p2 = await swarm.spawnPeer(opts)
+  const p1 = await swarm.spawnPeer()
+  const p2 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 1)
   const rep1 = p1.replicator
 
-  const session1 = await p1.join(topic)
-  const session2 = await p2.join(topic)
+  const connected = onceEvent(rep1, 'connected')
+
+  const session1 = await p1.join(topic, { pin: true })
+  await p2.join(topic, { pin: true })
   await swarm.propagateWriters()
-  await swarm.refresh()
+  swarm.refresh()
   await swarm.flush()
-  session1.discovery.refresh()
-  session2.discovery.refresh()
-  await swarm.flush()
+  await connected
 
   const [connection] = rep1.connections
+  t.ok(connection, 'connected')
+
   rep1.presuspend()
   await rep1.flush()
 
   await rep1.resume()
 
   await swarm.flush()
-  await swarm.refresh()
+  swarm.refresh()
 
   t.is(rep1.isPresuspended, false)
   t.is(session1.isAnnounced, true, 'resume reannounces the topic')
@@ -90,19 +86,15 @@ test('presuspend() -> resume(), resumes announcements', async (t) => {
 
 test('presuspend() -> suspend() -> resume(), resumes networking', async (t) => {
   const swarm = await spawnSwarm(t)
-  const opts = { discoveryStartupDelay: 0, autoStartupDelay: 0 }
-  const p1 = await swarm.spawnPeer(opts)
-  const p2 = await swarm.spawnPeer(opts)
+  const p1 = await swarm.spawnPeer()
+  const p2 = await swarm.spawnPeer()
   const topic = b4a.alloc(32, 1)
   const rep1 = p1.replicator
 
-  const session1 = await p1.join(topic)
-  const session2 = await p2.join(topic)
+  const session1 = await p1.join(topic, { pin: true })
+  await p2.join(topic, { pin: true })
   await swarm.propagateWriters()
-  await swarm.refresh()
-  await swarm.flush()
-  session1.discovery.refresh()
-  session2.discovery.refresh()
+  swarm.refresh()
   await swarm.flush()
 
   rep1.presuspend()
@@ -128,7 +120,7 @@ test('presuspend() -> suspend() -> resume(), resumes networking', async (t) => {
   await rep1.resume()
   await swarm.flush() // announce + dial
 
-  await swarm.refresh() // de-dupe
+  swarm.refresh() // de-dupe
   await connected
 
   t.is(rep1.suspended, false)
@@ -137,4 +129,51 @@ test('presuspend() -> suspend() -> resume(), resumes networking', async (t) => {
   t.is(rep1.connectionCount, 1, 'resume reconnects')
 
   await swarm.close()
+})
+
+test('presuspend accepts inbound connections', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await basicPeer(t, { bootstrap, seed: seedA })
+  const p2 = await basicPeer(t, { bootstrap, seed: seedB })
+
+  p2.replicator.presuspend()
+  await p2.replicator.flush()
+
+  const connected = onceEvent(p2.replicator, 'connected')
+  const stream = p1.replicator.dht.connect(p2.replicator.peerId, {
+    keyPair: p1.replicator.keyPair
+  })
+
+  await connected
+
+  t.ok(p2.replicator.inbound.has(p1.peerId), 'accepted inbound connection')
+
+  stream.destroy()
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
+test('presuspend allows outbound connections', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await basicPeer(t, { bootstrap, seed: seedA })
+  const p2 = await basicPeer(t, { bootstrap, seed: seedB })
+
+  p2.replicator.presuspend()
+  await p2.replicator.flush()
+
+  const topic = b4a.alloc(32, 1)
+  p2.replicator.dialer.refTopic(topic)
+  p2.replicator.dialer.seen({ publicKey: p1.replicator.peerId }, topic)
+  await p2.replicator.flush()
+
+  t.ok(p2.replicator.outbound.has(p1.peerId), 'opened outbound connection')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
 })

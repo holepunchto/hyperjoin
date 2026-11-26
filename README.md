@@ -1,169 +1,336 @@
-# Replicator
+# hyperjoin
 
-A `hyperswarm` replacement modeled for `corestore` that allows
-resource tracking and garbage collection.
+Replicates groups of hypercores across many topics using pooled resources
 
 ## Usage
 
+#### Example
+
+Automatic topic selection by application context.
+
 ```js
+const b4a = require('b4a')
 const Corestore = require('corestore')
-const Replicator = require('hyperjoin')
+const Hyperjoin = require('hyperjoin')
 
-const store = new Corestore('./storage')
+const store = new Corestore()
+const keyPair = await store.createKeyPair('hyperjoin')
 
-const rep = new Replicator(store, { slots: 8 })
-await rep.ready()
+const groups = {
+  A: [
+    store.get({ name: 'A1', group: b4a.alloc(32, 'A') }),
+    store.get({ name: 'A2', group: b4a.alloc(32, 'A') })
+  ],
+  B: [
+    store.get({ name: 'B1', group: b4a.alloc(32, 'B') }),
+    store.get({ name: 'B2', group: b4a.alloc(32, 'B') })
+  ]
+}
 
-const session = store.session() // or namespace()
+const hyperjoin = new Hyperjoin(onreplicate, topicOf, { keyPair })
 
-const core = session.get({ name: 'example' })
-await core.ready()
+for (const name in groups) {
+  hyperjoin.join(toTopic(name))
 
-const topic = Buffer.alloc(32, 0x1)
+  // auto-prio on group wakeup
+  const handle = store.notifyGroup(b4a.alloc(32, name))
 
-// ReplicatorSession
-const rs = rep.join(session, topic, { pin: true })
+  handle.on('update', () => {
+    hyperjoin.bump(toTopic(name), Date.now())
+  })
 
-await rep.refresh() // apply auto-rotation & launch topics
+  hyperjoin.on('close', () => handle.destroy())
+}
 
-await store.close() // leaves topic
-await rep.close()
+// local writes re-prioritizes replication
+await groups.A[0].append('Hello')
+
+function onreplicate(stream) {
+  store.replicate(stream)
+}
+
+function topicOf(coreDiscoveryKey) {
+  for (const name in groups) {
+    for (const core of groups[name]) {
+      if (b4a.equals(coreDiscoveryKey, core.discoveryKey)) {
+        return toTopic(name)
+      }
+    }
+  }
+
+  return null
+}
+
+function toTopic(input) {
+  const { discoveryKey } = require('hypercore-crypto')
+  return discoveryKey(b4a.from(input))
+}
+```
+
+#### Pool control
+
+```js
+// add / remove from pool
+hyperjoin.join(topic)
+hyperjoin.leave(topic)
+
+// update priority
+hyperjoin.bump(topic, priority, dhtBumpValue)
+
+// force replication
+hyperjoin.pin(topic)
+hyperjoin.unpin(topic)
+
+// unpool
+hyperjoin.leave(topic)
+
+// Lookup bump value
+const dhtBumpValue = await hyperjoin.lookup(topic)
+
+// batch apply changes
+hyperjoin.refresh()
+
+// wait for known work to complete
+await hyperjoin.flush()
+```
+
+#### Scanning
+
+A scan does not announce on topic, \
+contrary to `lookup` operation - `scan` discovers _and connects_ to peers.
+It completes when scan window (`timeout`) ends.
+
+```js
+const op = hyperjoin.scan(topic, { delay: 3000, timeout: 60000 })
+
+op.connected.then(() => {
+  op.expire(10000) // reduce & linger upto 10s
+})
+
+op.complete.then(() => {
+  console.log('scan stopped & removed')
+})
 ```
 
 ## API
 
-### `new Replicator(store, opts)`
+### `new Hyperjoin(onreplicate, topicOf, opts)`
 
-Create a topic replicator for a root corestore.
+`onreplicate(stream)` forward the stream to corestore
 
-`opts`:
+`topicOf(discoveryKey)` return the topic owning an open core, or `null` when unknown or closed.
 
-General
+Options:
 
-- `autoswarm`: enables active topic rotation (default: `true`)
-- `suspended`: start suspended
-- `seed`: derive the replicator keypair from a seed
-- `minConnections`: dial up to number client connections (default: 30)
-- `maxConnections`: replies busy for server connections and GC down to number (default: 40)
-- `maxParallel`: max parallel outbound dials
-- `slots`: auto-rotation slots
-- `gcIdleTime`: Evict idle sessions exceeding time
-- `defaultDiscoveryTimeout`: initial discovery lifetime
-- `updatedDiscoveryTimeout`: shortened discovery lifetime after `session.bump()`
-- `discoveryStartupDelay`: delay before discovery lookups
-- `autoStartupDelay`: delay before autoswarm announcements
-- `minActiveTime`: minimum time an autoswarmed session stays active
-- `manual`: don't launch internal `refresh()` interval (default: `false`)
-- `interval`: Auto-refresh interval (default: `5000`)
-- `gcDisabled`: prevent garbage collection on `refresh()`
+```js
+const opts = {
+  // initialization
 
-Transport
+  interval: 5000, // auto-refresh interval
+  suspended: false, // start in suspended state
 
-- `keyPair`: provide an explicit keypair (default: store.createKeypair)
-- `bootstrap`: DHT bootstrap nodes
-- `nodes`: explicit DHT nodes
-- `dht`: reuse an existing HyperDHT instance, _note:_ replicator does not close/suspend/resume borrowed dht instances.
-- `port`: bind the DHT socket to a fixed port
-- `firewall`: filter inbound and outbound peers
-- `relayThrough`: relay selector for outbound connections
+  // Replication
+
+  slots: 8, // max active topics
+  minConnections: 30, // dial up to
+  maxConnections: 40, // reply busy to inbound peers at this count and drop connections above
+  maxParallel: 3, // max parallel outbound dials
+  minActiveTime: 30000, // prevent rotation after activation
+  gcIdleTime: 30000, // leave topics when idle time exceeded (`evicted` event)
+
+  // Transport
+
+  keyPair, // use keypair
+  bootstrap: null, // DHT bootstrap nodes
+  nodes: null, // explicit DHT nodes
+  dht: null, // external HyperDHT instance
+  port: null, // bind the DHT socket to a fixed port
+  firewall: () => false, // allow all inbound and outbound peers
+  relayThrough: null, // relay selector for outbound connections
+
+  // Debug
+
+  manual: false, // disable auto-refresh interval
+  gcDisabled: false, // prevent garbage collection on `refresh()`
+  pool: true // enable topic rotation
+}
+```
 
 ### Events
 
-#### `rep.on('activate', (session) => {})`
+#### `hyperjoin.on('join', (session) => {})`
 
-Fired when a session becomes active.
+Fired when topic is added to pool
 
-#### `rep.on('deactivate', (session) => {})`
+#### `hyperjoin.on('leave', (session) => {})`
 
-Fired when a session becomes inactive a.k.a idle.
+Fired when topic is unannounced and removed from pool
 
-#### `rep.on('remove', (session) => {})`
+#### `hyperjoin.on('activate', (session) => {})`
 
-Fired when a session is removed from the replicator.
+Fired when a topic becomes active.
 
-#### `rep.on('evicted', (count) => {})`
+#### `hyperjoin.on('deactivate', (session) => {})`
 
-Fired after GC evicts idle sessions. `count` is the number removed.
+Fired when a topic becomes inactive a.k.a idle.
 
-Can be used as signal to add more sessions through `rep.join()`
-and update all priorities:
+#### `hyperjoin.on('evicted', (count) => {})`
+
+Fired after GC evicts idle topics. `count` is the number removed.
+
+Can be used as signal to add more sessions through `join()`
 
 ```
-for (const [topic, session] of rep.sessions) {
+for (const [topic, session] of hyperjoin.sessions) {
   session.priority = appTimestampOf(topic)
 }
 ```
 
-#### `rep.on('dropped', (count) => {})`
+#### `hyperjoin.on('dropped', (count) => {})`
 
 Fired after GC drops connections. `count` is the number dropped.
 
+#### `hyperjoin.on('ban', (peer, reason) => {})`
+
+Fired when a peer is banned.
+
 ### Getters
 
-#### `rep.connectionCount`
+#### `hyperjoin.pool`
+
+Enable|disable topic rotation pool, is writable and applied on `refresh()`
+
+#### `hyperjoin.connectionCount`
 
 Total amount of active connections.
 
-#### `rep.connecting`
+#### `hyperjoin.connecting`
 
 Amount of outbound connections in-flight.
 
-#### `rep.connections`
+#### `hyperjoin.collected`
+
+Renewed after each `refresh()` and resolves on GC flush
+
+#### `hyperjoin.connections`
 
 Returns iterator over all established connections.
 
-#### `rep.activeSessions`
+#### `hyperjoin.stats`
 
-Returns list of active sessions.
+Connection and DHT activity counters:
 
-#### `rep.announcedSessions`
+```js
+{
+  updates: 0,
+  bannedPeers: 0,
+  connects: {
+    client: { attempted: 0, opened: 0, closed: 0 },
+    server: { opened: 0, closed: 0 }
+  },
+  dht: { lookup: 0, announce: 0, unannounce: 0 }
+}
+```
 
-Returns list of announced sessions that are required to be un-announced on teardown.
+#### `hyperjoin.activeSessions`
 
-### Methods
+Returns list of active sessions
+A session is an internal representation of topic.
 
-### `await rep.ready()`
+#### `hyperjoin.announcedSessions`
 
-Resolves after dht.server port is bound and store is ready.
+Returns list of currently announced sessions
 
-### `const rs = rep.join(storeSession, topic, opts)`
+### Functions
 
-Join topic, returns `ReplicatorSession`.
+#### `await hyperjoin.ready()`
+
+Resolves after dht.server port is bound
+
+#### `const rs = hyperjoin.join(topic, { pin: false, delay: 5000, priority: 0 })`
+
+Join a topic announcing presence.
+Joined topics participate in autoswarm pool.
 
 `opts`:
 
-- `priority`: autoswarm priority `number`
+- `priority`: pool priority, high number equals higher priority.
 - `pin`: same as `session.pin()`
-- `discover`: same as `session.discover()`
-- `limit`: maximum peers emitted per discovery query (default: `Infinity`)
-- `server`: whether the session can announce on the dht (default: `true`).
+- `delay`: delay before autoswarm activation
 
-### `await rep.refresh()`
+#### `await hyperjoin.leave(topic)`
 
-Invokes topic-rotation, applies state transitions, then finally runs garbage-collector.
+Remove a joined topic from the pool
 
-Manual replicators take no actions unless refresh is called.
+#### `hyperjoin.bump(topic, priority, bump = -1)`
 
-### `await rep.flush()`
+Update a topic's pool priority, higher number means higher priority.
 
-Wait until current discovery and dial work settles.
+The `bump` value if postive is included in dht-announcement and queryable
+using `lookup` or `scan`
 
-### `await rep.setAutoswarm(enabled)`
+#### `const bump = await hyperjoin.lookup(topic)`
 
-Enable or disable autoswarm topic rotation.
-Disabling un-announces all autostarted topics
+Query the DHT bump value for a topic without joining it or connecting to peers.
 
-### `rep.presuspend()`
+#### `hyperjoin.pin(topic)`
 
-Begins unannouncing all topics.
+Pin a joined topic to keep it active bypassing `priority`
 
-### `await rep.suspend()` / `await rep.resume()`
+#### `hyperjoin.unpin(topic)`
 
-Suspend and resume discovery, server, and connection activity.
+Unpins a topic and returns it to the pool
 
-### `await rep.close()`
+#### `const op = hyperjoin.scan(topic, { limit: 1, delay: 3000, timeout: 60000, force: false })`
 
-Close the replicator and all joined sessions.
+Scan a topic for peers without announcing.
+
+Promise `op.connected` does not throw and resolves when first peer is connected on the scanned topic or scan removed.
+Promise `op.complete` does not throw and resolves when a scan is removed
+
+`op.expire(timeout)` shortens the scan lifetime.
+
+`op.timeout` read-only, current scan window
+
+`opts`:
+
+- `limit`: maximum peers emitted per DHT query
+- `delay`: delay before the DHT query
+- `timeout`: initial scan lifetime
+- `force`: force new DHT query if existing topic scan is scheduled
+
+emits events `scan` on scan start and `scanned` on scan complete
+
+#### `hyperjoin.refresh()`
+
+Rotates pool, recalculates dialer work and applies new state then finally runs garbage-collector.
+
+#### `await hyperjoin.gc()`
+
+Schedules a garbage-collection pass on the next event-loop turn and resolves when it completes.
+Calls made while a pass is pending return the same promise. Resolves immediately during teardown.
+
+#### `await hyperjoin.flush()`
+
+Wait until current scan and dial, and announcement work settles.
+
+#### `hyperjoin.presuspend()`
+
+Begins unannouncing all topics - completion can be awaited with immediate call to `flush()`.
+
+No topics will be announced when hyperjoin is in `presuspended` state,
+use `resume()` to exit presuspension.
+
+#### `await hyperjoin.suspend()` / `await hyperjoin.resume()`
+
+Suspend and resume session, server, and connection activity.
+
+#### `await hyperjoin.close()`
+
+Close the hyperjoin and all joined sessions.
+
+<details>
+<summary>Sessions are private since `2.x` - docs kept for reference only</summary>
 
 ### ReplicatorSession
 
@@ -176,7 +343,7 @@ States:
 - `inactive`
 - `pinned`
 - `autostarted`
-- `discovering`
+- `scanning`
 - `destroyed`
 
 #### `rs.on('activate', (session) => {})`
@@ -191,26 +358,14 @@ Fired when the session becomes inactive a.k.a idle.
 
 Fired when a remote discovery bump is observed.
 
-#### `rs.on('discovered', () => {})`
-
-Fired when the session exits discovery mode.
-
 ### `rs.pin()` / `rs.unpin()`
 
 Pin topic to announce itself on dht - bypasses `priority`, auto-rotation and
 forces the session to be active until manual call to `unpin()`.
 
-### `rs.discover()`
-
-Launch a dht lookup for the topic to discover peers and update version `seen`. (announce: false / client only)
-On pinned sessions, forces a discovery refresh without unpinning.
-
 ### `rs.bump(version = -1)`
 
 Announce local version on topic.
-
-If bump is called while in discovery mode, the discovery timeout is reset to
-`updatedDiscoveryTimeout` as the discovery operation can be considered 'sucessful'
 
 ### `rs.priority = number`
 
@@ -219,6 +374,8 @@ Priority used by autoswarm auto-selection.
 ### `await rs.flush()`
 
 Wait until this topic's current dht query settles
+
+</details>
 
 ## License
 
