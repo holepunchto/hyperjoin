@@ -584,8 +584,13 @@ test('flush when max connections reached', async (t) => {
   const { bootstrap } = testnet
 
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, maxPeers: 1 })
-  const p3 = await spawnPeer(t, { bootstrap, seed: Buffer.alloc(32, 0xc), maxPeers: 1 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, minConnections: 1, maxConnections: 1 })
+  const p3 = await spawnPeer(t, {
+    bootstrap,
+    seed: Buffer.alloc(32, 0xc),
+    minConnections: 1,
+    maxConnections: 1
+  })
 
   const remote2 = p1.cores.map((core) => p2.session.get(core.key))
   const remote3 = p1.cores.map((core) => p3.session.get(core.key))

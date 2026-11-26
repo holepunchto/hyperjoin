@@ -132,8 +132,8 @@ const opts = {
   // Replication
 
   slots: 8, // max active topics
-  maxPeers: 40, // drop connections when above
-  minPeers: 20, // minimum connections to keep
+  minConnections: 30, // dial up to
+  maxConnections: 40, // reply busy to inbound peers at this count and drop connections above
   maxParallel: 3, // max parallel outbound dials
   minActiveTime: 30000, // prevent rotation after activation
   gcIdleTime: 30000, // leave topics when idle time exceeded (`evicted` event)

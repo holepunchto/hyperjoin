@@ -2,7 +2,15 @@ const { test } = require('brittle')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 const Replicator = require('..')
-const { seedA, seedB, spawnPeer, unpromise } = require('./helpers/backports')
+const {
+  onceEvent,
+  seed,
+  seedA,
+  seedB,
+  seedC,
+  spawnPeer,
+  unpromise
+} = require('./helpers/backports')
 
 test('scan() finds peers without announcing', async (t) => {
   const testnet = await createTestnet()
@@ -242,5 +250,41 @@ test('scan() keeps its topic active when a session leaves', async (t) => {
   t.is(rep.dialer._activeTopics.get(b4a.toString(topic, 'hex')), 1, 'scan holds the topic')
 
   await p1.destroy()
+  await testnet.destroy()
+})
+
+test('scanned peers are dialed past connection caps', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minConnections: 1, maxConnections: 2 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
+  const p4 = await spawnPeer(t, { bootstrap, seed: seed(0xd) })
+  const rep = p1.replicator
+
+  const connected = onceEvent(rep, 'connected')
+  await p2.replicator._connect(p2.replicator.dialer.lookup(rep.peerId))
+  await connected
+
+  t.is(rep.connectionCount, 1, 'at minConnections')
+
+  const first = rep.scan(p3.cores[0].discoveryKey, { delay: 0 })
+  await rep.flush()
+
+  t.ok(rep.outbound.has(p3.peerId), 'p3 dialed past minConnections')
+  t.is(rep.connectionCount, 2, 'at maxConnections')
+
+  const second = rep.scan(p4.cores[0].discoveryKey, { delay: 0 })
+  await rep.flush()
+
+  t.ok(rep.outbound.has(p4.peerId), 'p4 dialed past maxConnections')
+
+  first.destroy()
+  second.destroy()
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await p4.destroy()
   await testnet.destroy()
 })

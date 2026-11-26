@@ -4,7 +4,15 @@ const Corestore = require('corestore')
 const b4a = require('b4a')
 const createTestnet = require('hyperdht/testnet')
 const DHT = require('hyperdht')
-const { joinRemote, onceEvent, seedA, seedB, spawnPeer, timeout } = require('./helpers/backports')
+const {
+  joinRemote,
+  onceEvent,
+  seedA,
+  seedB,
+  seedC,
+  spawnPeer,
+  timeout
+} = require('./helpers/backports')
 const Replicator = require('..')
 
 const { toHex } = b4a
@@ -253,7 +261,7 @@ test('replicator enables dialer throttle', async (t) => {
   const replicator = new Replicator(
     () => {},
     () => null,
-    { bootstrap: [], maxPeers: 2 }
+    { bootstrap: [], minConnections: 2, maxConnections: 2 }
   )
 
   t.is(replicator.dialer._want(), 2)
@@ -591,4 +599,44 @@ test('regression: suspend does not count a dial it cancels', async (t) => {
 
   await replicator.close()
   await store.close()
+})
+
+test('dialer stops at minConnections', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minConnections: 1, maxConnections: 2 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
+  const rep = p1.replicator
+
+  const topic = b4a.alloc(32, 1)
+  rep.dialer.refTopic(topic)
+
+  rep.dialer.seen({ publicKey: p2.replicator.peerId }, topic)
+  await rep.flush()
+
+  t.ok(rep.outbound.has(p2.peerId), 'p2 dialed')
+
+  rep.dialer.seen({ publicKey: p3.replicator.peerId }, topic)
+  await rep.flush()
+
+  t.absent(rep.outbound.has(p3.peerId), 'p3 not dialed')
+  t.is(rep.stats.connects.client.attempted, 1)
+
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await testnet.destroy()
+})
+
+test('maxConnections lower than minConnections throws', (t) => {
+  t.exception(
+    () =>
+      new Replicator(
+        () => {},
+        () => null,
+        { minConnections: 2, maxConnections: 1 }
+      )
+  )
 })
