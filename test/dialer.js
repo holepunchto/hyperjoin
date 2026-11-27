@@ -615,3 +615,56 @@ function spawnPeer(ctx, n, lastSeenAt) {
   ctx.dialer.seen({ publicKey: asKey(n) }, TOPIC, lastSeenAt)
   return ctx.dialer.lookup(asKey(n))
 }
+
+test('prioritized peer is dialed past the budget', async (t) => {
+  const want = () => 0
+  const ctx = spawnDialer(t, { handlers: { want } })
+  const { dialer, dialed } = ctx
+
+  spawnPeer(ctx, 1, T0)
+  dialer.seen({ publicKey: asKey(2) }, TOPIC, T0, true)
+
+  await dialer.flush(T0)
+
+  t.alike(
+    dialed.map((p) => p.publicKey[0]),
+    [2]
+  )
+})
+
+test('prioritized peers are captured by flush', async (t) => {
+  const want = () => 0
+  const ctx = spawnDialer(t, { handlers: { want } })
+  const { dialer, dialed } = ctx
+
+  for (let n = 1; n <= 10; n++) {
+    dialer.seen({ publicKey: asKey(n) }, TOPIC, T0, true)
+  }
+
+  await dialer.flush(T0)
+
+  t.is(dialed.length, 10, 'all 10 peers dialed')
+})
+
+test('prioritized peer is not dialed when want() is negative', async (t) => {
+  const ctx = spawnDialer(t, { handlers: { want: () => -1 } })
+  const { dialer, dialed } = ctx
+
+  dialer.seen({ publicKey: asKey(1) }, TOPIC, T0, true)
+
+  await dialer.flush(T0)
+
+  t.is(dialed.length, 0)
+})
+
+test('a peer that comes due during refresh() is scheduled', (t) => {
+  const ctx = spawnDialer(t, { suspended: true })
+  const { dialer } = ctx
+
+  const now = Date.now()
+  const peer = spawnPeer(ctx, 1, now)
+
+  dialer.resume(now - 1) // now read before the peer came due
+
+  t.is(dialer._scheduled, peer._nextAt)
+})

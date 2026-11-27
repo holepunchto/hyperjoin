@@ -1,5 +1,6 @@
 const test = require('brittle')
 const { sortConnections } = require('../lib/heuristics')
+const Peer = require('../lib/peer')
 
 const T0 = Date.now()
 
@@ -12,7 +13,9 @@ function stub(id, props = {}) {
     scannedAt = -1
   } = props
 
-  return { id, _survived: survived, connectedAt, lastActivity, info: { scannedAt } }
+  const info = { scannedAt, isScanning: Peer.prototype.isScanning }
+
+  return { id, _survived: survived, connectedAt, lastActivity, info }
 }
 
 function ids(connections) {

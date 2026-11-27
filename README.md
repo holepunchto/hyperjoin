@@ -7,11 +7,11 @@ resource tracking and garbage collection.
 
 ```js
 const Corestore = require('corestore')
-const Replicator = require('replicator')
+const Replicator = require('hyperjoin')
 
 const store = new Corestore('./storage')
 
-const rep = new Replicator(store, { slots: 8, maxPeers: 40 })
+const rep = new Replicator(store, { slots: 8 })
 await rep.ready()
 
 const session = store.session() // or namespace()
@@ -43,8 +43,8 @@ General
 - `autoswarm`: enables active topic rotation (default: `true`)
 - `suspended`: start suspended
 - `seed`: derive the replicator keypair from a seed
-- `maxPeers`: drop connections above
-- `minPeers`: minimum connections to keep
+- `minConnections`: dial up to number client connections (default: 30)
+- `maxConnections`: replies busy for server connections and GC down to number (default: 40)
 - `maxParallel`: max parallel outbound dials
 - `slots`: auto-rotation slots
 - `gcIdleTime`: Evict idle sessions exceeding time

@@ -1,6 +1,6 @@
 {
-  "name": "@holepunchto/replicator",
-  "version": "1.3.1",
+  "name": "hyperjoin",
+  "version": "1.5.0",
   "description": "replicator",
   "main": "index.js",
   "exports": {
@@ -26,7 +26,7 @@
   "devDependencies": {
     "brittle": "^3.19.1",
     "corestore": "^7.14.0",
-    "hyperdht": "^6.34.1",
+    "hyperdht": "^6.37.0",
     "lunte": "^1.8.6",
     "prettier": "^3.9.10",
     "prettier-config-holepunch": "^2.0.0"
@@ -38,14 +38,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/holepunchto/replicator.git"
+    "url": "git+https://github.com/holepunchto/hyperjoin.git"
   },
   "author": "Holepunch Inc",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/holepunchto/replicator/issues"
+    "url": "https://github.com/holepunchto/hyperjoin/issues"
   },
-  "homepage": "https://github.com/holepunchto/replicator",
+  "homepage": "https://github.com/holepunchto/hyperjoin",
   "dependencies": {
     "b4a": "^1.9.0",
     "bare-events": "^2.9.2",

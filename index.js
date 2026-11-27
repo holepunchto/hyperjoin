@@ -25,8 +25,8 @@ const MIN_ACTIVE_TIME = 30 * 1000
 const DHT_FAST_RETRY = 0 // disabled
 
 // connections
-const MIN_PEERS = 20
-const MAX_PEERS = 40
+const MIN_CONNECTIONS = 30
+const MAX_CONNECTIONS = 40
 
 module.exports = class Replicator extends ReadyResource {
   constructor(rootStore, opts = {}) {
@@ -36,8 +36,8 @@ module.exports = class Replicator extends ReadyResource {
       seed,
       keyPair,
       relayThrough,
-      minPeers = MIN_PEERS,
-      maxPeers = MAX_PEERS,
+      minConnections = MIN_CONNECTIONS,
+      maxConnections = MAX_CONNECTIONS,
       maxParallel,
       firewall = allowAll,
       suspended,
@@ -61,6 +61,10 @@ module.exports = class Replicator extends ReadyResource {
       minActiveTime = MIN_ACTIVE_TIME
     } = opts
 
+    if (maxConnections < minConnections) {
+      throw ReplicatorError.ASSERTION('maxConnections must be greater than minConnections')
+    }
+
     if (seed) this.keyPair = DHT.keyPair(seed)
     if (keyPair) this.keyPair = keyPair
 
@@ -81,10 +85,12 @@ module.exports = class Replicator extends ReadyResource {
       ondialerror: safetyCatch,
       isConnected: (key) => this.hasConnection(key),
       canRelay: () => !!this.relayThrough,
+      onban: (peer) => this._handleBan(peer),
       want: () => {
-        if (this._isTearingdown) return 0
+        if (this._isTearingdown) return -1 // non-dialable-state
 
-        return this._maxPeers - this.connectionCount // throttle
+        // throttle
+        return Math.max(this._minConnections - this.connectionCount, 0)
       }
     }
 
@@ -100,6 +106,7 @@ module.exports = class Replicator extends ReadyResource {
     this.server = this.dht.createServer(
       {
         firewall: this._handleFirewall.bind(this),
+        accept: this._handleAccept.bind(this), // older hyperdht ignores this and gc evicts instead
         relayThrough: this._selectRelay.bind(this),
         handshakeClearWait: opts.handshakeClearWait
       },
@@ -118,8 +125,8 @@ module.exports = class Replicator extends ReadyResource {
 
     this._inflight = new Set() // hex(peerId), dedup in-flight dials
     this._inflightCancel = new Set() // cancelCallbacks
-    this._minPeers = minPeers
-    this._maxPeers = maxPeers
+    this._minConnections = minConnections
+    this._maxConnections = maxConnections
     this._lastConnectionEvict = 0
 
     this.slots = slots
@@ -135,7 +142,8 @@ module.exports = class Replicator extends ReadyResource {
     this._discoveryStartupDelay = discoveryStartupDelay
     this._dhtFastRetry = dhtFastRetry
 
-    this._online = false
+    this._online = this.dht.online
+    this._offlineAt = 0
 
     this.stats = {
       updates: 0,
@@ -148,7 +156,8 @@ module.exports = class Replicator extends ReadyResource {
         },
         server: {
           opened: 0,
-          closed: 0
+          closed: 0,
+          refused: 0
         }
       },
       dht: {
@@ -285,6 +294,7 @@ module.exports = class Replicator extends ReadyResource {
 
     for (const connection of this.connections) {
       connection.info.resetAttempts()
+      this.dialer.reschedule(connection.info)
       pending.push(this._evictConnection(connection, ReplicatorError.SUSPENDED()))
     }
 
@@ -407,7 +417,12 @@ module.exports = class Replicator extends ReadyResource {
 
     const peerInfo = this.dialer.lookup(peerId)
     const initiator = false
+
     const attemptDone = peerInfo.markAttempt(initiator)
+    const done = (failed = false, cause = null) => {
+      attemptDone(failed, cause)
+      this.dialer.reschedule(peerInfo)
+    }
 
     if (this.inbound.has(hex)) {
       const existing = this.inbound.get(hex).stream
@@ -418,13 +433,13 @@ module.exports = class Replicator extends ReadyResource {
 
       if (keepNew === false) {
         const err = ReplicatorError.DUPLICATE()
-        attemptDone(true, err)
+        done(true, err)
 
         existing.sendKeepAlive()
         conn.on('error', noop)
         conn.destroy(err)
       } else {
-        attemptDone()
+        done()
 
         existing.on('error', noop)
         existing.destroy(ReplicatorError.DUPLICATE())
@@ -435,14 +450,14 @@ module.exports = class Replicator extends ReadyResource {
     }
 
     // Hard limit max-drop
-    if (this.connectionCount >= this._maxPeers + 5) {
+    if (this.connectionCount >= this._maxConnections + 5) {
       const err = ReplicatorError.MAXCAP()
-      attemptDone(true, err)
+      done(true, err)
       conn.on('error', noop)
       return conn.destroy(err)
     }
 
-    attemptDone()
+    done()
 
     // connection 'opened' on next tick
     this._initConnection(false, peerId, conn)
@@ -503,6 +518,23 @@ module.exports = class Replicator extends ReadyResource {
     }
   }
 
+  // at max peers, unless the peer is reconnecting or gc can evict an idle connection for it
+  _isFull(remotePublicKey) {
+    const hex = toHex(remotePublicKey)
+    if (this.connectionCount < this._maxConnections || this.inbound.has(hex)) return false
+
+    // gc dedupe keeps this inbound over our outbound if our key is lower, else drops it
+    if (this.outbound.has(hex)) return b4a.compare(this.peerId, remotePublicKey) > 0
+
+    // TODO: redesign or remove remotely triggered idle precheck as it will be costly
+    let idle = 0
+    for (const connection of this.connections) {
+      if (connection.isIdle()) idle++
+    }
+
+    return this.connectionCount - idle >= this._maxConnections
+  }
+
   _handleBan(peer) {
     this.stats.bannedPeers++
     this.emit('ban', peer, peer.banReason)
@@ -519,12 +551,18 @@ module.exports = class Replicator extends ReadyResource {
 
     if (firewalled) {
       peer.setBanned('firewalled')
-
-      const { banned } = this.dialer.checkBans()
-      for (const p of banned) this._handleBan(p)
+      this.dialer.reschedule(peer)
     }
 
     return firewalled
+  }
+
+  _handleAccept(remotePublicKey) {
+    if (!this._isFull(remotePublicKey)) return true
+
+    // tell new peers to try later instead of accepting and evicting them in gc
+    this.stats.connects.server.refused++
+    return false
   }
 
   get _isTearingdown() {
@@ -674,7 +712,7 @@ module.exports = class Replicator extends ReadyResource {
       this._lastConnectionEvict = now
     }
 
-    const evict = active - this._maxPeers
+    const evict = active - this._maxConnections
 
     if (evict > 0) {
       // Evict idle connections
@@ -742,9 +780,6 @@ module.exports = class Replicator extends ReadyResource {
     await this._gc(now)
 
     this.dialer.refresh(now)
-
-    const { banned } = this.dialer.checkBans()
-    for (const p of banned) this._handleBan(p)
   }
 
   async flush() {
@@ -845,10 +880,11 @@ module.exports = class Replicator extends ReadyResource {
   async _handleNetworkUpdate() {
     // Rising edge for being online
     const networkCameOnline = this.dht.online && !this._online
+    if (this._online && !this.dht.online) this._offlineAt = Date.now()
     this._online = this.dht.online
     if (!networkCameOnline) return
 
-    this.dialer.resetBackoff() // failures while offline were ours
+    this.dialer.resetBackoff(this._offlineAt) // failures while offline were ours
     await this._handleNetworkChange()
   }
 

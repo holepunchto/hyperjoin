@@ -8,6 +8,7 @@ const Replicator = require('..')
 const {
   joinRemote,
   onceEvent,
+  seed,
   seedA,
   seedB,
   seedC,
@@ -68,7 +69,7 @@ test.skip('gc connections with no active mux sessions', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minPeers: 1, maxPeers: 1 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minConnections: 1, maxConnections: 2 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
   const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
 
@@ -95,6 +96,7 @@ test.skip('gc connections with no active mux sessions', async (t) => {
     'p3 connection has no protomux sessions'
   )
 
+  p1.replicator._maxConnections = 1 // inbound at max peers is refused, so lower the cap once both are in
   await p1.replicator._gc()
 
   t.is(
@@ -146,8 +148,8 @@ test('gc preserves stable connections over rookies', async (t) => {
   const p1 = await spawnPeer(t, {
     bootstrap,
     seed: seedA,
-    minPeers: 0,
-    maxPeers: 1
+    minConnections: 0,
+    maxConnections: 2
   })
   const p2Connected = onceEvent(p1.replicator, 'connected')
 
@@ -176,6 +178,7 @@ test('gc preserves stable connections over rookies', async (t) => {
 
   await joinRemote(p3, p1)
   await p3Connected
+  p1.replicator._maxConnections = 1 // inbound at max peers is refused, so lower the cap once p3 is in
 
   active = Array.from(p1.replicator.connections)
   t.is(active.length, 2, 'over capacity')
@@ -191,6 +194,175 @@ test('gc preserves stable connections over rookies', async (t) => {
   t.is(active.length, 1, 'GC dropped overflow')
   t.is(toHex(a.peerId), p2Key, 'p2 remains connected')
   t.is(a._survived, 2, 'passed gc twice')
+
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await testnet.destroy()
+})
+
+test('new inbound is refused at max peers', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minConnections: 1, maxConnections: 1 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
+
+  const p2Connected = onceEvent(p1.replicator, 'connected')
+  await joinRemote(p2, p1)
+  await p2Connected
+
+  let opened = 0
+  p1.replicator.server.on('connection', () => opened++)
+
+  const err = await p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
+
+  t.is(err.code, 'PEER_BUSY', 'p3 refused')
+  t.is(opened, 0, 'p1 opened no connection')
+  t.is(p1.replicator.stats.connects.server.refused, 1, 'p1 counted the refusal')
+  t.absent(p1.replicator.dialer.lookup(p3.replicator.peerId).isBanned, 'p1 did not ban p3')
+
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await testnet.destroy()
+})
+
+test('a reconnect is accepted at max peers', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minConnections: 1, maxConnections: 1 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+
+  const p2Connected = onceEvent(p1.replicator, 'connected')
+  await joinRemote(p2, p1)
+  await p2Connected
+  const existing = p1.replicator.getConnection(p2.peerId)
+  await existing.replicating
+
+  // p2 reconnects without its end of the old link, as after a network change
+  const connected = onceEvent(p1.replicator, 'connected')
+  const stream = p2.replicator.dht.connect(p1.replicator.peerId, { keyPair: p2.replicator.keyPair })
+  stream.on('error', () => {})
+  await connected
+
+  t.ok(existing.stream.destroyed, 'p1 replaced the old connection')
+
+  stream.destroy()
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
+test('a redial that gc dedupe keeps is accepted at max peers', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  // seedA's key is lower, so gc dedupe keeps p1's inbound from p2
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minConnections: 1, maxConnections: 1 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+
+  const p2Connected = onceEvent(p1.replicator, 'connected')
+  await joinRemote(p1, p2)
+  await p2Connected
+  const existing = p1.replicator.getConnection(p2.peerId)
+
+  // p2 redials without its end of p1's link, as after a network change
+  const connected = onceEvent(p1.replicator, 'connected')
+  const stream = p2.replicator.dht.connect(p1.replicator.peerId, { keyPair: p2.replicator.keyPair })
+  stream.on('error', () => {})
+  await connected
+
+  await p1.replicator._gc()
+  t.ok(existing.stream.destroyed, 'gc replaced the old connection')
+  t.ok(p1.replicator.inbound.has(p2.peerId), 'p1 kept the redial')
+
+  stream.destroy()
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
+test('a redial that gc dedupe drops is refused at max peers', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  // seedB's key is higher, so gc dedupe would keep p1's outbound to p2
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedB, minConnections: 1, maxConnections: 1 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedA })
+
+  const p2Connected = onceEvent(p1.replicator, 'connected')
+  await joinRemote(p1, p2)
+  await p2Connected
+
+  t.is(p1.replicator._handleAccept(p2.replicator.peerId), false, 'p1 replies busy')
+
+  const outbound = p1.replicator.getConnection(p2.peerId)
+  await outbound.replicating
+  outbound.lastActivity = Date.now() - 3 * 60 * 1000 - 1 // no traffic for 3 minutes
+  t.is(p1.replicator._handleAccept(p2.replicator.peerId), false, 'p1 still replies busy when idle')
+
+  await p1.destroy()
+  await p2.destroy()
+  await testnet.destroy()
+})
+
+test('one inbound per idle connection is accepted at max peers', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minConnections: 1, maxConnections: 1 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
+  const p4 = await spawnPeer(t, { bootstrap, seed: seed(0xd) })
+
+  const p2Connected = onceEvent(p1.replicator, 'connected')
+  await joinRemote(p2, p1)
+  await p2Connected
+  const idle = p1.replicator.getConnection(p2.peerId)
+  await idle.replicating
+  idle.lastActivity = Date.now() - 3 * 60 * 1000 - 1 // no traffic for 3 minutes
+
+  // p3 opens p1's cores so its own link never looks idle
+  await Promise.all(p1.cores.map((core) => p3.session.get(core.key).ready()))
+  const connected = onceEvent(p1.replicator, 'connected')
+  await p3.replicator._connect(p3.replicator.dialer.lookup(p1.replicator.peerId))
+  await connected
+
+  const err = await p4.replicator._connect(p4.replicator.dialer.lookup(p1.replicator.peerId))
+  t.is(err.code, 'PEER_BUSY', 'p4 refused, p3 took the idle slot')
+
+  await p1.replicator._gc()
+
+  t.alike(
+    Array.from(p1.replicator.connections, (connection) => toHex(connection.peerId)),
+    [p3.peerId],
+    'gc evicted the idle connection and kept p3'
+  )
+
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await p4.destroy()
+  await testnet.destroy()
+})
+
+test('outbound dials are not refused at max peers', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minConnections: 1, maxConnections: 1 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
+
+  const p2Connected = onceEvent(p1.replicator, 'connected')
+  await joinRemote(p2, p1)
+  await p2Connected
+
+  await p1.replicator._connect(p1.replicator.dialer.lookup(p3.replicator.peerId))
+  t.ok(p1.replicator.outbound.has(p3.peerId), 'p1 dialed p3 at max peers')
 
   await p1.destroy()
   await p2.destroy()
@@ -214,12 +386,17 @@ test('root close() closes replicator', async (t) => {
   await testnet.destroy()
 })
 
-test('inbound peer gets banned for hammering', async (t) => {
+test('inbound hammer bans, increasing stats & emits event', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+
+  let banEvents = 0
+  p1.replicator.on('ban', () => banEvents++)
+
+  t.is(p1.replicator.stats.bannedPeers, 0)
 
   const p1Key = p1.replicator.peerId
   const target = p2.replicator.dialer.lookup(p1Key)
@@ -234,6 +411,9 @@ test('inbound peer gets banned for hammering', async (t) => {
     connection.stream.destroy()
     await onceEvent(connection.stream, 'close')
   }
+
+  t.is(p1.replicator.stats.bannedPeers, 1, 'stats increased')
+  t.is(banEvents, 1, 'ban fired')
 
   const peer = p1.replicator.dialer.peers.get(toHex(p2.replicator.peerId))
 
@@ -473,7 +653,7 @@ test('suspend does not count a dial it cancels', async (t) => {
 
 test('replicator enables dialer throttle', async (t) => {
   const store = new Corestore(await t.tmp())
-  const replicator = new Replicator(store, { bootstrap: [], maxPeers: 2 })
+  const replicator = new Replicator(store, { bootstrap: [], minConnections: 2, maxConnections: 2 })
 
   t.is(replicator.dialer._want(), 2)
 
@@ -565,15 +745,31 @@ test('network coming back online resets dial backoff', async (t) => {
   const replicator = new Replicator(store, { bootstrap: [], manual: true })
   await replicator.ready()
 
-  const peer = replicator.dialer.lookup(b4a.alloc(32, 2))
-  peer._outboundAttempts = 5 // failed while we were offline
+  const before = replicator.dialer.lookup(b4a.alloc(32, 1))
+  before._outboundAttempts = 5 // failed before we went offline
+  before.attemptedAt = Date.now() - 1000
+
+  replicator.dht.emit('network-update') // still online
+  t.is(before._outboundAttempts, 5)
 
   replicator.dht.online = false
   replicator.dht.emit('network-update')
+
+  const failed = replicator.dialer.lookup(b4a.alloc(32, 2))
+  failed._outboundAttempts = 5 // failed while we were offline
+  failed.attemptedAt = Date.now()
+
+  const dropped = replicator.dialer.lookup(b4a.alloc(32, 3))
+  dropped._outboundAttempts = 5 // dropped while we were offline
+  dropped.attemptedAt = Date.now() - 1000
+  dropped.disconnectedAt = Date.now()
+
   replicator.dht.online = true
   replicator.dht.emit('network-update')
 
-  t.is(peer._outboundAttempts, 0)
+  t.is(before._outboundAttempts, 5)
+  t.is(failed._outboundAttempts, 0)
+  t.is(dropped._outboundAttempts, 0)
 
   await replicator.close()
   await store.close()
@@ -713,5 +909,109 @@ test('presuspend allows outbound connections', async (t) => {
 
   await p1.destroy()
   await p2.destroy()
+  await testnet.destroy()
+})
+
+test('dialer stops at minConnections', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minConnections: 1, maxConnections: 2 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
+  const rep = p1.replicator
+
+  const topic = b4a.alloc(32, 1)
+  rep.dialer.topicEnable(topic)
+
+  rep.dialer.seen({ publicKey: p2.replicator.peerId }, topic)
+  await rep.flush()
+
+  t.ok(rep.outbound.has(p2.peerId), 'p2 dialed')
+
+  rep.dialer.seen({ publicKey: p3.replicator.peerId }, topic)
+  await rep.flush()
+
+  t.absent(rep.outbound.has(p3.peerId), 'p3 not dialed')
+  t.is(rep.stats.connects.client.attempted, 1)
+
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await testnet.destroy()
+})
+
+test('inbound is accepted above minConnections', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minConnections: 1, maxConnections: 2 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
+  const rep = p1.replicator
+
+  const p2Connected = onceEvent(rep, 'connected')
+  await p2.replicator._connect(p2.replicator.dialer.lookup(rep.peerId))
+  await p2Connected
+
+  const p3Connected = onceEvent(rep, 'connected')
+  const err = await p3.replicator._connect(p3.replicator.dialer.lookup(rep.peerId))
+
+  t.absent(err, 'p3 not refused')
+
+  await p3Connected
+
+  t.ok(rep.inbound.has(p3.peerId), 'p3 accepted')
+  t.is(rep.stats.connects.server.refused, 0)
+
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await testnet.destroy()
+})
+
+test('maxConnections lower than minConnections throws', async (t) => {
+  const store = new Corestore(await t.tmp())
+
+  t.exception(() => new Replicator(store, { minConnections: 2, maxConnections: 1 }))
+
+  await store.close()
+})
+
+test('scanned peers are dialed past connection caps', async (t) => {
+  const testnet = await createTestnet()
+  const { bootstrap } = testnet
+
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minConnections: 1, maxConnections: 2 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
+  const p3 = await spawnPeer(t, { bootstrap, seed: seedC })
+  const p4 = await spawnPeer(t, { bootstrap, seed: seed(0xd) })
+  const rep = p1.replicator
+
+  const connected = onceEvent(rep, 'connected')
+  await p2.replicator._connect(p2.replicator.dialer.lookup(rep.peerId))
+  await connected
+
+  t.is(rep.connectionCount, 1, 'at minConnections')
+
+  const first = rep.join(p1.store.session(), p3.cores[0].discoveryKey, { discover: true })
+  await first.ready()
+  await first.refresh()
+  await rep.flush()
+
+  t.ok(rep.outbound.has(p3.peerId), 'p3 dialed past minConnections')
+  t.is(rep.connectionCount, 2, 'at maxConnections')
+
+  const second = rep.join(p1.store.session(), p4.cores[0].discoveryKey, { discover: true })
+  await second.ready()
+  await second.refresh()
+  await rep.flush()
+
+  t.ok(rep.outbound.has(p4.peerId), 'p4 dialed past maxConnections')
+
+  await p1.destroy()
+  await p2.destroy()
+  await p3.destroy()
+  await p4.destroy()
   await testnet.destroy()
 })

@@ -622,8 +622,13 @@ test('flush when max connections reached', async (t) => {
   const { bootstrap } = testnet
 
   const p1 = await spawnPeer(t, { bootstrap, seed: seedA })
-  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, maxPeers: 1 })
-  const p3 = await spawnPeer(t, { bootstrap, seed: Buffer.alloc(32, 0xc), maxPeers: 1 })
+  const p2 = await spawnPeer(t, { bootstrap, seed: seedB, minConnections: 1, maxConnections: 1 })
+  const p3 = await spawnPeer(t, {
+    bootstrap,
+    seed: Buffer.alloc(32, 0xc),
+    minConnections: 1,
+    maxConnections: 1
+  })
 
   const remote2 = p1.cores.map((core) => p2.session.get(core.key))
   const remote3 = p1.cores.map((core) => p3.session.get(core.key))
@@ -689,7 +694,7 @@ test('closing all discovery sessions clears topic state', async (t) => {
   const testnet = await createTestnet()
   const { bootstrap } = testnet
 
-  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minPeers: 0, maxPeers: 0 })
+  const p1 = await spawnPeer(t, { bootstrap, seed: seedA, minConnections: 0, maxConnections: 1 })
   const p2 = await spawnPeer(t, { bootstrap, seed: seedB })
 
   const store2 = p1.store.session()
@@ -715,6 +720,7 @@ test('closing all discovery sessions clears topic state', async (t) => {
   const disconnected = onceEvent(p1.replicator, 'disconnected')
 
   await Promise.all([p1.session.close(), store2.close(), closed1, closed2])
+  p1.replicator._maxConnections = 0 // inbound at max peers is refused, so lower the cap once p2 is in
   await p1.replicator._gc()
   await disconnected
 
