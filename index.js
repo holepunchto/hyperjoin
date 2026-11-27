@@ -7,6 +7,7 @@ const safetyCatch = require('safety-catch')
 
 const b4a = require('b4a')
 const { sortConnections } = require('./lib/heuristics')
+const { ReplicatorError } = require('./lib/errors')
 const { toHex } = b4a
 
 const AUTO_REFRESH_INTERVAL = 5000
@@ -26,11 +27,6 @@ const DHT_FAST_RETRY = 0 // disabled
 // connections
 const MIN_CONNECTIONS = 30
 const MAX_CONNECTIONS = 40
-const ERR_DUPLICATE = 'DuplicateConnection'
-const ERR_IDLE = 'IdleConnection'
-const ERR_DESTROYED = 'ReplicatorDestroyed'
-const ERR_SUSPEND = 'SuspendDrop'
-const ERR_MAXPEERS = 'MaxPeersCap'
 
 module.exports = class Replicator extends ReadyResource {
   constructor(rootStore, opts = {}) {
@@ -66,7 +62,7 @@ module.exports = class Replicator extends ReadyResource {
     } = opts
 
     if (maxConnections < minConnections) {
-      throw new Error('maxConnections must be greater than minConnections')
+      throw ReplicatorError.ASSERTION('maxConnections must be greater than minConnections')
     }
 
     if (seed) this.keyPair = DHT.keyPair(seed)
@@ -299,7 +295,7 @@ module.exports = class Replicator extends ReadyResource {
     for (const connection of this.connections) {
       connection.info.resetAttempts()
       this.dialer.reschedule(connection.info)
-      pending.push(this._evictConnection(connection, ERR_SUSPEND))
+      pending.push(this._evictConnection(connection, ReplicatorError.SUSPENDED()))
     }
 
     this._inflight.clear()
@@ -368,7 +364,7 @@ module.exports = class Replicator extends ReadyResource {
 
     let wait = null
     if (existing) {
-      if (existing.closing === null) throw new Error('session exists')
+      if (existing.closing === null) throw ReplicatorError.TOPIC_EXISTS()
 
       // Replace closing session but defer announcing until it finishes closing
       this.sessions.delete(dk)
@@ -413,7 +409,7 @@ module.exports = class Replicator extends ReadyResource {
   _onincoming(conn) {
     if (this._isTearingdown) {
       conn.on('error', noop)
-      return conn.destroy(ERR_DESTROYED)
+      return conn.destroy(ReplicatorError.DESTROYED())
     }
 
     const peerId = conn.remotePublicKey
@@ -436,16 +432,17 @@ module.exports = class Replicator extends ReadyResource {
       const keepNew = existing.rawBytesRead > 0 && existing.rawBytesWritten > 0
 
       if (keepNew === false) {
-        done(true, ERR_DUPLICATE)
+        const err = ReplicatorError.DUPLICATE()
+        done(true, err)
 
         existing.sendKeepAlive()
         conn.on('error', noop)
-        conn.destroy(new Error(ERR_DUPLICATE))
+        conn.destroy(err)
       } else {
         done()
 
         existing.on('error', noop)
-        existing.destroy(new Error(ERR_DUPLICATE))
+        existing.destroy(ReplicatorError.DUPLICATE())
         this._handleServerConnectionSwap(existing, conn)
       }
 
@@ -454,9 +451,10 @@ module.exports = class Replicator extends ReadyResource {
 
     // Hard limit max-drop
     if (this.connectionCount >= this._maxConnections + 5) {
-      done(true, ERR_MAXPEERS)
+      const err = ReplicatorError.MAXCAP()
+      done(true, err)
       conn.on('error', noop)
-      return conn.destroy(ERR_MAXPEERS)
+      return conn.destroy(err)
     }
 
     done()
@@ -471,7 +469,7 @@ module.exports = class Replicator extends ReadyResource {
 
     const map = initiator ? this.outbound : this.inbound
 
-    if (map.has(hex)) throw new Error('unreachable: connection leak') // sanity check
+    if (map.has(hex)) throw ReplicatorError.ASSERTION('unreachable: connection leak') // sanity check
 
     const connection = new Connection(this, stream, peerId, initiator)
 
@@ -492,8 +490,9 @@ module.exports = class Replicator extends ReadyResource {
   async _evictConnection(connection, err) {
     if (connection.destroying) return connection.destroyed
 
+    const reason = err.code || err.message
     // private - used by gc metrics
-    this.emit('_evictConnection', connection.peerId, /* reason */ err)
+    this.emit('_evictConnection', connection.peerId, reason)
 
     connection.destroy(err)
     await connection.destroyed
@@ -600,7 +599,7 @@ module.exports = class Replicator extends ReadyResource {
 
     if (this._isTearingdown) {
       this._inflight.delete(hex)
-      return ERR_SUSPEND
+      return ReplicatorError.SUSPENDED()
     }
 
     let stream
@@ -633,7 +632,7 @@ module.exports = class Replicator extends ReadyResource {
       stream.once('close', onclose)
       stream.once('open', onopen)
 
-      cancelCallback = () => stream.destroy(ERR_SUSPEND)
+      cancelCallback = () => stream.destroy(ReplicatorError.SUSPENDED())
       this._inflightCancel.add(cancelCallback)
 
       this.stats.connects.client.attempted++
@@ -651,9 +650,9 @@ module.exports = class Replicator extends ReadyResource {
     // opened after teardown
     if (this._isTearingdown) {
       stream.once('error', noop)
-      const e = new Error(ERR_DESTROYED)
+      const e = ReplicatorError.DESTROYED()
       stream.destroy(e)
-      return ERR_DESTROYED
+      return e
     }
 
     // stream opened - hand-off
@@ -685,13 +684,13 @@ module.exports = class Replicator extends ReadyResource {
       if (!dst.has(key)) continue
 
       const cmp = b4a.compare(this.peerId, connection.peerId)
-      if (cmp === 0) throw new Error('unreachable: self connection')
+      if (cmp === 0) throw ReplicatorError.ASSERTION('unreachable: self connection')
 
       // low-peerId keeps inbound
       const target = (cmp > 0) ^ connection.initiator ? connection : dst.get(key)
       if (target.destroying) continue
 
-      evictions.push(this._evictConnection(target, ERR_DUPLICATE))
+      evictions.push(this._evictConnection(target, ReplicatorError.DUPLICATE()))
       connectionsEvicted++
     }
 
@@ -707,7 +706,7 @@ module.exports = class Replicator extends ReadyResource {
 
     if (!this._lastConnectionEvict) this._lastConnectionEvict = now
 
-    const gcConn = (connection, reason = ERR_IDLE) => {
+    const gcConn = (connection, reason = ReplicatorError.IDLE()) => {
       evictions.push(this._evictConnection(connection, reason))
       connectionsEvicted++
       this._lastConnectionEvict = now
@@ -725,7 +724,7 @@ module.exports = class Replicator extends ReadyResource {
         if (connection.destroying) continue
         if (!connection.isIdle(now)) continue
 
-        gcConn(connection, ERR_IDLE)
+        gcConn(connection, ReplicatorError.IDLE())
       }
 
       // Last resort if still over max capacity
@@ -736,7 +735,7 @@ module.exports = class Replicator extends ReadyResource {
         const sorted = sortConnections(remaining, now)
 
         for (let i = 0; i < nHeuristicEvict; i++) {
-          gcConn(sorted[i], ERR_MAXPEERS)
+          gcConn(sorted[i], ReplicatorError.MAXCAP())
         }
       }
     }
@@ -936,8 +935,9 @@ module.exports = class Replicator extends ReadyResource {
 
     this.sessions.clear()
 
+    const reason = ReplicatorError.DESTROYED()
     for (const connection of this.connections) {
-      tasks.push(this._evictConnection(connection))
+      tasks.push(this._evictConnection(connection, reason))
     }
 
     this.inbound.clear()
