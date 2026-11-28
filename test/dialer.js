@@ -551,21 +551,19 @@ test('lookup() returns the requested peer at the bound', (t) => {
   t.is(dialer.peers.get(toHex(asKey(3))), peer, 'stored')
 })
 
-test('the peer deepest in backoff is evicted first', (t) => {
+test('the peer closest to expiry is evicted first', (t) => {
   const ctx = spawnDialer(t, { suspended: true, maxRecords: 3 })
   const { dialer } = ctx
 
-  for (let n = 1; n <= 3; n++) {
-    const peer = spawnPeer(ctx, n, T0)
-    for (let i = 0; i < n; i++) peer.markAttempt(true, { now: T0 })(true, 'ERR_CONNECT', T0)
-    dialer.reschedule(peer)
-  }
+  spawnPeer(ctx, 1, T0 + 2000)
+  spawnPeer(ctx, 2, T0) // oldest sighting, expires first
+  spawnPeer(ctx, 3, T0 + 1000)
 
-  spawnPeer(ctx, 4, T0)
+  spawnPeer(ctx, 4, T0 + 3000)
 
-  t.absent(dialer.peers.has(toHex(asKey(3))), 'three failures, evicted')
-  t.ok(dialer.peers.has(toHex(asKey(1))), 'one failure, kept')
-  t.ok(dialer.peers.has(toHex(asKey(2))), 'two failures, kept')
+  t.absent(dialer.peers.has(toHex(asKey(2))), 'oldest sighting, evicted')
+  t.ok(dialer.peers.has(toHex(asKey(1))), 'kept')
+  t.ok(dialer.peers.has(toHex(asKey(3))), 'kept')
   t.ok(dialer.peers.has(toHex(asKey(4))), 'new peer, kept')
 })
 
@@ -641,18 +639,14 @@ test('an evicted peer is not dialed', async (t) => {
   const ctx = spawnDialer(t, { suspended: true, maxRecords: 2 })
   const { dialer, dialed } = ctx
 
-  for (let n = 1; n <= 2; n++) {
-    const peer = spawnPeer(ctx, n, T0)
-    for (let i = 0; i < n; i++) peer.markAttempt(true, { now: T0 })(true, 'ERR_CONNECT', T0)
-    dialer.reschedule(peer)
-  }
-
-  spawnPeer(ctx, 3, T0) // evicts 2
+  spawnPeer(ctx, 1, T0)
+  spawnPeer(ctx, 2, T0 + 1000)
+  spawnPeer(ctx, 3, T0 + 2000) // evicts 1
 
   dialer.resume(T0 + 10 * 60 * 1000)
   await dialer.flush()
 
-  t.alike(dialed.map((p) => p.publicKey[0]).sort(), [1, 3])
+  t.alike(dialed.map((p) => p.publicKey[0]).sort(), [2, 3])
 })
 
 function spawnDialer(
@@ -741,3 +735,14 @@ function spawnPeer(ctx, n, lastSeenAt) {
   ctx.dialer.seen({ publicKey: asKey(n) }, TOPIC, lastSeenAt)
   return ctx.dialer.lookup(asKey(n))
 }
+
+test('inbound records do not evict seen peers', (t) => {
+  const ctx = spawnDialer(t, { suspended: true, maxRecords: 2 })
+  const { dialer } = ctx
+
+  spawnPeer(ctx, 1, T0)
+  dialer.lookup(asKey(2)) // inbound handshake
+  dialer.lookup(asKey(3)) // inbound handshake
+
+  t.ok(dialer.peers.has(toHex(asKey(1))), 'seen peer is kept')
+})
