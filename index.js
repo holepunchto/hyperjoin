@@ -521,10 +521,13 @@ module.exports = class Replicator extends ReadyResource {
     // firewall self
     if (b4a.equals(remotePublicKey, this.keyPair.publicKey)) return true
 
-    const peer = this.dialer.lookup(remotePublicKey)
+    let peer = this.dialer.lookup(remotePublicKey)
     if (peer.isBanned) return true
 
     const firewalled = await this._firewall(remotePublicKey, payload)
+
+    // the record may have been evicted meanwhile
+    peer = this.dialer.lookup(remotePublicKey)
 
     if (firewalled) {
       peer.setBanned('firewalled')

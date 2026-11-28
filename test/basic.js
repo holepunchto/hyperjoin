@@ -731,3 +731,38 @@ test('presuspend allows outbound connections', async (t) => {
   await p2.destroy()
   await testnet.destroy()
 })
+
+test('async firewall ban is kept when the table fills meanwhile', async (t) => {
+  let release = null
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+
+  const store = new Corestore(await t.tmp())
+  const replicator = new Replicator(store, {
+    bootstrap: [],
+    manual: true,
+    firewall: async () => {
+      await gate
+      return true
+    }
+  })
+  await replicator.ready()
+
+  let bans = 0
+  replicator.on('ban', () => bans++)
+  replicator.dialer.maxRecords = 1
+
+  const remote = b4a.alloc(32, 1)
+  const firewalled = replicator.server.firewall(remote, {}) // inbound handshake
+  replicator.dialer.lookup(b4a.alloc(32, 2)) // another peer arrives
+
+  release()
+  await firewalled
+
+  t.ok(replicator.dialer.peers.get(toHex(remote))?.isBanned, 'ban is stored')
+  t.is(bans, 1, 'ban is reported')
+
+  await replicator.close()
+  await store.close()
+})
