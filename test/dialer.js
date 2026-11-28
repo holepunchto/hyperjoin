@@ -746,3 +746,16 @@ test('inbound records do not evict seen peers', (t) => {
 
   t.ok(dialer.peers.has(toHex(asKey(1))), 'seen peer is kept')
 })
+
+test('a peer queued for a dial is not evicted', async (t) => {
+  const ctx = spawnDialer(t, { maxRecords: 1, jitter: 1 })
+  const { dialer } = ctx
+
+  spawnPeer(ctx, 1)
+  await Promise.resolve() // waiting on the jitter
+  spawnPeer(ctx, 2)
+
+  t.ok(dialer.peers.has(toHex(asKey(1))), 'queued peer is kept')
+
+  await dialer.flush()
+})
